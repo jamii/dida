@@ -76,6 +76,10 @@ pub const NodeSpec = union(enum) {
     Index: IndexSpec,
     Join: JoinSpec,
     Output: OutputSpec,
+    TimestampPush: TimestampPushSpec,
+    TimestampIncrement: TimestampIncrementSpec,
+    TimestampPop: TimestampPopSpec,
+    Union: UnionSpec,
 
     pub const MapSpec = struct {
         input: OutputLocation,
@@ -95,16 +99,34 @@ pub const NodeSpec = union(enum) {
         input: OutputLocation,
     };
 
+    pub const TimestampPushSpec = struct {
+        input: OutputLocation,
+    };
+
+    pub const TimestampIncrementSpec = struct {
+        input: OutputLocation,
+    };
+
+    pub const TimestampPopSpec = struct {
+        input: OutputLocation,
+    };
+
+    pub const UnionSpec = struct {
+        input1: OutputLocation,
+        // initially null, set when we create a backwards edge in a loop
+        input2: ?OutputLocation,
+    };
+
     pub fn num_input_ports(self: NodeSpec) usize {
         return switch (self) {
-            .Input, .Map, .Index, .Output => 1,
-            .Join => 2,
+            .Input, .Map, .Index, .Output, .TimestampPush, .TimestampIncrement, .TimestampPop => 1,
+            .Join, .Union => 2,
         };
     }
 
     pub fn num_output_ports(self: NodeSpec) usize {
         return switch (self) {
-            .Input, .Map, .Index, .Output, .Join => 1,
+            .Input, .Map, .Index, .Output, .Join, .TimestampPush, .TimestampIncrement, .TimestampPop, .Union => 1,
         };
     }
 };
@@ -115,15 +137,23 @@ pub const NodeState = union(enum) {
     Index: Index,
     Join,
     Output: ArrayList(Change),
+    TimestampPush,
+    TimestampIncrement,
+    TimestampPop,
+    Union,
 
     pub fn init(allocator: *Allocator, node_spec: NodeSpec) NodeState {
-        switch (node_spec) {
-            .Input => return .Input,
-            .Map => return .Map,
-            .Index => return .{ .Index = Index.init(allocator) },
-            .Join => return .Join,
-            .Output => return .{ .Output = ArrayList(Change).init(allocator) },
-        }
+        return switch (node_spec) {
+            .Input => .Input,
+            .Map => .Map,
+            .Index => .{ .Index = Index.init(allocator) },
+            .Join => .Join,
+            .Output => .{ .Output = ArrayList(Change).init(allocator) },
+            .TimestampPush => .TimestampPush,
+            .TimestampIncrement => .TimestampIncrement,
+            .TimestampPop => .TimestampPop,
+            .Union => .Union,
+        };
     }
 };
 
@@ -146,7 +176,7 @@ pub const GraphBuilder = struct {
                     release_assert(self.node_specs.items[input_location.node.id] == .Index, "Inputs to Join node must be Index nodes", .{});
                 }
             },
-            .Input, .Map, .Index, .Output => {},
+            .Input, .Map, .Index, .Output, .TimestampPush, .TimestampIncrement, .TimestampPop, .Union => {},
         }
         const node = Node{ .id = @intCast(u64, self.node_specs.items.len) };
         try self.node_specs.append(node_spec);
@@ -254,6 +284,43 @@ pub const Worker = struct {
                             const outputs = &self.node_states[location.node.id].Output;
                             try outputs.append(change);
                         },
+                        .TimestampPush => {
+                            var new_coords = try self.allocator.alloc(u64, change.timestamp.coords.len + 1);
+                            std.mem.copy(u64, new_coords, change.timestamp.coords);
+                            new_coords[new_coords.len - 1] = 0;
+                            var output_change = change;
+                            output_change.timestamp = .{ .coords = new_coords };
+                            try self.unprocessed_changes.append(.{
+                                .change = output_change,
+                                .location = .{ .node = location.node, .port = .{ .Output = 0 } },
+                            });
+                        },
+                        .TimestampIncrement => {
+                            var new_coords = try std.mem.dupe(self.allocator, u64, change.timestamp.coords[0..change.timestamp.coords.len]);
+                            new_coords[new_coords.len - 1] += 1;
+                            var output_change = change;
+                            output_change.timestamp = .{ .coords = new_coords };
+                            try self.unprocessed_changes.append(.{
+                                .change = output_change,
+                                .location = .{ .node = location.node, .port = .{ .Output = 0 } },
+                            });
+                        },
+                        .TimestampPop => {
+                            var new_coords = try std.mem.dupe(self.allocator, u64, change.timestamp.coords[0 .. change.timestamp.coords.len - 1]);
+                            var output_change = change;
+                            output_change.timestamp = .{ .coords = new_coords };
+                            try self.unprocessed_changes.append(.{
+                                .change = output_change,
+                                .location = .{ .node = location.node, .port = .{ .Output = 0 } },
+                            });
+                        },
+                        .Union => {
+                            // pass straight through to output port
+                            try self.unprocessed_changes.append(.{
+                                .change = change,
+                                .location = .{ .node = location.node, .port = .{ .Output = 0 } },
+                            });
+                        },
                     }
                 },
                 .Output => |output_port| {
@@ -294,6 +361,40 @@ pub const Worker = struct {
                                         .change = change,
                                         .location = .{ .node = node, .port = .{ .Input = 0 } },
                                     });
+                                }
+                            },
+                            .TimestampPush => |timestamp_push| {
+                                if (timestamp_push.input.node.id == location.node.id and timestamp_push.input.output_port == output_port) {
+                                    try self.unprocessed_changes.append(.{
+                                        .change = change,
+                                        .location = .{ .node = node, .port = .{ .Input = 0 } },
+                                    });
+                                }
+                            },
+                            .TimestampIncrement => |timestamp_increment| {
+                                if (timestamp_increment.input.node.id == location.node.id and timestamp_increment.input.output_port == output_port) {
+                                    try self.unprocessed_changes.append(.{
+                                        .change = change,
+                                        .location = .{ .node = node, .port = .{ .Input = 0 } },
+                                    });
+                                }
+                            },
+                            .TimestampPop => |timestamp_pop| {
+                                if (timestamp_pop.input.node.id == location.node.id and timestamp_pop.input.output_port == output_port) {
+                                    try self.unprocessed_changes.append(.{
+                                        .change = change,
+                                        .location = .{ .node = node, .port = .{ .Input = 0 } },
+                                    });
+                                }
+                            },
+                            .Union => |union_| {
+                                for ([2]OutputLocation{ union_.input1, union_.input2.? }) |union_input, union_port| {
+                                    if (union_input.node.id == location.node.id and union_input.output_port == output_port) {
+                                        try self.unprocessed_changes.append(.{
+                                            .change = change,
+                                            .location = .{ .node = node, .port = .{ .Input = union_port } },
+                                        });
+                                    }
                                 }
                             },
                         }
