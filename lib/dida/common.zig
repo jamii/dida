@@ -14,6 +14,14 @@ pub const ArrayList = std.ArrayList;
 pub const HashMap = std.HashMap;
 pub const AutoHashMap = std.AutoHashMap;
 
+pub fn release_assert(condition: bool, comptime message: []const u8, args: anytype) void {
+    if (!condition) panic(message, args);
+}
+
+pub fn TODO() noreturn {
+    panic("TODO", .{});
+}
+
 pub fn DeepHashMap(comptime K: type, comptime V: type) type {
     return std.HashMap(K, V, struct {
         fn hash(key: K) u64 {

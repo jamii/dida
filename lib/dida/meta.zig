@@ -3,7 +3,7 @@
 usingnamespace @import("./common.zig");
 
 pub fn deepEqual(a: anytype, b: @TypeOf(a)) bool {
-    return deepCompare(a, b) == .Equal;
+    return deepCompare(a, b) == .eq;
 }
 
 pub fn deepCompare(a: anytype, b: @TypeOf(a)) std.math.Order {
@@ -101,8 +101,8 @@ pub fn deepCompare(a: anytype, b: @TypeOf(a)) std.math.Order {
                 if (a_tag > b_tag) {
                     return .gt;
                 }
-                inline for (uti.fields) |fti| {
-                    if (a_tag == fti.enum_field.?.value) {
+                inline for (@typeInfo(tag_type).Enum.fields) |fti| {
+                    if (a_tag == fti.value) {
                         return deepCompare(
                             @field(a, fti.name),
                             @field(b, fti.name),
