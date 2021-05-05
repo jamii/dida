@@ -17,7 +17,7 @@ pub fn main() !void {
     var graph_builder = dida.GraphBuilder.init(allocator);
     const foo = try graph_builder.add_node(.Input);
     const bar = try graph_builder.add_node(.Input);
-    const bar_inc = graph_builder.add_node(.{
+    const bar_inc = try graph_builder.add_node(.{
         .Map = .{
             .input = .{ .node = bar, .output_port = 0 },
             .function = (struct {
@@ -29,18 +29,15 @@ pub fn main() !void {
             }).inc,
         },
     });
-    const key = (struct {
-        fn key(input: dida.Row) dida.Row {
-            return dida.Row{ .values = input.values[0..1] };
-        }
-    }).key;
+    const foo_index = try graph_builder.add_node(.{ .Index = .{ .input = .{ .node = foo, .output_port = 0 } } });
+    const bar_inc_index = try graph_builder.add_node(.{ .Index = .{ .input = .{ .node = bar_inc, .output_port = 0 } } });
     const foobar = try graph_builder.add_node(.{
         .Join = .{
             .inputs = .{
-                .{ .node = foo, .output_port = 0 },
-                .{ .node = bar, .output_port = 0 },
+                .{ .node = foo_index, .output_port = 0 },
+                .{ .node = bar_inc_index, .output_port = 0 },
             },
-            .key_functions = .{ key, key },
+            .key_columns = 1,
         },
     });
     const out = try graph_builder.add_node(.{ .Output = .{ .input = .{ .node = foobar, .output_port = 0 } } });

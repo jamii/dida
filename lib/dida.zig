@@ -16,6 +16,11 @@ pub const Location = struct {
     port: Port,
 };
 
+pub const InputLocation = struct {
+    node: Node,
+    input_port: u64,
+};
+
 pub const OutputLocation = struct {
     node: Node,
     output_port: u64,
@@ -65,38 +70,58 @@ pub const Index = struct {
     }
 };
 
-pub const NodeData = union(enum) {
+pub const NodeSpec = union(enum) {
     Input,
-    Map: Map,
-    Join: Join,
-    Output: Output,
+    Map: MapSpec,
+    Index: IndexSpec,
+    Join: JoinSpec,
+    Output: OutputSpec,
 
-    pub const Map = struct {
+    pub const MapSpec = struct {
         input: OutputLocation,
         function: fn (row: Row) error{OutOfMemory}!Row,
     };
 
-    pub const Join = struct {
-        inputs: [2]OutputLocation,
-        key_functions: [2]fn (row: Row) Row,
-    };
-
-    pub const Output = struct {
+    pub const IndexSpec = struct {
         input: OutputLocation,
     };
+
+    pub const JoinSpec = struct {
+        inputs: [2]OutputLocation,
+        key_columns: u64,
+    };
+
+    pub const OutputSpec = struct {
+        input: OutputLocation,
+    };
+
+    pub fn num_input_ports(self: NodeSpec) usize {
+        return switch (self) {
+            .Input, .Map, .Index, .Output => 1,
+            .Join => 2,
+        };
+    }
+
+    pub fn num_output_ports(self: NodeSpec) usize {
+        return switch (self) {
+            .Input, .Map, .Index, .Output, .Join => 1,
+        };
+    }
 };
 
 pub const NodeState = union(enum) {
     Input,
     Map,
-    Join: [2]Index,
+    Index: Index,
+    Join,
     Output: ArrayList(Change),
 
-    pub fn init(allocator: *Allocator, node_data: NodeData) NodeState {
-        switch (node_data) {
+    pub fn init(allocator: *Allocator, node_spec: NodeSpec) NodeState {
+        switch (node_spec) {
             .Input => return .Input,
             .Map => return .Map,
-            .Join => return .{ .Join = .{ Index.init(allocator), Index.init(allocator) } },
+            .Index => return .{ .Index = Index.init(allocator) },
+            .Join => return .Join,
             .Output => return .{ .Output = ArrayList(Change).init(allocator) },
         }
     }
@@ -104,38 +129,42 @@ pub const NodeState = union(enum) {
 
 pub const GraphBuilder = struct {
     allocator: *Allocator,
-    nodes: ArrayList(NodeData),
+    node_specs: ArrayList(NodeSpec),
 
     pub fn init(allocator: *Allocator) GraphBuilder {
-        const nodes = ArrayList(NodeData).init(allocator);
         return GraphBuilder{
             .allocator = allocator,
-            .nodes = nodes,
+            .node_specs = ArrayList(NodeSpec).init(allocator),
         };
     }
 
-    pub fn add_node(self: *GraphBuilder, node_data: NodeData) error{OutOfMemory}!Node {
-        const node = Node{ .id = @intCast(u64, self.nodes.items.len) };
-        try self.nodes.append(node_data);
+    pub fn add_node(self: *GraphBuilder, node_spec: NodeSpec) !Node {
+        // TODO check all edges are valid
+        switch (node_spec) {
+            .Join => |join| {
+                for (join.inputs) |input_location| {
+                    release_assert(self.node_specs.items[input_location.node.id] == .Index, "Inputs to Join node must be Index nodes", .{});
+                }
+            },
+            .Input, .Map, .Index, .Output => {},
+        }
+        const node = Node{ .id = @intCast(u64, self.node_specs.items.len) };
+        try self.node_specs.append(node_spec);
         return node;
     }
 
     pub fn finish_and_clear(self: *GraphBuilder) Graph {
-        const nodes = self.nodes.toOwnedSlice();
         return Graph{
             .allocator = self.allocator,
-            .nodes = nodes,
+            .nodes = self.node_specs.toOwnedSlice(),
         };
     }
 };
 
 pub const Graph = struct {
     allocator: *Allocator,
-    nodes: []const NodeData,
+    nodes: []const NodeSpec,
 };
-
-pub const Pointstamps = HashMap(Pointstamp, u64);
-pub const PointstampChanges = HashMap(Pointstamp, i64);
 
 pub const Worker = struct {
     allocator: *Allocator,
@@ -178,10 +207,10 @@ pub const Worker = struct {
             const location = change_at_location.location;
             switch (location.port) {
                 .Input => |input_port| {
-                    const node_data = self.graph.nodes[location.node.id];
-                    switch (node_data) {
+                    const node_spec = self.graph.nodes[location.node.id];
+                    switch (node_spec) {
                         .Input => {
-                            // pass straight through to output for now
+                            // pass straight through to output port
                             try self.unprocessed_changes.append(.{
                                 .change = change,
                                 .location = .{ .node = location.node, .port = .{ .Output = 0 } },
@@ -195,22 +224,19 @@ pub const Worker = struct {
                                 .location = .{ .node = location.node, .port = .{ .Output = 0 } },
                             });
                         },
+                        .Index => {
+                            const index = &self.node_states[location.node.id].Index;
+                            try index.changes.append(change);
+                            try self.unprocessed_changes.append(.{
+                                .change = change,
+                                .location = .{ .node = location.node, .port = .{ .Output = 0 } },
+                            });
+                        },
                         .Join => |join| {
-                            const output_location = Location{
-                                .node = location.node,
-                                .port = .{ .Output = 0 },
-                            };
-                            const this_index = &self.node_states[location.node.id].Join[input_port];
-                            const other_index = &self.node_states[location.node.id].Join[1 - input_port];
-
-                            // add to index on this side
-                            try this_index.changes.append(change);
-
-                            // lookup in index on other side
-                            const this_key = (join.key_functions[input_port])(change.row);
-                            const other_key_function = join.key_functions[1 - input_port];
-                            for (other_index.changes.items) |other_change| {
-                                const other_key = (other_key_function)(other_change.row);
+                            const index = &self.node_states[join.inputs[1 - input_port].node.id].Index;
+                            const this_key = change.row.values[0..join.key_columns];
+                            for (index.changes.items) |other_change| {
+                                const other_key = other_change.row.values[0..join.key_columns];
                                 if (meta.deepEqual(this_key, other_key)) {
                                     const output_change = Change{
                                         .row = .{ .values = try std.mem.concat(self.allocator, Value, &[2][]const Value{ change.row.values, other_change.row.values }) },
@@ -224,7 +250,7 @@ pub const Worker = struct {
                                 }
                             }
                         },
-                        .Output => |output| {
+                        .Output => {
                             const outputs = &self.node_states[location.node.id].Output;
                             try outputs.append(change);
                         },
@@ -232,12 +258,20 @@ pub const Worker = struct {
                 },
                 .Output => |output_port| {
                     // forward to all nodes that have this location as an input
-                    for (self.graph.nodes) |node_data, node_id| {
+                    for (self.graph.nodes) |node_spec, node_id| {
                         const node = Node{ .id = node_id };
-                        switch (node_data) {
+                        switch (node_spec) {
                             .Input => {},
                             .Map => |map| {
                                 if (map.input.node.id == location.node.id and map.input.output_port == output_port) {
+                                    try self.unprocessed_changes.append(.{
+                                        .change = change,
+                                        .location = .{ .node = node, .port = .{ .Input = 0 } },
+                                    });
+                                }
+                            },
+                            .Index => |index| {
+                                if (index.input.node.id == location.node.id and index.input.output_port == output_port) {
                                     try self.unprocessed_changes.append(.{
                                         .change = change,
                                         .location = .{ .node = node, .port = .{ .Input = 0 } },
