@@ -80,6 +80,7 @@ pub const NodeSpec = union(enum) {
     TimestampIncrement: TimestampIncrementSpec,
     TimestampPop: TimestampPopSpec,
     Union: UnionSpec,
+    Distinct: DistinctSpec,
 
     pub const MapSpec = struct {
         input: OutputLocation,
@@ -117,16 +118,20 @@ pub const NodeSpec = union(enum) {
         input2: ?OutputLocation,
     };
 
+    pub const DistinctSpec = struct {
+        input: OutputLocation,
+    };
+
     pub fn num_input_ports(self: NodeSpec) usize {
         return switch (self) {
-            .Input, .Map, .Index, .Output, .TimestampPush, .TimestampIncrement, .TimestampPop => 1,
+            .Input, .Map, .Index, .Output, .TimestampPush, .TimestampIncrement, .TimestampPop, .Distinct => 1,
             .Join, .Union => 2,
         };
     }
 
     pub fn num_output_ports(self: NodeSpec) usize {
         return switch (self) {
-            .Input, .Map, .Index, .Output, .Join, .TimestampPush, .TimestampIncrement, .TimestampPop, .Union => 1,
+            .Input, .Map, .Index, .Output, .Join, .TimestampPush, .TimestampIncrement, .TimestampPop, .Union, .Distinct => 1,
         };
     }
 };
@@ -141,6 +146,7 @@ pub const NodeState = union(enum) {
     TimestampIncrement,
     TimestampPop,
     Union,
+    Distinct,
 
     pub fn init(allocator: *Allocator, node_spec: NodeSpec) NodeState {
         return switch (node_spec) {
@@ -153,6 +159,7 @@ pub const NodeState = union(enum) {
             .TimestampIncrement => .TimestampIncrement,
             .TimestampPop => .TimestampPop,
             .Union => .Union,
+            .Distinct => .Distinct,
         };
     }
 };
@@ -175,6 +182,9 @@ pub const GraphBuilder = struct {
                 for (join.inputs) |input_location| {
                     release_assert(self.node_specs.items[input_location.node.id] == .Index, "Inputs to Join node must be Index nodes", .{});
                 }
+            },
+            .Distinct => |distinct| {
+                release_assert(self.node_specs.items[distinct.input.node.id] == .Index, "Input to Distinct node must be an Index node", .{});
             },
             .Input, .Map, .Index, .Output, .TimestampPush, .TimestampIncrement, .TimestampPop, .Union => {},
         }
@@ -321,82 +331,35 @@ pub const Worker = struct {
                                 .location = .{ .node = location.node, .port = .{ .Output = 0 } },
                             });
                         },
+                        .Distinct => |distinct| {
+                            const index = &self.node_states[distinct.input.node.id].Index;
+                            // need frontiers to implement this correctly
+                            TODO();
+                        },
                     }
                 },
                 .Output => |output_port| {
                     // forward to all nodes that have this location as an input
                     for (self.graph.nodes) |node_spec, node_id| {
-                        const node = Node{ .id = node_id };
-                        switch (node_spec) {
-                            .Input => {},
-                            .Map => |map| {
-                                if (map.input.node.id == location.node.id and map.input.output_port == output_port) {
-                                    try self.unprocessed_changes.append(.{
-                                        .change = change,
-                                        .location = .{ .node = node, .port = .{ .Input = 0 } },
-                                    });
-                                }
-                            },
-                            .Index => |index| {
-                                if (index.input.node.id == location.node.id and index.input.output_port == output_port) {
-                                    try self.unprocessed_changes.append(.{
-                                        .change = change,
-                                        .location = .{ .node = node, .port = .{ .Input = 0 } },
-                                    });
-                                }
-                            },
-                            .Join => |join| {
-                                for (join.inputs) |join_input, join_port| {
-                                    if (join_input.node.id == location.node.id and join_input.output_port == output_port) {
-                                        try self.unprocessed_changes.append(.{
-                                            .change = change,
-                                            .location = .{ .node = node, .port = .{ .Input = join_port } },
-                                        });
-                                    }
-                                }
-                            },
-                            .Output => |output| {
-                                if (output.input.node.id == location.node.id and output.input.output_port == output_port) {
-                                    try self.unprocessed_changes.append(.{
-                                        .change = change,
-                                        .location = .{ .node = node, .port = .{ .Input = 0 } },
-                                    });
-                                }
-                            },
-                            .TimestampPush => |timestamp_push| {
-                                if (timestamp_push.input.node.id == location.node.id and timestamp_push.input.output_port == output_port) {
-                                    try self.unprocessed_changes.append(.{
-                                        .change = change,
-                                        .location = .{ .node = node, .port = .{ .Input = 0 } },
-                                    });
-                                }
-                            },
-                            .TimestampIncrement => |timestamp_increment| {
-                                if (timestamp_increment.input.node.id == location.node.id and timestamp_increment.input.output_port == output_port) {
-                                    try self.unprocessed_changes.append(.{
-                                        .change = change,
-                                        .location = .{ .node = node, .port = .{ .Input = 0 } },
-                                    });
-                                }
-                            },
-                            .TimestampPop => |timestamp_pop| {
-                                if (timestamp_pop.input.node.id == location.node.id and timestamp_pop.input.output_port == output_port) {
-                                    try self.unprocessed_changes.append(.{
-                                        .change = change,
-                                        .location = .{ .node = node, .port = .{ .Input = 0 } },
-                                    });
-                                }
-                            },
-                            .Union => |union_| {
-                                for ([2]OutputLocation{ union_.input1, union_.input2.? }) |union_input, union_port| {
-                                    if (union_input.node.id == location.node.id and union_input.output_port == output_port) {
-                                        try self.unprocessed_changes.append(.{
-                                            .change = change,
-                                            .location = .{ .node = node, .port = .{ .Input = union_port } },
-                                        });
-                                    }
-                                }
-                            },
+                        const node_inputs = switch (node_spec) {
+                            .Input => &[_]OutputLocation{},
+                            .Map => |map| &[_]OutputLocation{map.input},
+                            .Index => |index| &[_]OutputLocation{index.input},
+                            .Join => |join| &[_]OutputLocation{ join.inputs[0], join.inputs[1] },
+                            .Output => |output| &[_]OutputLocation{output.input},
+                            .TimestampPush => |timestamp_push| &[_]OutputLocation{timestamp_push.input},
+                            .TimestampIncrement => |timestamp_increment| &[_]OutputLocation{timestamp_increment.input},
+                            .TimestampPop => |timestamp_pop| &[_]OutputLocation{timestamp_pop.input},
+                            .Union => |union_| &[_]OutputLocation{ union_.input1, union_.input2.? },
+                            .Distinct => |distinct| &[_]OutputLocation{distinct.input},
+                        };
+                        for (node_inputs) |node_input, node_port| {
+                            if (node_input.node.id == location.node.id and node_input.output_port == output_port) {
+                                try self.unprocessed_changes.append(.{
+                                    .change = change,
+                                    .location = .{ .node = .{ .id = node_id }, .port = .{ .Input = node_port } },
+                                });
+                            }
                         }
                     }
                 },
