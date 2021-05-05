@@ -1,6 +1,6 @@
-usingnamespace @import("dida/common.zig");
-
 pub const meta = @import("dida/meta.zig");
+pub const common = @import("dida/common.zig");
+usingnamespace common;
 
 pub const Node = struct {
     id: u64,
@@ -45,7 +45,9 @@ pub const Value = union(enum) {
     Number: f64,
 };
 
-pub const Row = []const Value;
+pub const Row = struct {
+    values: []const Value,
+};
 
 pub const Change = struct {
     row: Row,
@@ -211,7 +213,7 @@ pub const Worker = struct {
                                 const other_key = (other_key_function)(other_change.row);
                                 if (meta.deepEqual(this_key, other_key)) {
                                     const output_change = Change{
-                                        .row = try std.mem.concat(self.allocator, Value, &[2]Row{ change.row, other_change.row }),
+                                        .row = .{ .values = try std.mem.concat(self.allocator, Value, &[2][]const Value{ change.row.values, other_change.row.values }) },
                                         .diff = change.diff * other_change.diff,
                                         .timestamp = try Timestamp.least_upper_bound(self.allocator, change.timestamp, other_change.timestamp),
                                     };
