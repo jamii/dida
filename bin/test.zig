@@ -5,31 +5,32 @@ var gpa = std.heap.GeneralPurposeAllocator(.{
     .safety = true,
     .never_unmap = true,
 }){};
-const allocator = &gpa.allocator;
+var arena = std.heap.ArenaAllocator.init(&gpa.allocator);
+const allocator = &arena.allocator;
 
 pub fn main() !void {
     defer {
+        arena.deinit();
         _ = gpa.detectLeaks();
     }
 
     var graph_builder = dida.GraphBuilder.init(allocator);
-    defer graph_builder.deinit();
     const foo = try graph_builder.add_node(.Input);
     const bar = try graph_builder.add_node(.Input);
     const bar_inc = graph_builder.add_node(.{
         .Map = .{
             .input = bar,
             .function = (struct {
-                fn inc(input: dida.Datum) error{OutOfMemory}!dida.Datum {
-                    var output = try std.mem.dupe(allocator, u8, input);
-                    output[1] += 1;
+                fn inc(input: dida.Row) error{OutOfMemory}!dida.Row {
+                    var output = try std.mem.dupe(allocator, dida.Value, input);
+                    output[1].Number += 1;
                     return output;
                 }
             }).inc,
         },
     });
     const key = (struct {
-        fn key(input: dida.Datum) dida.Datum {
+        fn key(input: dida.Row) dida.Row {
             return input[0..1];
         }
     }).key;
@@ -43,7 +44,6 @@ pub fn main() !void {
     });
 
     const graph = graph_builder.finish_and_clear();
-    defer graph.deinit();
 
     std.debug.print("Hello world!", .{});
 }

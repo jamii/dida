@@ -25,10 +25,15 @@ pub const Pointstamp = struct {
     timestamp: Timestamp,
 };
 
-pub const Datum = []const u8;
+pub const Value = union(enum) {
+    String: []const u8,
+    Number: f64,
+};
+
+pub const Row = []const Value;
 
 pub const Change = struct {
-    datum: Datum,
+    row: Row,
     diff: isize,
     timestamp: Timestamp,
 };
@@ -44,15 +49,15 @@ pub const NodeData = union(enum) {
 
     pub const Map = struct {
         input: Node,
-        function: fn (datum: Datum) error{OutOfMemory}!Datum,
+        function: fn (row: Row) error{OutOfMemory}!Row,
     };
 
     pub const Join = struct {
         left_input: Node,
         right_input: Node,
         // TODO arrangements?
-        left_key_function: fn (datum: Datum) Datum,
-        right_key_function: fn (datum: Datum) Datum,
+        left_key_function: fn (row: Row) Row,
+        right_key_function: fn (row: Row) Row,
     };
 };
 
@@ -65,27 +70,21 @@ pub const GraphBuilder = struct {
     allocator: *Allocator,
     nodes: ArrayList(NodeData),
 
-    const Self = @This();
-
-    pub fn init(allocator: *Allocator) Self {
+    pub fn init(allocator: *Allocator) GraphBuilder {
         const nodes = ArrayList(NodeData).init(allocator);
-        return Self{
+        return GraphBuilder{
             .allocator = allocator,
             .nodes = nodes,
         };
     }
 
-    pub fn deinit(self: Self) void {
-        self.nodes.deinit();
-    }
-
-    pub fn add_node(self: *Self, node_data: NodeData) error{OutOfMemory}!Node {
+    pub fn add_node(self: *GraphBuilder, node_data: NodeData) error{OutOfMemory}!Node {
         const node = Node{ .id = @intCast(u64, self.nodes.items.len) };
         try self.nodes.append(node_data);
         return node;
     }
 
-    pub fn finish_and_clear(self: *Self) Graph {
+    pub fn finish_and_clear(self: *GraphBuilder) Graph {
         const nodes = self.nodes.toOwnedSlice();
         return Graph{
             .allocator = self.allocator,
@@ -97,12 +96,6 @@ pub const GraphBuilder = struct {
 pub const Graph = struct {
     allocator: *Allocator,
     nodes: []const NodeData,
-
-    const Self = @This();
-
-    pub fn deinit(self: Self) void {
-        self.allocator.free(self.nodes);
-    }
 };
 
 pub const Pointstamps = HashMap(Pointstamp, u64);
