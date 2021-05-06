@@ -278,8 +278,13 @@ pub const Worker = struct {
                             for (index.changes.items) |other_change| {
                                 const other_key = other_change.row.values[0..join.key_columns];
                                 if (meta.deepEqual(this_key, other_key)) {
+                                    const values = switch (input_port) {
+                                        0 => &[2][]const Value{ change.row.values, other_change.row.values },
+                                        1 => &[2][]const Value{ other_change.row.values, change.row.values },
+                                        else => panic("Bad input port for join: {}", .{input_port}),
+                                    };
                                     const output_change = Change{
-                                        .row = .{ .values = try std.mem.concat(self.allocator, Value, &[2][]const Value{ change.row.values, other_change.row.values }) },
+                                        .row = .{ .values = try std.mem.concat(self.allocator, Value, values) },
                                         .diff = change.diff * other_change.diff,
                                         .timestamp = try Timestamp.least_upper_bound(self.allocator, change.timestamp, other_change.timestamp),
                                     };

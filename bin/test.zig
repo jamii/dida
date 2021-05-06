@@ -49,8 +49,8 @@ pub fn main() !void {
             .function = (struct {
                 fn drop_middle(input: dida.Row) error{OutOfMemory}!dida.Row {
                     var output_values = try allocator.alloc(dida.Value, 2);
-                    output_values[0] = input.values[0];
-                    output_values[1] = input.values[2];
+                    output_values[0] = input.values[3];
+                    output_values[1] = input.values[1];
                     return dida.Row{ .values = output_values };
                 }
             }).drop_middle,
