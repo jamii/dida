@@ -2,7 +2,7 @@ Dida is a (WIP) library for streaming, incremental, iterative, internally-consis
 
 The jargon-free version: You write code that manipulates collections using familiar operations like `map`, `join` and `loop`. You run the code on some input and get some output. Then when the input changes, you get changes to the output, much faster than recomputing the whole thing from scratch. (And the outputs will be [correct](https://scattered-thoughts.net/writing/internal-consistency-in-streaming-systems/)!)
 
-Dida is heavily based on [differential dataflow](https://github.com/TimelyDataflow/differential-dataflow/). Why start a new implementation? The goals are to:
+Dida is heavily based on [differential dataflow](https://github.com/TimelyDataflow/differential-dataflow/). Why start a new implementation? The goals are (in roughly priority order):
 
 * Be [easier to use and understand](https://scattered-thoughts.net/writing/why-isnt-differential-dataflow-more-popular/). This is naturally very subjective, but some guiding principles
  are:

@@ -61,24 +61,24 @@ pub fn main() !void {
     const reach_out = try graph_builder.add_node(.{ .TimestampPop = .{ .input = .{ .node = without_middle, .output_port = 0 } } });
     const out = try graph_builder.add_node(.{ .Output = .{ .input = .{ .node = reach_out, .output_port = 0 } } });
 
-    const graph = graph_builder.finish_and_clear();
+    const graph = try graph_builder.finish_and_clear();
 
-    var worker = try dida.Worker.init(allocator, graph);
+    var shard = try dida.Shard.init(allocator, graph);
     const timestamp1 = dida.Timestamp{ .coords = &[_]u64{1} };
 
     const ab = dida.Row{ .values = &[_]dida.Value{ .{ .String = "a" }, .{ .String = "b" } } };
     const bc = dida.Row{ .values = &[_]dida.Value{ .{ .String = "b" }, .{ .String = "c" } } };
     const cd = dida.Row{ .values = &[_]dida.Value{ .{ .String = "c" }, .{ .String = "d" } } };
     const ca = dida.Row{ .values = &[_]dida.Value{ .{ .String = "c" }, .{ .String = "a" } } };
-    try worker.push_input(edges, .{ .row = ab, .diff = 1, .timestamp = timestamp1 });
-    try worker.push_input(edges, .{ .row = bc, .diff = 1, .timestamp = timestamp1 });
-    try worker.push_input(edges, .{ .row = cd, .diff = 1, .timestamp = timestamp1 });
-    try worker.push_input(edges, .{ .row = ca, .diff = 1, .timestamp = timestamp1 });
+    try shard.push_input(edges, .{ .row = ab, .diff = 1, .timestamp = timestamp1 });
+    try shard.push_input(edges, .{ .row = bc, .diff = 1, .timestamp = timestamp1 });
+    try shard.push_input(edges, .{ .row = cd, .diff = 1, .timestamp = timestamp1 });
+    try shard.push_input(edges, .{ .row = ca, .diff = 1, .timestamp = timestamp1 });
 
-    while (worker.has_work()) {
-        try worker.do_work();
+    while (shard.has_work()) {
+        try shard.do_work();
 
-        while (worker.pop_output(out)) |change| {
+        while (shard.pop_output(out)) |change| {
             dida.common.dump(change);
         }
     }

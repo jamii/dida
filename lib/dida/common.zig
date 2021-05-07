@@ -34,6 +34,10 @@ pub fn DeepHashMap(comptime K: type, comptime V: type) type {
     }.equal, std.hash_map.DefaultMaxLoadPercentage);
 }
 
+pub fn DeepHashSet(comptime K: type) type {
+    return DeepHashMap(K, void);
+}
+
 pub fn dump(thing: anytype) void {
     const held = std.debug.getStderrMutex().acquire();
     defer held.release();
