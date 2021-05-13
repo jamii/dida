@@ -65,6 +65,7 @@ pub fn main() !void {
 
     var shard = try dida.Shard.init(allocator, graph);
     const timestamp1 = dida.Timestamp{ .coords = &[_]u64{1} };
+    const timestamp2 = dida.Timestamp{ .coords = &[_]u64{2} };
 
     const ab = dida.Row{ .values = &[_]dida.Value{ .{ .String = "a" }, .{ .String = "b" } } };
     const bc = dida.Row{ .values = &[_]dida.Value{ .{ .String = "b" }, .{ .String = "c" } } };
@@ -74,6 +75,7 @@ pub fn main() !void {
     try shard.push_input(edges, .{ .row = bc, .diff = 1, .timestamp = timestamp1 });
     try shard.push_input(edges, .{ .row = cd, .diff = 1, .timestamp = timestamp1 });
     try shard.push_input(edges, .{ .row = ca, .diff = 1, .timestamp = timestamp1 });
+    try shard.advance_input(edges, timestamp2);
 
     while (shard.has_work()) {
         try shard.do_work();

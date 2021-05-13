@@ -26,12 +26,19 @@ pub const OutputLocation = struct {
     output_port: usize,
 };
 
-// Weird field names are to be consistent with std.math.Order
+// Field names are weird to be consistent with std.math.Order
 pub const PartialOrder = enum {
     lt,
     eq,
     gt,
     none,
+
+    pub fn is_less_than_or_equal(self: PartialOrder) bool {
+        return switch (self) {
+            .lt, .eq => true,
+            .gt, .none => false,
+        };
+    }
 };
 
 pub const Timestamp = struct {
@@ -315,6 +322,19 @@ pub const Frontier = struct {
         };
     }
 
+    pub fn causal_order(self: *Frontier, timestamp: Timestamp) PartialOrder {
+        var iter = self.lower_bounds.iterator();
+        while (iter.next()) |kv| {
+            const other_timestamp = kv.key;
+            const order = other_timestamp.causal_order(timestamp);
+            switch (order) {
+                .none => {},
+                else => return order,
+            }
+        }
+        return .none;
+    }
+
     pub fn insert_timestamp(self: *Frontier, timestamp: Timestamp) !Updated {
         var dominated = ArrayList(Timestamp).init(self.allocator);
         var iter = self.lower_bounds.iterator();
@@ -384,6 +404,7 @@ pub const Shard = struct {
 
     pub fn compute_frontiers(self: *Shard) ![]const Frontier {
         // frontiers[node.id] is the frontier at the *output* of node
+        // Invariant: for any future change, frontiers[change.node.id].compare(change.timestamp).is_less_than_or_equal()
         var frontiers = try self.allocator.alloc(Frontier, self.graph.node_specs.len);
 
         var must_recompute = DeepHashSet(Node).init(self.allocator);
