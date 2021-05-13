@@ -75,6 +75,7 @@ pub fn main() !void {
     try shard.pushInput(edges, .{ .row = bc, .diff = 1, .timestamp = timestamp1 });
     try shard.pushInput(edges, .{ .row = cd, .diff = 1, .timestamp = timestamp1 });
     try shard.pushInput(edges, .{ .row = ca, .diff = 1, .timestamp = timestamp1 });
+    try shard.flushInput(edges);
     try shard.advanceInput(edges, timestamp2);
 
     while (shard.hasWork()) {

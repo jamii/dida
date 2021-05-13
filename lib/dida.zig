@@ -87,6 +87,7 @@ pub const Timestamp = struct {
     }
 
     pub fn popCoord(self: Timestamp, allocator: *Allocator) !Timestamp {
+        release_assert(self.coords.len > 0, "Tried to call popCoord on a timestamp with length 0", .{});
         const new_coords = try std.mem.dupe(allocator, usize, self.coords[0 .. self.coords.len - 1]);
         return Timestamp{ .coords = new_coords };
     }
@@ -108,16 +109,39 @@ pub const Row = struct {
 
 pub const Change = struct {
     row: Row,
-    diff: isize,
     timestamp: Timestamp,
+    diff: isize,
+};
+
+pub const ChangeBatchBuilder = struct {
+    changes: ArrayList(Change),
+
+    pub fn init(allocator: *Allocator) ChangeBatchBuilder {
+        return ChangeBatchBuilder{
+            .changes = ArrayList(Change).init(allocator),
+        };
+    }
+
+    pub fn finishAndClear(self: *ChangeBatchBuilder) ChangeBatch {
+        // TODO sort, consolidate
+        release_assert(self.changes.items.len > 0, "Refusing to build an empty change batch", .{});
+        return ChangeBatch{
+            .changes = self.changes.toOwnedSlice(),
+        };
+    }
+};
+
+pub const ChangeBatch = struct {
+    // TODO Invariant: non-empty, sorted by row/timestamp, no two changes with same row/timestamp
+    changes: []Change,
 };
 
 pub const Index = struct {
-    changes: ArrayList(Change),
+    change_batches: ArrayList(ChangeBatch),
 
     pub fn init(allocator: *Allocator) Index {
         return Index{
-            .changes = ArrayList(Change).init(allocator),
+            .change_batches = ArrayList(ChangeBatch).init(allocator),
         };
     }
 };
@@ -189,24 +213,34 @@ pub const NodeSpec = union(enum) {
 };
 
 pub const NodeState = union(enum) {
-    Input: Frontier,
+    Input: InputState,
     Map,
     Index: Index,
     Join,
-    Output: ArrayList(Change),
+    Output: ArrayList(ChangeBatch),
     TimestampPush,
     TimestampIncrement,
     TimestampPop,
     Union,
     Distinct,
 
+    pub const InputState = struct {
+        unflushed_changes: ChangeBatchBuilder,
+        frontier: Frontier,
+    };
+
     pub fn init(allocator: *Allocator, node_spec: NodeSpec) NodeState {
         return switch (node_spec) {
-            .Input => .{ .Input = Frontier.init(allocator) },
+            .Input => .{
+                .Input = .{
+                    .unflushed_changes = ChangeBatchBuilder.init(allocator),
+                    .frontier = Frontier.init(allocator),
+                },
+            },
             .Map => .Map,
             .Index => .{ .Index = Index.init(allocator) },
             .Join => .Join,
-            .Output => .{ .Output = ArrayList(Change).init(allocator) },
+            .Output => .{ .Output = ArrayList(ChangeBatch).init(allocator) },
             .TimestampPush => .TimestampPush,
             .TimestampIncrement => .TimestampIncrement,
             .TimestampPop => .TimestampPop,
@@ -371,10 +405,10 @@ pub const Shard = struct {
     allocator: *Allocator,
     graph: Graph,
     node_states: []NodeState,
-    unprocessed_changes: ArrayList(ChangeAtLocation),
+    unprocessed_changes: ArrayList(ChangeBatchAtLocation),
 
-    const ChangeAtLocation = struct {
-        change: Change,
+    const ChangeBatchAtLocation = struct {
+        change_batch: ChangeBatch,
         location: Location,
     };
 
@@ -387,19 +421,27 @@ pub const Shard = struct {
             .allocator = allocator,
             .graph = graph,
             .node_states = node_states,
-            .unprocessed_changes = ArrayList(ChangeAtLocation).init(allocator),
+            .unprocessed_changes = ArrayList(ChangeBatchAtLocation).init(allocator),
         };
     }
 
     pub fn pushInput(self: *Shard, node: Node, change: Change) !void {
-        try self.unprocessed_changes.append(.{
-            .change = change,
-            .location = .{ .node = node, .port = .{ .Input = 0 } },
-        });
+        try self.node_states[node.id].Input.unflushed_changes.changes.append(change);
+    }
+
+    pub fn flushInput(self: *Shard, node: Node) !void {
+        var unflushed_changes = &self.node_states[node.id].Input.unflushed_changes;
+        if (unflushed_changes.changes.items.len > 0) {
+            const change_batch = unflushed_changes.finishAndClear();
+            try self.unprocessed_changes.append(.{
+                .change_batch = change_batch,
+                .location = .{ .node = node, .port = .{ .Output = 0 } },
+            });
+        }
     }
 
     pub fn advanceInput(self: *Shard, node: Node, timestamp: Timestamp) !void {
-        _ = try self.node_states[node.id].Input.insertTimestamp(timestamp);
+        _ = try self.node_states[node.id].Input.frontier.insertTimestamp(timestamp);
     }
 
     pub fn computeFrontiers(self: *Shard) ![]const Frontier {
@@ -412,8 +454,8 @@ pub const Shard = struct {
         // init frontiers
         for (self.node_states) |node_state, node_id| {
             switch (node_state) {
-                .Input => |frontier| {
-                    frontiers[node_id] = try frontier.clone();
+                .Input => |input_state| {
+                    frontiers[node_id] = try input_state.frontier.clone();
                     for (self.graph.downstream_locations[node_id]) |location| {
                         try must_recompute.put(location.node, {});
                     }
@@ -463,93 +505,111 @@ pub const Shard = struct {
 
     pub fn doWork(self: *Shard) !void {
         // TODO need to schedule operators when their frontier changes too
-        if (self.unprocessed_changes.popOrNull()) |change_at_location| {
+        if (self.unprocessed_changes.popOrNull()) |change_batch_at_location| {
             const frontiers = self.computeFrontiers();
 
-            const change = change_at_location.change;
-            const location = change_at_location.location;
+            const change_batch = change_batch_at_location.change_batch;
+            const location = change_batch_at_location.location;
             switch (location.port) {
                 .Input => |input_port| {
                     const node_spec = self.graph.node_specs[location.node.id];
                     switch (node_spec) {
-                        .Input => {
-                            // Pass straight through to output port
-                            try self.unprocessed_changes.append(.{
-                                .change = change,
-                                .location = .{ .node = location.node, .port = .{ .Output = 0 } },
-                            });
-                        },
+                        .Input => panic("Input nodes should not have work pending on their input port", .{}),
                         .Map => |map| {
-                            var output_change = change;
-                            output_change.row = try map.function(change.row);
+                            var output_change_batch = ChangeBatchBuilder.init(self.allocator);
+                            for (change_batch.changes) |change| {
+                                var output_change = change; // copy
+                                output_change.row = try map.function(change.row);
+                                try output_change_batch.changes.append(output_change);
+                            }
                             try self.unprocessed_changes.append(.{
-                                .change = output_change,
+                                .change_batch = output_change_batch.finishAndClear(),
                                 .location = .{ .node = location.node, .port = .{ .Output = 0 } },
                             });
                         },
                         .Index => {
                             const index = &self.node_states[location.node.id].Index;
-                            try index.changes.append(change);
+                            try index.change_batches.append(change_batch);
                             try self.unprocessed_changes.append(.{
-                                .change = change,
+                                .change_batch = change_batch,
                                 .location = .{ .node = location.node, .port = .{ .Output = 0 } },
                             });
                         },
                         .Join => |join| {
                             const index = &self.node_states[join.inputs[1 - input_port].node.id].Index;
-                            const this_key = change.row.values[0..join.key_columns];
-                            for (index.changes.items) |other_change| {
-                                const other_key = other_change.row.values[0..join.key_columns];
-                                if (meta.deepEqual(this_key, other_key)) {
-                                    const values = switch (input_port) {
-                                        0 => &[2][]const Value{ change.row.values, other_change.row.values },
-                                        1 => &[2][]const Value{ other_change.row.values, change.row.values },
-                                        else => panic("Bad input port for join: {}", .{input_port}),
-                                    };
-                                    const output_change = Change{
-                                        .row = .{ .values = try std.mem.concat(self.allocator, Value, values) },
-                                        .diff = change.diff * other_change.diff,
-                                        .timestamp = try Timestamp.leastUpperBound(self.allocator, change.timestamp, other_change.timestamp),
-                                    };
-                                    try self.unprocessed_changes.append(.{
-                                        .change = output_change,
-                                        .location = .{ .node = location.node, .port = .{ .Output = 0 } },
-                                    });
+                            var output_change_batch = ChangeBatchBuilder.init(self.allocator);
+                            for (change_batch.changes) |change| {
+                                const this_key = change.row.values[0..join.key_columns];
+                                for (index.change_batches.items) |other_change_batch| {
+                                    for (other_change_batch.changes) |other_change| {
+                                        const other_key = other_change.row.values[0..join.key_columns];
+                                        if (meta.deepEqual(this_key, other_key)) {
+                                            const values = switch (input_port) {
+                                                0 => &[2][]const Value{ change.row.values, other_change.row.values },
+                                                1 => &[2][]const Value{ other_change.row.values, change.row.values },
+                                                else => panic("Bad input port for join: {}", .{input_port}),
+                                            };
+                                            const output_change = Change{
+                                                .row = .{ .values = try std.mem.concat(self.allocator, Value, values) },
+                                                .diff = change.diff * other_change.diff,
+                                                .timestamp = try Timestamp.leastUpperBound(self.allocator, change.timestamp, other_change.timestamp),
+                                            };
+                                            try output_change_batch.changes.append(output_change);
+                                        }
+                                    }
                                 }
+                            }
+                            if (output_change_batch.changes.items.len > 0) {
+                                try self.unprocessed_changes.append(.{
+                                    .change_batch = output_change_batch.finishAndClear(),
+                                    .location = .{ .node = location.node, .port = .{ .Output = 0 } },
+                                });
                             }
                         },
                         .Output => {
                             const outputs = &self.node_states[location.node.id].Output;
-                            try outputs.append(change);
+                            try outputs.append(change_batch);
                         },
                         .TimestampPush => {
-                            var output_change = change;
-                            output_change.timestamp = try change.timestamp.pushCoord(self.allocator);
+                            var output_change_batch = ChangeBatchBuilder.init(self.allocator);
+                            for (change_batch.changes) |change| {
+                                var output_change = change;
+                                output_change.timestamp = try change.timestamp.pushCoord(self.allocator);
+                                try output_change_batch.changes.append(output_change);
+                            }
                             try self.unprocessed_changes.append(.{
-                                .change = output_change,
+                                .change_batch = output_change_batch.finishAndClear(),
                                 .location = .{ .node = location.node, .port = .{ .Output = 0 } },
                             });
                         },
                         .TimestampIncrement => {
-                            var output_change = change;
-                            output_change.timestamp = try change.timestamp.incrementCoord(self.allocator);
+                            var output_change_batch = ChangeBatchBuilder.init(self.allocator);
+                            for (change_batch.changes) |change| {
+                                var output_change = change;
+                                output_change.timestamp = try change.timestamp.incrementCoord(self.allocator);
+                                try output_change_batch.changes.append(output_change);
+                            }
                             try self.unprocessed_changes.append(.{
-                                .change = output_change,
+                                .change_batch = output_change_batch.finishAndClear(),
                                 .location = .{ .node = location.node, .port = .{ .Output = 0 } },
                             });
                         },
                         .TimestampPop => {
-                            var output_change = change;
-                            output_change.timestamp = try change.timestamp.popCoord(self.allocator);
+                            var output_change_batch = ChangeBatchBuilder.init(self.allocator);
+                            for (change_batch.changes) |change| {
+                                var output_change = change;
+                                output_change.timestamp = try change.timestamp.popCoord(self.allocator);
+                                try output_change_batch.changes.append(output_change);
+                            }
                             try self.unprocessed_changes.append(.{
-                                .change = output_change,
+                                .change_batch = output_change_batch.finishAndClear(),
                                 .location = .{ .node = location.node, .port = .{ .Output = 0 } },
                             });
                         },
                         .Union => {
                             // Pass straight through to output port
                             try self.unprocessed_changes.append(.{
-                                .change = change,
+                                .change_batch = change_batch,
                                 .location = .{ .node = location.node, .port = .{ .Output = 0 } },
                             });
                         },
@@ -564,7 +624,7 @@ pub const Shard = struct {
                     // Forward to all nodes that have this location as an input
                     for (self.graph.downstream_locations[location.node.id]) |downstream_location| {
                         try self.unprocessed_changes.append(.{
-                            .change = change,
+                            .change_batch = change_batch,
                             .location = .{
                                 .node = downstream_location.node,
                                 .port = .{ .Input = downstream_location.input_port },
@@ -576,7 +636,7 @@ pub const Shard = struct {
         }
     }
 
-    pub fn popOutput(self: *Shard, node: Node) ?Change {
+    pub fn popOutput(self: *Shard, node: Node) ?ChangeBatch {
         return self.node_states[node.id].Output.popOrNull();
     }
 };
