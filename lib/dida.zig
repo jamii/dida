@@ -33,7 +33,7 @@ pub const PartialOrder = enum {
     gt,
     none,
 
-    pub fn is_less_than_or_equal(self: PartialOrder) bool {
+    pub fn isLessThanOrEqual(self: PartialOrder) bool {
         return switch (self) {
             .lt, .eq => true,
             .gt, .none => false,
@@ -44,8 +44,8 @@ pub const PartialOrder = enum {
 pub const Timestamp = struct {
     coords: []const usize,
 
-    pub fn least_upper_bound(allocator: *Allocator, self: Timestamp, other: Timestamp) !Timestamp {
-        release_assert(self.coords.len == other.coords.len, "Tried to take least_upper_bound of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
+    pub fn leastUpperBound(allocator: *Allocator, self: Timestamp, other: Timestamp) !Timestamp {
+        release_assert(self.coords.len == other.coords.len, "Tried to take leastUpperBound of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
         var output_coords = try allocator.alloc(usize, self.coords.len);
         for (self.coords) |self_coord, i| {
             const other_coord = other.coords[i];
@@ -54,8 +54,8 @@ pub const Timestamp = struct {
         return Timestamp{ .coords = output_coords };
     }
 
-    pub fn causal_order(self: Timestamp, other: Timestamp) PartialOrder {
-        release_assert(self.coords.len == other.coords.len, "Tried to compute causal_order of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
+    pub fn causalOrder(self: Timestamp, other: Timestamp) PartialOrder {
+        release_assert(self.coords.len == other.coords.len, "Tried to compute causalOrder of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
         var lt: usize = 0;
         var gt: usize = 0;
         var eq: usize = 0;
@@ -73,20 +73,20 @@ pub const Timestamp = struct {
         return .none;
     }
 
-    pub fn push_coord(self: Timestamp, allocator: *Allocator) !Timestamp {
+    pub fn pushCoord(self: Timestamp, allocator: *Allocator) !Timestamp {
         var new_coords = try allocator.alloc(usize, self.coords.len + 1);
         std.mem.copy(usize, new_coords, self.coords);
         new_coords[new_coords.len - 1] = 0;
         return Timestamp{ .coords = new_coords };
     }
 
-    pub fn increment_coord(self: Timestamp, allocator: *Allocator) !Timestamp {
+    pub fn incrementCoord(self: Timestamp, allocator: *Allocator) !Timestamp {
         var new_coords = try std.mem.dupe(allocator, usize, self.coords[0..self.coords.len]);
         new_coords[new_coords.len - 1] += 1;
         return Timestamp{ .coords = new_coords };
     }
 
-    pub fn pop_coord(self: Timestamp, allocator: *Allocator) !Timestamp {
+    pub fn popCoord(self: Timestamp, allocator: *Allocator) !Timestamp {
         const new_coords = try std.mem.dupe(allocator, usize, self.coords[0 .. self.coords.len - 1]);
         return Timestamp{ .coords = new_coords };
     }
@@ -174,14 +174,14 @@ pub const NodeSpec = union(enum) {
         input: OutputLocation,
     };
 
-    pub fn num_input_ports(self: NodeSpec) usize {
+    pub fn numInputPorts(self: NodeSpec) usize {
         return switch (self) {
             .Input, .Map, .Index, .Output, .TimestampPush, .TimestampIncrement, .TimestampPop, .Distinct => 1,
             .Join, .Union => 2,
         };
     }
 
-    pub fn num_output_ports(self: NodeSpec) usize {
+    pub fn numOutputPorts(self: NodeSpec) usize {
         return switch (self) {
             .Input, .Map, .Index, .Output, .Join, .TimestampPush, .TimestampIncrement, .TimestampPop, .Union, .Distinct => 1,
         };
@@ -227,7 +227,7 @@ pub const GraphBuilder = struct {
         };
     }
 
-    pub fn add_node(self: *GraphBuilder, node_spec: NodeSpec) !Node {
+    pub fn addNode(self: *GraphBuilder, node_spec: NodeSpec) !Node {
         // TODO check all edges are valid
         switch (node_spec) {
             .Join => |join| {
@@ -245,7 +245,7 @@ pub const GraphBuilder = struct {
         return node;
     }
 
-    pub fn finish_and_clear(self: *GraphBuilder) !Graph {
+    pub fn finishAndClear(self: *GraphBuilder) !Graph {
         var downstream_locations = try self.allocator.alloc(ArrayList(InputLocation), self.node_specs.items.len);
         var upstream_locations = try self.allocator.alloc(ArrayList(OutputLocation), self.node_specs.items.len);
         for (self.node_specs.items) |_, node_id| {
@@ -305,7 +305,7 @@ const Updated = enum {
 
 pub const Frontier = struct {
     allocator: *Allocator,
-    // Invariant: for any two timestamps A and B in lower_bounds `A.causal_order(B) == .none`
+    // Invariant: for any two timestamps A and B in lower_bounds `A.causalOrder(B) == .none`
     lower_bounds: DeepHashSet(Timestamp),
 
     pub fn init(allocator: *Allocator) Frontier {
@@ -322,11 +322,11 @@ pub const Frontier = struct {
         };
     }
 
-    pub fn causal_order(self: *Frontier, timestamp: Timestamp) PartialOrder {
+    pub fn causalOrder(self: *Frontier, timestamp: Timestamp) PartialOrder {
         var iter = self.lower_bounds.iterator();
         while (iter.next()) |kv| {
             const other_timestamp = kv.key;
-            const order = other_timestamp.causal_order(timestamp);
+            const order = other_timestamp.causalOrder(timestamp);
             switch (order) {
                 .none => {},
                 else => return order,
@@ -335,12 +335,12 @@ pub const Frontier = struct {
         return .none;
     }
 
-    pub fn insert_timestamp(self: *Frontier, timestamp: Timestamp) !Updated {
+    pub fn insertTimestamp(self: *Frontier, timestamp: Timestamp) !Updated {
         var dominated = ArrayList(Timestamp).init(self.allocator);
         var iter = self.lower_bounds.iterator();
         while (iter.next()) |kv| {
             const other_timestamp = kv.key;
-            switch (other_timestamp.causal_order(timestamp)) {
+            switch (other_timestamp.causalOrder(timestamp)) {
                 .lt => try dominated.append(other_timestamp),
                 .eq => return .NotUpdated,
                 .gt => panic("Frontier went backwards, from {} to {}", .{ other_timestamp, timestamp }),
@@ -361,7 +361,7 @@ pub const Frontier = struct {
         var iter = other.lower_bounds.iterator();
         while (iter.next()) |kv| {
             const other_timestamp = kv.key;
-            updated = updated.merge(try self.insert_timestamp(other_timestamp));
+            updated = updated.merge(try self.insertTimestamp(other_timestamp));
         }
         return updated;
     }
@@ -391,20 +391,20 @@ pub const Shard = struct {
         };
     }
 
-    pub fn push_input(self: *Shard, node: Node, change: Change) !void {
+    pub fn pushInput(self: *Shard, node: Node, change: Change) !void {
         try self.unprocessed_changes.append(.{
             .change = change,
             .location = .{ .node = node, .port = .{ .Input = 0 } },
         });
     }
 
-    pub fn advance_input(self: *Shard, node: Node, timestamp: Timestamp) !void {
-        _ = try self.node_states[node.id].Input.insert_timestamp(timestamp);
+    pub fn advanceInput(self: *Shard, node: Node, timestamp: Timestamp) !void {
+        _ = try self.node_states[node.id].Input.insertTimestamp(timestamp);
     }
 
-    pub fn compute_frontiers(self: *Shard) ![]const Frontier {
+    pub fn computeFrontiers(self: *Shard) ![]const Frontier {
         // frontiers[node.id] is the frontier at the *output* of node
-        // Invariant: for any future change, frontiers[change.node.id].compare(change.timestamp).is_less_than_or_equal()
+        // Invariant: for any future change, frontiers[change.node.id].compare(change.timestamp).isLessThanOrEqual()
         var frontiers = try self.allocator.alloc(Frontier, self.graph.node_specs.len);
 
         var must_recompute = DeepHashSet(Node).init(self.allocator);
@@ -440,12 +440,12 @@ pub const Shard = struct {
             while (iter.next()) |kv| {
                 const input_timestamp = kv.key;
                 const output_timestamp = switch (self.graph.node_specs[node.id]) {
-                    .TimestampPush => try input_timestamp.push_coord(self.allocator),
-                    .TimestampIncrement => try input_timestamp.increment_coord(self.allocator),
-                    .TimestampPop => try input_timestamp.pop_coord(self.allocator),
+                    .TimestampPush => try input_timestamp.pushCoord(self.allocator),
+                    .TimestampIncrement => try input_timestamp.incrementCoord(self.allocator),
+                    .TimestampPop => try input_timestamp.popCoord(self.allocator),
                     else => input_timestamp,
                 };
-                updated = updated.merge(try output_frontier.insert_timestamp(output_timestamp));
+                updated = updated.merge(try output_frontier.insertTimestamp(output_timestamp));
             }
             if (updated == .Updated) {
                 for (self.graph.downstream_locations[node.id]) |output_location| {
@@ -457,14 +457,14 @@ pub const Shard = struct {
         return frontiers;
     }
 
-    pub fn has_work(self: Shard) bool {
+    pub fn hasWork(self: Shard) bool {
         return self.unprocessed_changes.items.len > 0;
     }
 
-    pub fn do_work(self: *Shard) !void {
+    pub fn doWork(self: *Shard) !void {
         // TODO need to schedule operators when their frontier changes too
         if (self.unprocessed_changes.popOrNull()) |change_at_location| {
-            const frontiers = self.compute_frontiers();
+            const frontiers = self.computeFrontiers();
 
             const change = change_at_location.change;
             const location = change_at_location.location;
@@ -509,7 +509,7 @@ pub const Shard = struct {
                                     const output_change = Change{
                                         .row = .{ .values = try std.mem.concat(self.allocator, Value, values) },
                                         .diff = change.diff * other_change.diff,
-                                        .timestamp = try Timestamp.least_upper_bound(self.allocator, change.timestamp, other_change.timestamp),
+                                        .timestamp = try Timestamp.leastUpperBound(self.allocator, change.timestamp, other_change.timestamp),
                                     };
                                     try self.unprocessed_changes.append(.{
                                         .change = output_change,
@@ -524,7 +524,7 @@ pub const Shard = struct {
                         },
                         .TimestampPush => {
                             var output_change = change;
-                            output_change.timestamp = try change.timestamp.push_coord(self.allocator);
+                            output_change.timestamp = try change.timestamp.pushCoord(self.allocator);
                             try self.unprocessed_changes.append(.{
                                 .change = output_change,
                                 .location = .{ .node = location.node, .port = .{ .Output = 0 } },
@@ -532,7 +532,7 @@ pub const Shard = struct {
                         },
                         .TimestampIncrement => {
                             var output_change = change;
-                            output_change.timestamp = try change.timestamp.increment_coord(self.allocator);
+                            output_change.timestamp = try change.timestamp.incrementCoord(self.allocator);
                             try self.unprocessed_changes.append(.{
                                 .change = output_change,
                                 .location = .{ .node = location.node, .port = .{ .Output = 0 } },
@@ -540,7 +540,7 @@ pub const Shard = struct {
                         },
                         .TimestampPop => {
                             var output_change = change;
-                            output_change.timestamp = try change.timestamp.pop_coord(self.allocator);
+                            output_change.timestamp = try change.timestamp.popCoord(self.allocator);
                             try self.unprocessed_changes.append(.{
                                 .change = output_change,
                                 .location = .{ .node = location.node, .port = .{ .Output = 0 } },
@@ -576,7 +576,7 @@ pub const Shard = struct {
         }
     }
 
-    pub fn pop_output(self: *Shard, node: Node) ?Change {
+    pub fn popOutput(self: *Shard, node: Node) ?Change {
         return self.node_states[node.id].Output.popOrNull();
     }
 };

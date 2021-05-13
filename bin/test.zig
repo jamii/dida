@@ -16,11 +16,11 @@ pub fn main() !void {
 
     var graph_builder = dida.GraphBuilder.init(allocator);
 
-    const edges = try graph_builder.add_node(.Input);
-    const edges_1 = try graph_builder.add_node(.{ .TimestampPush = .{ .input = .{ .node = edges, .output_port = 0 } } });
-    const reach_in = try graph_builder.add_node(.{ .Union = .{ .input1 = .{ .node = edges_1, .output_port = 0 }, .input2 = null } });
-    const reach_index = try graph_builder.add_node(.{ .Index = .{ .input = .{ .node = reach_in, .output_port = 0 } } });
-    const swapped_edges = try graph_builder.add_node(.{
+    const edges = try graph_builder.addNode(.Input);
+    const edges_1 = try graph_builder.addNode(.{ .TimestampPush = .{ .input = .{ .node = edges, .output_port = 0 } } });
+    const reach_in = try graph_builder.addNode(.{ .Union = .{ .input1 = .{ .node = edges_1, .output_port = 0 }, .input2 = null } });
+    const reach_index = try graph_builder.addNode(.{ .Index = .{ .input = .{ .node = reach_in, .output_port = 0 } } });
+    const swapped_edges = try graph_builder.addNode(.{
         .Map = .{
             .input = .{ .node = edges_1, .output_port = 0 },
             .function = (struct {
@@ -33,8 +33,8 @@ pub fn main() !void {
             }).swap,
         },
     });
-    const swapped_edges_index = try graph_builder.add_node(.{ .Index = .{ .input = .{ .node = swapped_edges, .output_port = 0 } } });
-    const joined = try graph_builder.add_node(.{
+    const swapped_edges_index = try graph_builder.addNode(.{ .Index = .{ .input = .{ .node = swapped_edges, .output_port = 0 } } });
+    const joined = try graph_builder.addNode(.{
         .Join = .{
             .inputs = .{
                 .{ .node = reach_index, .output_port = 0 },
@@ -43,7 +43,7 @@ pub fn main() !void {
             .key_columns = 1,
         },
     });
-    const without_middle = try graph_builder.add_node(.{
+    const without_middle = try graph_builder.addNode(.{
         .Map = .{
             .input = .{ .node = joined, .output_port = 0 },
             .function = (struct {
@@ -56,12 +56,12 @@ pub fn main() !void {
             }).drop_middle,
         },
     });
-    const back = try graph_builder.add_node(.{ .TimestampIncrement = .{ .input = .{ .node = without_middle, .output_port = 0 } } });
+    const back = try graph_builder.addNode(.{ .TimestampIncrement = .{ .input = .{ .node = without_middle, .output_port = 0 } } });
     graph_builder.node_specs.items[reach_in.id].Union.input2 = .{ .node = back, .output_port = 0 };
-    const reach_out = try graph_builder.add_node(.{ .TimestampPop = .{ .input = .{ .node = without_middle, .output_port = 0 } } });
-    const out = try graph_builder.add_node(.{ .Output = .{ .input = .{ .node = reach_out, .output_port = 0 } } });
+    const reach_out = try graph_builder.addNode(.{ .TimestampPop = .{ .input = .{ .node = without_middle, .output_port = 0 } } });
+    const out = try graph_builder.addNode(.{ .Output = .{ .input = .{ .node = reach_out, .output_port = 0 } } });
 
-    const graph = try graph_builder.finish_and_clear();
+    const graph = try graph_builder.finishAndClear();
 
     var shard = try dida.Shard.init(allocator, graph);
     const timestamp1 = dida.Timestamp{ .coords = &[_]u64{1} };
@@ -71,16 +71,16 @@ pub fn main() !void {
     const bc = dida.Row{ .values = &[_]dida.Value{ .{ .String = "b" }, .{ .String = "c" } } };
     const cd = dida.Row{ .values = &[_]dida.Value{ .{ .String = "c" }, .{ .String = "d" } } };
     const ca = dida.Row{ .values = &[_]dida.Value{ .{ .String = "c" }, .{ .String = "a" } } };
-    try shard.push_input(edges, .{ .row = ab, .diff = 1, .timestamp = timestamp1 });
-    try shard.push_input(edges, .{ .row = bc, .diff = 1, .timestamp = timestamp1 });
-    try shard.push_input(edges, .{ .row = cd, .diff = 1, .timestamp = timestamp1 });
-    try shard.push_input(edges, .{ .row = ca, .diff = 1, .timestamp = timestamp1 });
-    try shard.advance_input(edges, timestamp2);
+    try shard.pushInput(edges, .{ .row = ab, .diff = 1, .timestamp = timestamp1 });
+    try shard.pushInput(edges, .{ .row = bc, .diff = 1, .timestamp = timestamp1 });
+    try shard.pushInput(edges, .{ .row = cd, .diff = 1, .timestamp = timestamp1 });
+    try shard.pushInput(edges, .{ .row = ca, .diff = 1, .timestamp = timestamp1 });
+    try shard.advanceInput(edges, timestamp2);
 
-    while (shard.has_work()) {
-        try shard.do_work();
+    while (shard.hasWork()) {
+        try shard.doWork();
 
-        while (shard.pop_output(out)) |change| {
+        while (shard.popOutput(out)) |change| {
             dida.common.dump(change);
         }
     }
