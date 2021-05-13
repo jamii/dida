@@ -226,7 +226,6 @@ pub const NodeState = union(enum) {
 
     pub const InputState = struct {
         unflushed_changes: ChangeBatchBuilder,
-        frontier: Frontier,
     };
 
     pub fn init(allocator: *Allocator, node_spec: NodeSpec) NodeState {
@@ -234,7 +233,6 @@ pub const NodeState = union(enum) {
             .Input => .{
                 .Input = .{
                     .unflushed_changes = ChangeBatchBuilder.init(allocator),
-                    .frontier = Frontier.init(allocator),
                 },
             },
             .Map => .Map,
@@ -401,14 +399,27 @@ pub const Frontier = struct {
     }
 };
 
+pub const FrontierAdvance = struct {
+    // TODO actually represent deltas
+};
+
 pub const Shard = struct {
     allocator: *Allocator,
     graph: Graph,
     node_states: []NodeState,
-    unprocessed_changes: ArrayList(ChangeBatchAtLocation),
+    // Invariant: for any future change, node_frontiers[change.node.id].compare(change.timestamp).isLessThanOrEqual()
+    node_frontiers: []Frontier,
+    unprocessed_change_batches: ArrayList(ChangeBatchAtLocation),
+    // TODO should we coalesce these?
+    unprocessed_frontier_advances: ArrayList(FrontierAdvanceAtLocation),
 
     const ChangeBatchAtLocation = struct {
         change_batch: ChangeBatch,
+        location: Location,
+    };
+
+    const FrontierAdvanceAtLocation = struct {
+        frontier_advance: FrontierAdvance,
         location: Location,
     };
 
@@ -417,11 +428,30 @@ pub const Shard = struct {
         for (node_states) |*node_state, i| {
             node_state.* = NodeState.init(allocator, graph.node_specs[i]);
         }
+        var node_frontiers = try allocator.alloc(Frontier, graph.node_specs.len);
+        var unprocessed_frontier_advances = ArrayList(FrontierAdvanceAtLocation).init(allocator);
+        for (node_frontiers) |*node_frontier, node_id| {
+            node_frontier.* = Frontier.init(allocator);
+            if (graph.node_specs[node_id] == .Input) {
+                const timestamp = try allocator.alloc(u64, 1);
+                timestamp[0] = 0;
+                _ = try node_frontier.insertTimestamp(.{ .coords = timestamp });
+                try unprocessed_frontier_advances.append(.{
+                    .frontier_advance = .{},
+                    .location = .{
+                        .node = .{ .id = node_id },
+                        .port = .{ .Output = 0 },
+                    },
+                });
+            }
+        }
         return Shard{
             .allocator = allocator,
             .graph = graph,
             .node_states = node_states,
-            .unprocessed_changes = ArrayList(ChangeBatchAtLocation).init(allocator),
+            .node_frontiers = node_frontiers,
+            .unprocessed_change_batches = ArrayList(ChangeBatchAtLocation).init(allocator),
+            .unprocessed_frontier_advances = ArrayList(FrontierAdvanceAtLocation).init(allocator),
         };
     }
 
@@ -433,7 +463,7 @@ pub const Shard = struct {
         var unflushed_changes = &self.node_states[node.id].Input.unflushed_changes;
         if (unflushed_changes.changes.items.len > 0) {
             const change_batch = unflushed_changes.finishAndClear();
-            try self.unprocessed_changes.append(.{
+            try self.unprocessed_change_batches.append(.{
                 .change_batch = change_batch,
                 .location = .{ .node = node, .port = .{ .Output = 0 } },
             });
@@ -441,198 +471,202 @@ pub const Shard = struct {
     }
 
     pub fn advanceInput(self: *Shard, node: Node, timestamp: Timestamp) !void {
-        _ = try self.node_states[node.id].Input.frontier.insertTimestamp(timestamp);
-    }
-
-    pub fn computeFrontiers(self: *Shard) ![]const Frontier {
-        // frontiers[node.id] is the frontier at the *output* of node
-        // Invariant: for any future change, frontiers[change.node.id].compare(change.timestamp).isLessThanOrEqual()
-        var frontiers = try self.allocator.alloc(Frontier, self.graph.node_specs.len);
-
-        var must_recompute = DeepHashSet(Node).init(self.allocator);
-
-        // init frontiers
-        for (self.node_states) |node_state, node_id| {
-            switch (node_state) {
-                .Input => |input_state| {
-                    frontiers[node_id] = try input_state.frontier.clone();
-                    for (self.graph.downstream_locations[node_id]) |location| {
-                        try must_recompute.put(location.node, {});
-                    }
+        const updated = try self.node_frontiers[node.id].insertTimestamp(timestamp);
+        if (updated == .Updated)
+            try self.unprocessed_frontier_advances.append(.{
+                .frontier_advance = .{},
+                .location = .{
+                    .node = node,
+                    .port = .{ .Output = 0 },
                 },
-                else => {
-                    frontiers[node_id] = Frontier.init(self.allocator);
-                },
-            }
-        }
-
-        // fixpoint frontiers
-        while (must_recompute.count() > 0) {
-            // const node = must_recompute.pop();
-            const node = must_recompute.iterator().next().?.key;
-            must_recompute.removeAssertDiscard(node);
-
-            var input_frontier = Frontier.init(self.allocator);
-            for (self.graph.upstream_locations[node.id]) |upstream_location| {
-                _ = try input_frontier.merge(frontiers[upstream_location.node.id]);
-            }
-            var output_frontier = &frontiers[node.id];
-            var updated: Updated = .NotUpdated;
-            var iter = input_frontier.lower_bounds.iterator();
-            while (iter.next()) |kv| {
-                const input_timestamp = kv.key;
-                const output_timestamp = switch (self.graph.node_specs[node.id]) {
-                    .TimestampPush => try input_timestamp.pushCoord(self.allocator),
-                    .TimestampIncrement => try input_timestamp.incrementCoord(self.allocator),
-                    .TimestampPop => try input_timestamp.popCoord(self.allocator),
-                    else => input_timestamp,
-                };
-                updated = updated.merge(try output_frontier.insertTimestamp(output_timestamp));
-            }
-            if (updated == .Updated) {
-                for (self.graph.downstream_locations[node.id]) |output_location| {
-                    try must_recompute.put(output_location.node, {});
-                }
-            }
-        }
-
-        return frontiers;
+            });
     }
 
     pub fn hasWork(self: Shard) bool {
-        return self.unprocessed_changes.items.len > 0;
+        return (self.unprocessed_frontier_advances.items.len > 0) or (self.unprocessed_change_batches.items.len > 0);
     }
 
     pub fn doWork(self: *Shard) !void {
-        // TODO need to schedule operators when their frontier changes too
-        if (self.unprocessed_changes.popOrNull()) |change_batch_at_location| {
-            const frontiers = self.computeFrontiers();
+        if (self.unprocessed_frontier_advances.popOrNull()) |frontier_advance_at_location| {
+            try self.processFrontierAdvance(frontier_advance_at_location);
+        } else if (self.unprocessed_change_batches.popOrNull()) |change_batch_at_location| {
+            try self.processChangeBatch(change_batch_at_location);
+        }
+    }
 
-            const change_batch = change_batch_at_location.change_batch;
-            const location = change_batch_at_location.location;
-            switch (location.port) {
-                .Input => |input_port| {
-                    const node_spec = self.graph.node_specs[location.node.id];
-                    switch (node_spec) {
-                        .Input => panic("Input nodes should not have work pending on their input port", .{}),
-                        .Map => |map| {
-                            var output_change_batch = ChangeBatchBuilder.init(self.allocator);
-                            for (change_batch.changes) |change| {
-                                var output_change = change; // copy
-                                output_change.row = try map.function(change.row);
-                                try output_change_batch.changes.append(output_change);
-                            }
-                            try self.unprocessed_changes.append(.{
-                                .change_batch = output_change_batch.finishAndClear(),
-                                .location = .{ .node = location.node, .port = .{ .Output = 0 } },
-                            });
-                        },
-                        .Index => {
-                            const index = &self.node_states[location.node.id].Index;
-                            try index.change_batches.append(change_batch);
-                            try self.unprocessed_changes.append(.{
-                                .change_batch = change_batch,
-                                .location = .{ .node = location.node, .port = .{ .Output = 0 } },
-                            });
-                        },
-                        .Join => |join| {
-                            const index = &self.node_states[join.inputs[1 - input_port].node.id].Index;
-                            var output_change_batch = ChangeBatchBuilder.init(self.allocator);
-                            for (change_batch.changes) |change| {
-                                const this_key = change.row.values[0..join.key_columns];
-                                for (index.change_batches.items) |other_change_batch| {
-                                    for (other_change_batch.changes) |other_change| {
-                                        const other_key = other_change.row.values[0..join.key_columns];
-                                        if (meta.deepEqual(this_key, other_key)) {
-                                            const values = switch (input_port) {
-                                                0 => &[2][]const Value{ change.row.values, other_change.row.values },
-                                                1 => &[2][]const Value{ other_change.row.values, change.row.values },
-                                                else => panic("Bad input port for join: {}", .{input_port}),
-                                            };
-                                            const output_change = Change{
-                                                .row = .{ .values = try std.mem.concat(self.allocator, Value, values) },
-                                                .diff = change.diff * other_change.diff,
-                                                .timestamp = try Timestamp.leastUpperBound(self.allocator, change.timestamp, other_change.timestamp),
-                                            };
-                                            try output_change_batch.changes.append(output_change);
-                                        }
+    pub fn processChangeBatch(self: *Shard, change_batch_at_location: ChangeBatchAtLocation) !void {
+        const change_batch = change_batch_at_location.change_batch;
+        const location = change_batch_at_location.location;
+        switch (location.port) {
+            .Input => |input_port| {
+                const node_spec = self.graph.node_specs[location.node.id];
+                switch (node_spec) {
+                    .Input => panic("Input nodes should not have work pending on their input port", .{}),
+                    .Map => |map| {
+                        var output_change_batch = ChangeBatchBuilder.init(self.allocator);
+                        for (change_batch.changes) |change| {
+                            var output_change = change; // copy
+                            output_change.row = try map.function(change.row);
+                            try output_change_batch.changes.append(output_change);
+                        }
+                        try self.unprocessed_change_batches.append(.{
+                            .change_batch = output_change_batch.finishAndClear(),
+                            .location = .{ .node = location.node, .port = .{ .Output = 0 } },
+                        });
+                    },
+                    .Index => {
+                        const index = &self.node_states[location.node.id].Index;
+                        try index.change_batches.append(change_batch);
+                        try self.unprocessed_change_batches.append(.{
+                            .change_batch = change_batch,
+                            .location = .{ .node = location.node, .port = .{ .Output = 0 } },
+                        });
+                    },
+                    .Join => |join| {
+                        const index = &self.node_states[join.inputs[1 - input_port].node.id].Index;
+                        var output_change_batch = ChangeBatchBuilder.init(self.allocator);
+                        for (change_batch.changes) |change| {
+                            const this_key = change.row.values[0..join.key_columns];
+                            for (index.change_batches.items) |other_change_batch| {
+                                for (other_change_batch.changes) |other_change| {
+                                    const other_key = other_change.row.values[0..join.key_columns];
+                                    if (meta.deepEqual(this_key, other_key)) {
+                                        const values = switch (input_port) {
+                                            0 => &[2][]const Value{ change.row.values, other_change.row.values },
+                                            1 => &[2][]const Value{ other_change.row.values, change.row.values },
+                                            else => panic("Bad input port for join: {}", .{input_port}),
+                                        };
+                                        const output_change = Change{
+                                            .row = .{ .values = try std.mem.concat(self.allocator, Value, values) },
+                                            .diff = change.diff * other_change.diff,
+                                            .timestamp = try Timestamp.leastUpperBound(self.allocator, change.timestamp, other_change.timestamp),
+                                        };
+                                        try output_change_batch.changes.append(output_change);
                                     }
                                 }
                             }
-                            if (output_change_batch.changes.items.len > 0) {
-                                try self.unprocessed_changes.append(.{
-                                    .change_batch = output_change_batch.finishAndClear(),
-                                    .location = .{ .node = location.node, .port = .{ .Output = 0 } },
-                                });
-                            }
-                        },
-                        .Output => {
-                            const outputs = &self.node_states[location.node.id].Output;
-                            try outputs.append(change_batch);
-                        },
-                        .TimestampPush => {
-                            var output_change_batch = ChangeBatchBuilder.init(self.allocator);
-                            for (change_batch.changes) |change| {
-                                var output_change = change;
-                                output_change.timestamp = try change.timestamp.pushCoord(self.allocator);
-                                try output_change_batch.changes.append(output_change);
-                            }
-                            try self.unprocessed_changes.append(.{
+                        }
+                        if (output_change_batch.changes.items.len > 0) {
+                            try self.unprocessed_change_batches.append(.{
                                 .change_batch = output_change_batch.finishAndClear(),
                                 .location = .{ .node = location.node, .port = .{ .Output = 0 } },
                             });
-                        },
-                        .TimestampIncrement => {
-                            var output_change_batch = ChangeBatchBuilder.init(self.allocator);
-                            for (change_batch.changes) |change| {
-                                var output_change = change;
-                                output_change.timestamp = try change.timestamp.incrementCoord(self.allocator);
-                                try output_change_batch.changes.append(output_change);
-                            }
-                            try self.unprocessed_changes.append(.{
-                                .change_batch = output_change_batch.finishAndClear(),
-                                .location = .{ .node = location.node, .port = .{ .Output = 0 } },
-                            });
-                        },
-                        .TimestampPop => {
-                            var output_change_batch = ChangeBatchBuilder.init(self.allocator);
-                            for (change_batch.changes) |change| {
-                                var output_change = change;
-                                output_change.timestamp = try change.timestamp.popCoord(self.allocator);
-                                try output_change_batch.changes.append(output_change);
-                            }
-                            try self.unprocessed_changes.append(.{
-                                .change_batch = output_change_batch.finishAndClear(),
-                                .location = .{ .node = location.node, .port = .{ .Output = 0 } },
-                            });
-                        },
-                        .Union => {
-                            // Pass straight through to output port
-                            try self.unprocessed_changes.append(.{
-                                .change_batch = change_batch,
-                                .location = .{ .node = location.node, .port = .{ .Output = 0 } },
-                            });
-                        },
-                        .Distinct => |distinct| {
-                            const index = &self.node_states[distinct.input.node.id].Index;
-                            // Need frontiers to implement this correctly
-                            TODO();
-                        },
-                    }
-                },
-                .Output => |output_port| {
-                    // Forward to all nodes that have this location as an input
-                    for (self.graph.downstream_locations[location.node.id]) |downstream_location| {
-                        try self.unprocessed_changes.append(.{
-                            .change_batch = change_batch,
-                            .location = .{
-                                .node = downstream_location.node,
-                                .port = .{ .Input = downstream_location.input_port },
-                            },
+                        }
+                    },
+                    .Output => {
+                        const outputs = &self.node_states[location.node.id].Output;
+                        try outputs.append(change_batch);
+                    },
+                    .TimestampPush => {
+                        var output_change_batch = ChangeBatchBuilder.init(self.allocator);
+                        for (change_batch.changes) |change| {
+                            var output_change = change; // copy
+                            output_change.timestamp = try change.timestamp.pushCoord(self.allocator);
+                            try output_change_batch.changes.append(output_change);
+                        }
+                        try self.unprocessed_change_batches.append(.{
+                            .change_batch = output_change_batch.finishAndClear(),
+                            .location = .{ .node = location.node, .port = .{ .Output = 0 } },
                         });
-                    }
-                },
-            }
+                    },
+                    .TimestampIncrement => {
+                        var output_change_batch = ChangeBatchBuilder.init(self.allocator);
+                        for (change_batch.changes) |change| {
+                            var output_change = change; // copy
+                            output_change.timestamp = try change.timestamp.incrementCoord(self.allocator);
+                            try output_change_batch.changes.append(output_change);
+                        }
+                        try self.unprocessed_change_batches.append(.{
+                            .change_batch = output_change_batch.finishAndClear(),
+                            .location = .{ .node = location.node, .port = .{ .Output = 0 } },
+                        });
+                    },
+                    .TimestampPop => {
+                        var output_change_batch = ChangeBatchBuilder.init(self.allocator);
+                        for (change_batch.changes) |change| {
+                            var output_change = change; // copy
+                            output_change.timestamp = try change.timestamp.popCoord(self.allocator);
+                            try output_change_batch.changes.append(output_change);
+                        }
+                        try self.unprocessed_change_batches.append(.{
+                            .change_batch = output_change_batch.finishAndClear(),
+                            .location = .{ .node = location.node, .port = .{ .Output = 0 } },
+                        });
+                    },
+                    .Union => {
+                        // Pass straight through to output port
+                        try self.unprocessed_change_batches.append(.{
+                            .change_batch = change_batch,
+                            .location = .{ .node = location.node, .port = .{ .Output = 0 } },
+                        });
+                    },
+                    .Distinct => |distinct| {
+                        const index = &self.node_states[distinct.input.node.id].Index;
+                        // Need frontiers to implement this correctly
+                        TODO();
+                    },
+                }
+            },
+            .Output => |output_port| {
+                // Forward to all nodes that have this location as an input
+                for (self.graph.downstream_locations[location.node.id]) |downstream_location| {
+                    try self.unprocessed_change_batches.append(.{
+                        .change_batch = change_batch,
+                        .location = .{
+                            .node = downstream_location.node,
+                            .port = .{ .Input = downstream_location.input_port },
+                        },
+                    });
+                }
+            },
+        }
+    }
+
+    pub fn processFrontierAdvance(self: *Shard, frontier_advance_at_location: FrontierAdvanceAtLocation) !void {
+        const frontier_advance = frontier_advance_at_location.frontier_advance;
+        const location = frontier_advance_at_location.location;
+        switch (location.port) {
+            .Input => |input_port| {
+                var input_frontier = Frontier.init(self.allocator);
+                for (self.graph.upstream_locations[location.node.id]) |upstream_location| {
+                    _ = try input_frontier.merge(self.node_frontiers[upstream_location.node.id]);
+                }
+                var output_frontier = &self.node_frontiers[location.node.id];
+                var updated: Updated = .NotUpdated;
+                var iter = input_frontier.lower_bounds.iterator();
+                while (iter.next()) |kv| {
+                    const input_timestamp = kv.key;
+                    const output_timestamp = switch (self.graph.node_specs[location.node.id]) {
+                        .TimestampPush => try input_timestamp.pushCoord(self.allocator),
+                        .TimestampIncrement => try input_timestamp.incrementCoord(self.allocator),
+                        .TimestampPop => try input_timestamp.popCoord(self.allocator),
+                        // TODO Index should buffer changes and output batch here
+                        else => input_timestamp,
+                    };
+                    updated = updated.merge(try output_frontier.insertTimestamp(output_timestamp));
+                }
+                if (updated == .Updated) {
+                    try self.unprocessed_frontier_advances.append(.{
+                        .frontier_advance = .{},
+                        .location = .{
+                            .node = location.node,
+                            .port = .{ .Output = 0 },
+                        },
+                    });
+                }
+            },
+            .Output => |output_port| {
+                // Forward to all nodes that have this location as an input
+                for (self.graph.downstream_locations[location.node.id]) |downstream_location| {
+                    try self.unprocessed_frontier_advances.append(.{
+                        .frontier_advance = frontier_advance,
+                        .location = .{
+                            .node = downstream_location.node,
+                            .port = .{ .Input = downstream_location.input_port },
+                        },
+                    });
+                }
+            },
         }
     }
 
