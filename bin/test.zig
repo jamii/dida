@@ -16,13 +16,13 @@ pub fn main() !void {
 
     var graph_builder = dida.GraphBuilder.init(allocator);
 
-    const edges = try graph_builder.addNode(.Input);
-    const edges_1 = try graph_builder.addNode(.{ .TimestampPush = .{ .input = .{ .node = edges, .output_port = 0 } } });
-    const reach_in = try graph_builder.addNode(.{ .Union = .{ .input1 = .{ .node = edges_1, .output_port = 0 }, .input2 = null } });
-    const reach_index = try graph_builder.addNode(.{ .Index = .{ .input = .{ .node = reach_in, .output_port = 0 } } });
+    const edges = try graph_builder.addNode(.{ .Input = .{ .num_timestamp_coords = 1 } });
+    const edges_1 = try graph_builder.addNode(.{ .TimestampPush = .{ .input = edges } });
+    const reach_in = try graph_builder.addNode(.{ .Union = .{ .input0 = edges_1, .input1 = null } });
+    const reach_index = try graph_builder.addNode(.{ .Index = .{ .input = reach_in } });
     const swapped_edges = try graph_builder.addNode(.{
         .Map = .{
-            .input = .{ .node = edges_1, .output_port = 0 },
+            .input = edges_1,
             .function = (struct {
                 fn swap(input: dida.Row) error{OutOfMemory}!dida.Row {
                     var output_values = try allocator.alloc(dida.Value, 2);
@@ -33,19 +33,19 @@ pub fn main() !void {
             }).swap,
         },
     });
-    const swapped_edges_index = try graph_builder.addNode(.{ .Index = .{ .input = .{ .node = swapped_edges, .output_port = 0 } } });
+    const swapped_edges_index = try graph_builder.addNode(.{ .Index = .{ .input = swapped_edges } });
     const joined = try graph_builder.addNode(.{
         .Join = .{
             .inputs = .{
-                .{ .node = reach_index, .output_port = 0 },
-                .{ .node = swapped_edges_index, .output_port = 0 },
+                reach_index,
+                swapped_edges_index,
             },
             .key_columns = 1,
         },
     });
     const without_middle = try graph_builder.addNode(.{
         .Map = .{
-            .input = .{ .node = joined, .output_port = 0 },
+            .input = joined,
             .function = (struct {
                 fn drop_middle(input: dida.Row) error{OutOfMemory}!dida.Row {
                     var output_values = try allocator.alloc(dida.Value, 2);
@@ -56,10 +56,10 @@ pub fn main() !void {
             }).drop_middle,
         },
     });
-    const back = try graph_builder.addNode(.{ .TimestampIncrement = .{ .input = .{ .node = without_middle, .output_port = 0 } } });
-    graph_builder.node_specs.items[reach_in.id].Union.input2 = .{ .node = back, .output_port = 0 };
-    const reach_out = try graph_builder.addNode(.{ .TimestampPop = .{ .input = .{ .node = without_middle, .output_port = 0 } } });
-    const out = try graph_builder.addNode(.{ .Output = .{ .input = .{ .node = reach_out, .output_port = 0 } } });
+    const back = try graph_builder.addNode(.{ .TimestampIncrement = .{ .input = without_middle } });
+    graph_builder.node_specs.items[reach_in.id].Union.input1 = back;
+    const reach_out = try graph_builder.addNode(.{ .TimestampPop = .{ .input = without_middle } });
+    const out = try graph_builder.addNode(.{ .Output = .{ .input = reach_out } });
 
     const graph = try graph_builder.finishAndClear();
 

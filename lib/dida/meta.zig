@@ -197,3 +197,97 @@ pub fn deepHashInto(hasher: anytype, key: anytype) void {
         else => @compileError("cannot deepHash " ++ @typeName(T)),
     }
 }
+
+pub fn dumpInto(out_stream: anytype, indent: u32, thing: anytype) anyerror!void {
+    const T = @TypeOf(thing);
+    const ti = @typeInfo(T);
+    switch (ti) {
+        .Struct, .Enum, .Union => {
+            if (@hasDecl(T, "dumpInto")) {
+                return T.dumpInto(out_stream, indent, thing);
+            }
+        },
+        else => {},
+    }
+    switch (ti) {
+        .Pointer => |pti| {
+            switch (pti.size) {
+                .One => {
+                    try out_stream.writeAll("&");
+                    try dumpInto(out_stream, indent, thing.*);
+                },
+                .Many => {
+                    // bail
+                    try std.fmt.format(out_stream, "{}", .{thing});
+                },
+                .Slice => {
+                    if (pti.child == u8) {
+                        try std.fmt.format(out_stream, "\"{s}\"", .{thing});
+                    } else {
+                        try std.fmt.format(out_stream, "[]{}[\n", .{@typeName(pti.child)});
+                        for (thing) |elem| {
+                            try out_stream.writeByteNTimes(' ', indent + 4);
+                            try dumpInto(out_stream, indent + 4, elem);
+                            try out_stream.writeAll(",\n");
+                        }
+                        try out_stream.writeByteNTimes(' ', indent);
+                        try out_stream.writeAll("]");
+                    }
+                },
+                .C => {
+                    // bail
+                    try std.fmt.format(out_stream, "{}", .{thing});
+                },
+            }
+        },
+        .Array => |ati| {
+            if (ati.child == u8) {
+                try std.fmt.format(out_stream, "\"{s}\"", .{thing});
+            } else {
+                try std.fmt.format(out_stream, "[{}]{}[\n", .{ ati.len, @typeName(ati.child) });
+                for (thing) |elem| {
+                    try out_stream.writeByteNTimes(' ', indent + 4);
+                    try dumpInto(out_stream, indent + 4, elem);
+                    try out_stream.writeAll(",\n");
+                }
+                try out_stream.writeByteNTimes(' ', indent);
+                try out_stream.writeAll("]");
+            }
+        },
+        .Struct => |sti| {
+            try out_stream.writeAll(@typeName(@TypeOf(thing)));
+            try out_stream.writeAll("{\n");
+            inline for (sti.fields) |field| {
+                try out_stream.writeByteNTimes(' ', indent + 4);
+                try std.fmt.format(out_stream, ".{} = ", .{field.name});
+                try dumpInto(out_stream, indent + 4, @field(thing, field.name));
+                try out_stream.writeAll(",\n");
+            }
+            try out_stream.writeByteNTimes(' ', indent);
+            try out_stream.writeAll("}");
+        },
+        .Union => |uti| {
+            if (uti.tag_type) |tag_type| {
+                try out_stream.writeAll(@typeName(@TypeOf(thing)));
+                try out_stream.writeAll("{\n");
+                inline for (@typeInfo(tag_type).Enum.fields) |fti| {
+                    if (@enumToInt(std.meta.activeTag(thing)) == fti.value) {
+                        try out_stream.writeByteNTimes(' ', indent + 4);
+                        try std.fmt.format(out_stream, ".{} = ", .{fti.name});
+                        try dumpInto(out_stream, indent + 4, @field(thing, fti.name));
+                        try out_stream.writeAll("\n");
+                        try out_stream.writeByteNTimes(' ', indent);
+                        try out_stream.writeAll("}");
+                    }
+                }
+            } else {
+                // bail
+                try std.fmt.format(out_stream, "{}", .{thing});
+            }
+        },
+        else => {
+            // bail
+            try std.fmt.format(out_stream, "{}", .{thing});
+        },
+    }
+}
