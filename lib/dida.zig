@@ -165,6 +165,7 @@ pub const Frontier = struct {
                 .none => {
                     // keep this timestamp
                     self.timestamps.items[good_ix] = other_timestamp;
+                    good_ix += 1;
                 },
             }
         }
@@ -191,6 +192,7 @@ pub const Frontier = struct {
                 .none => {
                     // keep this timestamp
                     self.timestamps.items[good_ix] = other_timestamp;
+                    good_ix += 1;
                 },
             }
         }
