@@ -215,6 +215,7 @@ pub const Change = struct {
     timestamp: Timestamp,
     diff: isize,
 };
+
 pub const ChangeBatchBuilder = struct {
     allocator: *Allocator,
     changes: ArrayList(Change),
@@ -227,12 +228,32 @@ pub const ChangeBatchBuilder = struct {
     }
 
     pub fn finishAndClear(self: *ChangeBatchBuilder) !ChangeBatch {
-        // TODO sort, consolidate
         release_assert(self.changes.items.len > 0, "Refusing to build an empty change batch", .{});
+
+        std.sort.sort(Change, self.changes.items, {}, struct {
+            fn lessThan(_: void, a: Change, b: Change) bool {
+                return meta.deepCompare(a, b) == .lt;
+            }
+        }.lessThan);
+
+        // Coalesce changes with identical rows and timestamps
+        var prev_i: usize = 0;
+        for (self.changes.items[1..]) |change, i| {
+            const prev_change = &self.changes.items[prev_i];
+            if (meta.deepEqual(prev_change.row, change.row) and meta.deepEqual(prev_change.timestamp, change.timestamp)) {
+                prev_change.diff += change.diff;
+            } else {
+                prev_i += 1;
+                self.changes.items[prev_i] = change;
+            }
+        }
+        self.changes.shrink(prev_i + 1);
+
         var lower_bound = try Frontier.initLeast(self.allocator, self.changes.items[0].timestamp.coords.len);
         for (self.changes.items) |change| {
             try lower_bound.retreat(change.timestamp);
         }
+
         return ChangeBatch{
             .lower_bound = lower_bound,
             .changes = self.changes.toOwnedSlice(),
@@ -244,8 +265,8 @@ pub const ChangeBatch = struct {
     // Invariant: for every change in changes, lower_bound.causalOrder(change).isLessThanOrEqual()
     lower_bound: Frontier,
     // Invariant: non-empty,
-    // TODO Invariant: sorted by row/timestamp
-    // TODO Invariant: no two changes with same row/timestamp
+    // Invariant: sorted by row/timestamp
+    // Invariant: no two changes with same row/timestamp
     changes: []Change,
 };
 
