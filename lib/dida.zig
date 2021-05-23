@@ -770,6 +770,27 @@ pub const Shard = struct {
             }
         }
 
+        // If this is an Index node, might be able to produce a batch for the Index output
+        // This check has to happen BEFORE we take these pending changes into account for the output frontier
+        if (self.graph.node_specs[node.id] == .Index) {
+            var index_state = &self.node_states[node.id].Index;
+            var indexed_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
+            var pending_changes = ArrayList(Change).init(self.allocator);
+            for (index_state.pending_changes.items) |change| {
+                if (new_frontier.causalOrder(change.timestamp) == .gt) {
+                    try indexed_change_batch_builder.changes.append(change);
+                } else {
+                    try pending_changes.append(change);
+                }
+            }
+            index_state.pending_changes = pending_changes;
+            if (indexed_change_batch_builder.changes.items.len > 0) {
+                const indexed_change_batch = try indexed_change_batch_builder.finishAndClear();
+                try index_state.indexed_change_batches.append(indexed_change_batch);
+                try self.emitChangeBatch(node, indexed_change_batch);
+            }
+        }
+
         // Check any pending changes in Index
         if (node_spec == .Index) {
             // TODO this could be a lot of work
@@ -797,26 +818,6 @@ pub const Shard = struct {
         if (updated) {
             for (self.graph.downstream_node_inputs[node.id]) |downstream_node_input| {
                 try self.unprocessed_frontier_advances.put(downstream_node_input.node, {});
-            }
-        }
-
-        // If frontier changed and this is an Index, might need to produce a batch for the Index output
-        if (updated and self.graph.node_specs[node.id] == .Index) {
-            var index_state = &self.node_states[node.id].Index;
-            var indexed_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
-            var pending_changes = ArrayList(Change).init(self.allocator);
-            for (index_state.pending_changes.items) |change| {
-                if (new_frontier.causalOrder(change.timestamp) == .gt) {
-                    try indexed_change_batch_builder.changes.append(change);
-                } else {
-                    try pending_changes.append(change);
-                }
-            }
-            index_state.pending_changes = pending_changes;
-            if (indexed_change_batch_builder.changes.items.len > 0) {
-                const indexed_change_batch = try indexed_change_batch_builder.finishAndClear();
-                try index_state.indexed_change_batches.append(indexed_change_batch);
-                try self.emitChangeBatch(node, indexed_change_batch);
             }
         }
     }
