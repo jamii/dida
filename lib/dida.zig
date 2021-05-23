@@ -512,8 +512,10 @@ pub const Shard = struct {
         var node_capabilities = try allocator.alloc(DeepHashMap(Timestamp, usize), num_nodes);
         for (node_capabilities) |*node_capability, node_id| {
             node_capability.* = DeepHashMap(Timestamp, usize).init(allocator);
-            const timestamp = try Timestamp.initLeast(allocator, graph.num_timestamp_coords[node_id]);
-            try node_capability.put(timestamp, 1);
+            if (graph.node_specs[node_id] == .Input) {
+                const timestamp = try Timestamp.initLeast(allocator, graph.num_timestamp_coords[node_id]);
+                try node_capability.put(timestamp, 1);
+            }
         }
 
         var node_frontiers = try allocator.alloc(Frontier, num_nodes);
@@ -590,7 +592,7 @@ pub const Shard = struct {
                 .change_batch = change_batch,
                 .node_input = to_node_input,
             });
-            var capability = self.node_capabilities[to_node_input.node.id];
+            var capability = &self.node_capabilities[to_node_input.node.id];
             for (change_batch.lower_bound.timestamps.items) |timestamp| {
                 var count = try capability.getOrPutValue(timestamp, 0);
                 count.value += 1;
@@ -777,7 +779,7 @@ pub const Shard = struct {
                 return a.lexicalOrder(b) == .lt;
             }
         }.lessThan);
-        const updated = meta.deepEqual(old_frontier.timestamps.items, new_frontier.timestamps.items);
+        const updated = !meta.deepEqual(old_frontier.timestamps.items, new_frontier.timestamps.items);
 
         old_frontier.* = new_frontier;
 
@@ -806,11 +808,6 @@ pub const Shard = struct {
                 try index_state.indexed_change_batches.append(indexed_change_batch);
                 try self.emitChangeBatch(node, indexed_change_batch);
             }
-        }
-
-        // Queue updates for all nodes that have this node as an input
-        for (self.graph.downstream_node_inputs[node.id]) |downstream_node_input| {
-            try self.unprocessed_frontier_advances.put(downstream_node_input.node, {});
         }
     }
 
