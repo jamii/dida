@@ -85,4 +85,6 @@ pub fn main() !void {
             dida.common.dump(change);
         }
     }
+
+    dida.common.dump(shard);
 }

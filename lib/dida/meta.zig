@@ -198,13 +198,13 @@ pub fn deepHashInto(hasher: anytype, key: anytype) void {
     }
 }
 
-pub fn dumpInto(out_stream: anytype, indent: u32, thing: anytype) anyerror!void {
+pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
     const T = @TypeOf(thing);
     const ti = @typeInfo(T);
     switch (ti) {
         .Struct, .Enum, .Union => {
             if (@hasDecl(T, "dumpInto")) {
-                return T.dumpInto(out_stream, indent, thing);
+                return T.dumpInto(writer, indent, thing);
             }
         },
         else => {},
@@ -213,81 +213,81 @@ pub fn dumpInto(out_stream: anytype, indent: u32, thing: anytype) anyerror!void 
         .Pointer => |pti| {
             switch (pti.size) {
                 .One => {
-                    try out_stream.writeAll("&");
-                    try dumpInto(out_stream, indent, thing.*);
+                    try writer.writeAll("&");
+                    try dumpInto(writer, indent, thing.*);
                 },
                 .Many => {
                     // bail
-                    try std.fmt.format(out_stream, "{}", .{thing});
+                    try std.fmt.format(writer, "{}", .{thing});
                 },
                 .Slice => {
                     if (pti.child == u8) {
-                        try std.fmt.format(out_stream, "\"{s}\"", .{thing});
+                        try std.fmt.format(writer, "\"{s}\"", .{thing});
                     } else {
-                        try std.fmt.format(out_stream, "[]{}[\n", .{@typeName(pti.child)});
+                        try std.fmt.format(writer, "[]{}[\n", .{@typeName(pti.child)});
                         for (thing) |elem| {
-                            try out_stream.writeByteNTimes(' ', indent + 4);
-                            try dumpInto(out_stream, indent + 4, elem);
-                            try out_stream.writeAll(",\n");
+                            try writer.writeByteNTimes(' ', indent + 4);
+                            try dumpInto(writer, indent + 4, elem);
+                            try writer.writeAll(",\n");
                         }
-                        try out_stream.writeByteNTimes(' ', indent);
-                        try out_stream.writeAll("]");
+                        try writer.writeByteNTimes(' ', indent);
+                        try writer.writeAll("]");
                     }
                 },
                 .C => {
                     // bail
-                    try std.fmt.format(out_stream, "{}", .{thing});
+                    try std.fmt.format(writer, "{}", .{thing});
                 },
             }
         },
         .Array => |ati| {
             if (ati.child == u8) {
-                try std.fmt.format(out_stream, "\"{s}\"", .{thing});
+                try std.fmt.format(writer, "\"{s}\"", .{thing});
             } else {
-                try std.fmt.format(out_stream, "[{}]{}[\n", .{ ati.len, @typeName(ati.child) });
+                try std.fmt.format(writer, "[{}]{}[\n", .{ ati.len, @typeName(ati.child) });
                 for (thing) |elem| {
-                    try out_stream.writeByteNTimes(' ', indent + 4);
-                    try dumpInto(out_stream, indent + 4, elem);
-                    try out_stream.writeAll(",\n");
+                    try writer.writeByteNTimes(' ', indent + 4);
+                    try dumpInto(writer, indent + 4, elem);
+                    try writer.writeAll(",\n");
                 }
-                try out_stream.writeByteNTimes(' ', indent);
-                try out_stream.writeAll("]");
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll("]");
             }
         },
         .Struct => |sti| {
-            try out_stream.writeAll(@typeName(@TypeOf(thing)));
-            try out_stream.writeAll("{\n");
+            try writer.writeAll(@typeName(@TypeOf(thing)));
+            try writer.writeAll("{\n");
             inline for (sti.fields) |field| {
-                try out_stream.writeByteNTimes(' ', indent + 4);
-                try std.fmt.format(out_stream, ".{} = ", .{field.name});
-                try dumpInto(out_stream, indent + 4, @field(thing, field.name));
-                try out_stream.writeAll(",\n");
+                try writer.writeByteNTimes(' ', indent + 4);
+                try std.fmt.format(writer, ".{} = ", .{field.name});
+                try dumpInto(writer, indent + 4, @field(thing, field.name));
+                try writer.writeAll(",\n");
             }
-            try out_stream.writeByteNTimes(' ', indent);
-            try out_stream.writeAll("}");
+            try writer.writeByteNTimes(' ', indent);
+            try writer.writeAll("}");
         },
         .Union => |uti| {
             if (uti.tag_type) |tag_type| {
-                try out_stream.writeAll(@typeName(@TypeOf(thing)));
-                try out_stream.writeAll("{\n");
+                try writer.writeAll(@typeName(@TypeOf(thing)));
+                try writer.writeAll("{\n");
                 inline for (@typeInfo(tag_type).Enum.fields) |fti| {
                     if (@enumToInt(std.meta.activeTag(thing)) == fti.value) {
-                        try out_stream.writeByteNTimes(' ', indent + 4);
-                        try std.fmt.format(out_stream, ".{} = ", .{fti.name});
-                        try dumpInto(out_stream, indent + 4, @field(thing, fti.name));
-                        try out_stream.writeAll("\n");
-                        try out_stream.writeByteNTimes(' ', indent);
-                        try out_stream.writeAll("}");
+                        try writer.writeByteNTimes(' ', indent + 4);
+                        try std.fmt.format(writer, ".{} = ", .{fti.name});
+                        try dumpInto(writer, indent + 4, @field(thing, fti.name));
+                        try writer.writeAll("\n");
+                        try writer.writeByteNTimes(' ', indent);
+                        try writer.writeAll("}");
                     }
                 }
             } else {
                 // bail
-                try std.fmt.format(out_stream, "{}", .{thing});
+                try std.fmt.format(writer, "{}", .{thing});
             }
         },
         else => {
             // bail
-            try std.fmt.format(out_stream, "{}", .{thing});
+            try std.fmt.format(writer, "{}", .{thing});
         },
     }
 }

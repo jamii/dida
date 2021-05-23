@@ -92,6 +92,16 @@ pub const Timestamp = struct {
         }
         return .eq;
     }
+
+    pub fn dumpInto(writer: anytype, indent: u32, self: Timestamp) anyerror!void {
+        try writer.writeAll("T[");
+        for (self.coords) |coord, i| {
+            try std.fmt.format(writer, "{}", .{coord});
+            if (i != self.coords.len - 1)
+                try writer.writeAll(", ");
+        }
+        try writer.writeAll("]");
+    }
 };
 
 pub const Frontier = struct {
@@ -826,5 +836,65 @@ pub const Shard = struct {
 
     pub fn popOutput(self: *Shard, node: Node) ?ChangeBatch {
         return self.node_states[node.id].Output.unpopped_change_batches.popOrNull();
+    }
+
+    pub fn dumpInto(writer: anytype, indent: u32, self: Shard) anyerror!void {
+        try writer.writeAll("Shard{\n");
+
+        for (self.graph.node_specs) |node_spec, node_id| {
+            try writer.writeByteNTimes(' ', indent + 4);
+            try std.fmt.format(writer, "{}: {{\n", .{node_id});
+
+            try writer.writeByteNTimes(' ', indent + 8);
+            try writer.writeAll("spec: ");
+            try meta.dumpInto(writer, indent + 8, node_spec);
+            try writer.writeAll(",\n");
+
+            try writer.writeByteNTimes(' ', indent + 8);
+            try writer.writeAll("state: ");
+            try meta.dumpInto(writer, indent + 8, self.node_states[node_id]);
+            try writer.writeAll(",\n");
+
+            try writer.writeByteNTimes(' ', indent + 8);
+            try writer.writeAll("caps: {\n");
+            {
+                var iter = self.node_capabilities[node_id].iterator();
+                while (iter.next()) |entry| {
+                    try writer.writeByteNTimes(' ', indent + 12);
+                    try meta.dumpInto(writer, indent + 16, entry.key);
+                    try std.fmt.format(writer, ": {},\n", .{entry.value});
+                }
+            }
+            try writer.writeByteNTimes(' ', indent + 8);
+            try writer.writeAll("},\n");
+
+            try writer.writeByteNTimes(' ', indent + 8);
+            try writer.writeAll("frontier: ");
+            try meta.dumpInto(writer, indent + 12, self.node_frontiers[node_id].timestamps.items);
+            try writer.writeAll(",\n");
+
+            try writer.writeByteNTimes(' ', indent + 8);
+            try std.fmt.format(writer, "unprocessed_frontier_update: {},\n", .{self.unprocessed_frontier_advances.contains(.{ .id = node_id })});
+
+            try writer.writeByteNTimes(' ', indent + 8);
+            try writer.writeAll("unprocessed_change_batches: [\n");
+            {
+                for (self.unprocessed_change_batches.items) |change_batch_at_node_input| {
+                    if (change_batch_at_node_input.node_input.node.id == node_id) {
+                        try writer.writeByteNTimes(' ', indent + 12);
+                        try meta.dumpInto(writer, indent + 12, change_batch_at_node_input.change_batch);
+                        try writer.writeAll(",\n");
+                    }
+                }
+            }
+            try writer.writeByteNTimes(' ', indent + 8);
+            try writer.writeAll("],\n");
+
+            try writer.writeByteNTimes(' ', indent + 4);
+            try writer.writeAll("},\n");
+        }
+
+        try writer.writeByteNTimes(' ', indent);
+        try writer.writeAll("}\n");
     }
 };
