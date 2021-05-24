@@ -306,7 +306,7 @@ pub const Bag = struct {
     }
 
     pub fn update(self: *Bag, row: Row, diff: isize) !void {
-        const entry = (try self.row_counts.getOrPut(row)).entry;
+        const entry = try self.row_counts.getOrPutValue(row, 0);
         entry.value += diff;
         if (entry.value == 0) self.row_counts.removeAssertDiscard(row);
     }
@@ -905,9 +905,8 @@ pub const Shard = struct {
             }
 
             // Check any pending changes in the index
-            for (node_state.Index.pending_changes.items) |change| {
+            for (node_state.Index.pending_changes.items) |change|
                 try new_frontier.retreat(change.timestamp);
-            }
         }
 
         // Distinct-specific stuff
@@ -948,7 +947,7 @@ pub const Shard = struct {
                 {
                     var iter = new_bag.row_counts.iterator();
                     while (iter.next()) |new_entry| {
-                        const diff = new_entry.value - (old_bag.row_counts.get(new_entry.key) orelse 0);
+                        const diff = 1 - (old_bag.row_counts.get(new_entry.key) orelse 0);
                         if (diff != 0)
                             try change_batch_builder.changes.append(.{
                                 .row = new_entry.key,
@@ -976,7 +975,15 @@ pub const Shard = struct {
             // Emit changes
             if (change_batch_builder.changes.items.len > 0) {
                 const change_batch = try change_batch_builder.finishAndClear();
+                try output_index.change_batches.append(change_batch);
                 try self.emitChangeBatch(node, change_batch);
+            }
+
+            // Add any remaining pending timestamps to new frontier
+            {
+                var iter = node_state.Distinct.pending_timestamps.iterator();
+                while (iter.next()) |entry|
+                    try new_frontier.retreat(entry.key);
             }
         }
 
