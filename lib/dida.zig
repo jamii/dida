@@ -270,6 +270,16 @@ pub const ChangeBatch = struct {
     changes: []Change,
 };
 
+pub const Index = struct {
+    change_batches: ArrayList(ChangeBatch),
+
+    pub fn init(allocator: *Allocator) Index {
+        return .{
+            .change_batches = ArrayList(ChangeBatch).init(allocator),
+        };
+    }
+};
+
 pub const Node = struct {
     id: usize,
 };
@@ -359,6 +369,7 @@ pub const NodeSpec = union(enum) {
         };
     }
 };
+
 pub const NodeState = union(enum) {
     Input: InputState,
     Map,
@@ -376,7 +387,7 @@ pub const NodeState = union(enum) {
     };
 
     pub const IndexState = struct {
-        indexed_change_batches: ArrayList(ChangeBatch),
+        index: Index,
         // These are waiting for the frontier to advance before they are added to the index
         pending_changes: ArrayList(Change),
     };
@@ -395,7 +406,7 @@ pub const NodeState = union(enum) {
             .Map => .Map,
             .Index => .{
                 .Index = .{
-                    .indexed_change_batches = ArrayList(ChangeBatch).init(allocator),
+                    .index = Index.init(allocator),
                     .pending_changes = ArrayList(Change).init(allocator),
                 },
             },
@@ -685,11 +696,11 @@ pub const Shard = struct {
                 try index.pending_changes.appendSlice(change_batch.changes);
             },
             .Join => |join| {
-                const index = &self.node_states[join.inputs[1 - node_input.input_ix].id].Index;
+                const index_state = &self.node_states[join.inputs[1 - node_input.input_ix].id].Index;
                 var output_change_batch = ChangeBatchBuilder.init(self.allocator);
                 for (change_batch.changes) |change| {
                     const this_key = change.row.values[0..join.key_columns];
-                    for (index.indexed_change_batches.items) |other_change_batch| {
+                    for (index_state.index.change_batches.items) |other_change_batch| {
                         for (other_change_batch.changes) |other_change| {
                             const other_key = other_change.row.values[0..join.key_columns];
                             if (meta.deepEqual(this_key, other_key)) {
@@ -796,7 +807,7 @@ pub const Shard = struct {
         // If this is an Index node, might be able to produce a batch for the Index output
         // This check has to happen BEFORE we take these pending changes into account for the output frontier
         if (self.graph.node_specs[node.id] == .Index) {
-            var index_state = &self.node_states[node.id].Index;
+            const index_state = &self.node_states[node.id].Index;
             var indexed_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
             var pending_changes = ArrayList(Change).init(self.allocator);
             for (index_state.pending_changes.items) |change| {
@@ -809,7 +820,7 @@ pub const Shard = struct {
             index_state.pending_changes = pending_changes;
             if (indexed_change_batch_builder.changes.items.len > 0) {
                 const indexed_change_batch = try indexed_change_batch_builder.finishAndClear();
-                try index_state.indexed_change_batches.append(indexed_change_batch);
+                try index_state.index.change_batches.append(indexed_change_batch);
                 try self.emitChangeBatch(node, indexed_change_batch);
             }
         }
