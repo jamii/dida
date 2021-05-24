@@ -20,6 +20,7 @@ pub fn main() !void {
     const edges_1 = try graph_builder.addNode(.{ .TimestampPush = .{ .input = edges } });
     const reach_in = try graph_builder.addNode(.{ .Union = .{ .input0 = edges_1, .input1 = null } });
     const reach_index = try graph_builder.addNode(.{ .Index = .{ .input = reach_in } });
+    const distinct_reach_index = try graph_builder.addNode(.{ .Distinct = .{ .input = reach_index } });
     const swapped_edges = try graph_builder.addNode(.{
         .Map = .{
             .input = edges_1,
@@ -37,7 +38,7 @@ pub fn main() !void {
     const joined = try graph_builder.addNode(.{
         .Join = .{
             .inputs = .{
-                reach_index,
+                distinct_reach_index,
                 swapped_edges_index,
             },
             .key_columns = 1,

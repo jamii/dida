@@ -271,12 +271,44 @@ pub const ChangeBatch = struct {
 };
 
 pub const Index = struct {
+    allocator: *Allocator,
     change_batches: ArrayList(ChangeBatch),
 
     pub fn init(allocator: *Allocator) Index {
         return .{
+            .allocator = allocator,
             .change_batches = ArrayList(ChangeBatch).init(allocator),
         };
+    }
+
+    pub fn getBagAsOf(self: *Index, allocator: *Allocator, timestamp: Timestamp) !Bag {
+        var bag = Bag.init(allocator);
+        for (self.change_batches.items) |change_batch| {
+            if (change_batch.lower_bound.causalOrder(timestamp).isLessThanOrEqual()) {
+                for (change_batch.changes) |change| {
+                    if (change.timestamp.causalOrder(timestamp).isLessThanOrEqual()) {
+                        try bag.update(change.row, change.diff);
+                    }
+                }
+            }
+        }
+        return bag;
+    }
+};
+
+pub const Bag = struct {
+    row_counts: DeepHashMap(Row, isize),
+
+    pub fn init(allocator: *Allocator) Bag {
+        return .{
+            .row_counts = DeepHashMap(Row, isize).init(allocator),
+        };
+    }
+
+    pub fn update(self: *Bag, row: Row, diff: isize) !void {
+        const entry = (try self.row_counts.getOrPut(row)).entry;
+        entry.value += diff;
+        if (entry.value == 0) self.row_counts.removeAssertDiscard(row);
     }
 };
 
@@ -368,6 +400,13 @@ pub const NodeSpec = union(enum) {
             .Union => |spec| if (input_ix == 0) spec.input0 else spec.input1.?,
         };
     }
+
+    pub fn hasIndex(self: NodeSpec) bool {
+        return switch (self) {
+            .Index, .Distinct => true,
+            else => false,
+        };
+    }
 };
 
 pub const NodeState = union(enum) {
@@ -380,7 +419,7 @@ pub const NodeState = union(enum) {
     TimestampIncrement,
     TimestampPop,
     Union,
-    Distinct,
+    Distinct: DistinctState,
 
     pub const InputState = struct {
         unflushed_changes: ChangeBatchBuilder,
@@ -394,6 +433,15 @@ pub const NodeState = union(enum) {
 
     pub const OutputState = struct {
         unpopped_change_batches: ArrayList(ChangeBatch),
+    };
+
+    pub const DistinctState = struct {
+        index: Index,
+        // These are times in the future at which the output might change even if there is no new input.
+        // To calculate:
+        // * Take the leastUpperBound of the timestamps of every possible subset of changes in the input.
+        // * Filter out timestamps that are before the output frontier of this node.
+        pending_timestamps: DeepHashSet(Timestamp),
     };
 
     pub fn init(allocator: *Allocator, node_spec: NodeSpec) NodeState {
@@ -420,7 +468,21 @@ pub const NodeState = union(enum) {
             .TimestampIncrement => .TimestampIncrement,
             .TimestampPop => .TimestampPop,
             .Union => .Union,
-            .Distinct => .Distinct,
+            .Distinct => .{
+                .Distinct = .{
+                    .index = Index.init(allocator),
+                    .pending_timestamps = DeepHashSet(Timestamp).init(allocator),
+                },
+            },
+        };
+    }
+
+    pub fn getIndex(self: *NodeState) ?*Index {
+        // TODO unsure if this is correct way to get payload pointer
+        return switch (self.*) {
+            .Index => |*state| &state.index,
+            .Distinct => |*state| &state.index,
+            else => null,
         };
     }
 };
@@ -488,13 +550,13 @@ pub const GraphBuilder = struct {
                     );
                 switch (node_spec) {
                     .Join => |join| release_assert(
-                        self.node_specs.items[input_node.id] == .Index,
-                        "Inputs to Join node must be Index nodes",
+                        self.node_specs.items[input_node.id].hasIndex(),
+                        "Inputs to Join node must be contain an index",
                         .{},
                     ),
                     .Distinct => |distinct| release_assert(
-                        self.node_specs.items[input_node.id] == .Index,
-                        "Input to Distinct node must be an Index node",
+                        self.node_specs.items[input_node.id].hasIndex(),
+                        "Input to Distinct node must contain an index",
                         .{},
                     ),
                     else => {},
@@ -679,6 +741,7 @@ pub const Shard = struct {
 
     pub fn processChangeBatch(self: *Shard, change_batch: ChangeBatch, node_input: NodeInput) !void {
         const node_spec = self.graph.node_specs[node_input.node.id];
+        const node_state = &self.node_states[node_input.node.id];
         switch (node_spec) {
             .Input => panic("Input nodes should not have work pending on their input", .{}),
             .Map => |map| {
@@ -691,16 +754,15 @@ pub const Shard = struct {
                 try self.emitChangeBatch(node_input.node, try output_change_batch.finishAndClear());
             },
             .Index => {
-                const index = &self.node_states[node_input.node.id].Index;
                 // These won't be emitted until the frontier passes them
-                try index.pending_changes.appendSlice(change_batch.changes);
+                try node_state.Index.pending_changes.appendSlice(change_batch.changes);
             },
             .Join => |join| {
-                const index_state = &self.node_states[join.inputs[1 - node_input.input_ix].id].Index;
+                const index = self.node_states[join.inputs[1 - node_input.input_ix].id].getIndex().?;
                 var output_change_batch = ChangeBatchBuilder.init(self.allocator);
                 for (change_batch.changes) |change| {
                     const this_key = change.row.values[0..join.key_columns];
-                    for (index_state.index.change_batches.items) |other_change_batch| {
+                    for (index.change_batches.items) |other_change_batch| {
                         for (other_change_batch.changes) |other_change| {
                             const other_key = other_change.row.values[0..join.key_columns];
                             if (meta.deepEqual(this_key, other_key)) {
@@ -724,8 +786,7 @@ pub const Shard = struct {
                 }
             },
             .Output => {
-                const outputs = &self.node_states[node_input.node.id].Output;
-                try outputs.unpopped_change_batches.append(change_batch);
+                try node_state.Output.unpopped_change_batches.append(change_batch);
             },
             .TimestampPush => {
                 var output_change_batch = ChangeBatchBuilder.init(self.allocator);
@@ -759,15 +820,34 @@ pub const Shard = struct {
                 try self.emitChangeBatch(node_input.node, change_batch);
             },
             .Distinct => |distinct| {
-                const index = &self.node_states[distinct.input.id].Index;
-                // Need to coalesce batches to implement this correctly
-                TODO();
+                // Figure out which new timestamps are pending
+                // TODO is there a faster way to do this?
+                for (change_batch.changes) |change| {
+                    // change.timestamp is pending
+                    try node_state.Distinct.pending_timestamps.put(change.timestamp, {});
+
+                    // for any other_timestamp in pending_timestamps, leastUpperBound(change.timestamp, other_timestamp) is pending
+                    var buffer = ArrayList(Timestamp).init(self.allocator);
+                    var iter = node_state.Distinct.pending_timestamps.iterator();
+                    while (iter.next()) |entry| {
+                        const timestamp = try Timestamp.leastUpperBound(
+                            self.allocator,
+                            change.timestamp,
+                            entry.key,
+                        );
+                        try buffer.append(timestamp);
+                    }
+                    for (buffer.items) |timestamp| {
+                        try node_state.Distinct.pending_timestamps.put(timestamp, {});
+                    }
+                }
             },
         }
     }
 
     pub fn processFrontierAdvance(self: *Shard, node: Node) !void {
         const node_spec = self.graph.node_specs[node.id];
+        const node_state = &self.node_states[node.id];
         var old_frontier = &self.node_frontiers[node.id];
         var new_frontier = try Frontier.initGreatest(self.allocator, self.graph.num_timestamp_coords[node.id]);
 
@@ -804,32 +884,99 @@ pub const Shard = struct {
             }
         }
 
-        // If this is an Index node, might be able to produce a batch for the Index output
-        // This check has to happen BEFORE we take these pending changes into account for the output frontier
-        if (self.graph.node_specs[node.id] == .Index) {
-            const index_state = &self.node_states[node.id].Index;
-            var indexed_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
+        // Index-specific stuff
+        if (node_spec == .Index) {
+            // If this node contains an index, might be able to produce an output batch
+            // This has to happen BEFORE we take these pending changes into account for the output frontier
+            var change_batch_builder = ChangeBatchBuilder.init(self.allocator);
             var pending_changes = ArrayList(Change).init(self.allocator);
-            for (index_state.pending_changes.items) |change| {
+            for (node_state.Index.pending_changes.items) |change| {
                 if (new_frontier.causalOrder(change.timestamp) == .gt) {
-                    try indexed_change_batch_builder.changes.append(change);
+                    try change_batch_builder.changes.append(change);
                 } else {
                     try pending_changes.append(change);
                 }
             }
-            index_state.pending_changes = pending_changes;
-            if (indexed_change_batch_builder.changes.items.len > 0) {
-                const indexed_change_batch = try indexed_change_batch_builder.finishAndClear();
-                try index_state.index.change_batches.append(indexed_change_batch);
-                try self.emitChangeBatch(node, indexed_change_batch);
+            node_state.Index.pending_changes = pending_changes;
+            if (change_batch_builder.changes.items.len > 0) {
+                const change_batch = try change_batch_builder.finishAndClear();
+                try node_state.Index.index.change_batches.append(change_batch);
+                try self.emitChangeBatch(node, change_batch);
+            }
+
+            // Check any pending changes in the index
+            for (node_state.Index.pending_changes.items) |change| {
+                try new_frontier.retreat(change.timestamp);
             }
         }
 
-        // Check any pending changes in Index
-        if (node_spec == .Index) {
-            // TODO this could be a lot of work
-            for (self.node_states[node.id].Index.pending_changes.items) |change| {
-                try new_frontier.retreat(change.timestamp);
+        // Distinct-specific stuff
+        if (node_spec == .Distinct) {
+
+            // Going to emit a result for any timestamp that is before the input frontier
+            var timestamps_to_emit = ArrayList(Timestamp).init(self.allocator);
+            const input_frontier = self.node_frontiers[node_spec.Distinct.input.id];
+            {
+                var iter = node_state.Distinct.pending_timestamps.iterator();
+                while (iter.next()) |entry| {
+                    if (input_frontier.causalOrder(entry.key) == .gt)
+                        try timestamps_to_emit.append(entry.key);
+                }
+            }
+            // Remove emitted timestamps from pending timestamps
+            for (timestamps_to_emit.items) |timestamp| {
+                node_state.Distinct.pending_timestamps.removeAssertDiscard(timestamp);
+            }
+
+            // Sort timestamps
+            std.sort.sort(Timestamp, timestamps_to_emit.items, {}, struct {
+                fn lessThan(_: void, a: Timestamp, b: Timestamp) bool {
+                    return a.lexicalOrder(b) == .lt;
+                }
+            }.lessThan);
+
+            // Compute changes at each timestamp.
+            // Lexical order is a complete extension of causal order so we can be sure that for each timestamp all previous timestamps have already been handled.
+            // TODO think hard about what should happen if input counts are negative
+            var change_batch_builder = ChangeBatchBuilder.init(self.allocator);
+            const input_index = self.node_states[node_spec.Distinct.input.id].getIndex().?;
+            const output_index = self.node_states[node.id].getIndex().?;
+            for (timestamps_to_emit.items) |timestamp| {
+                const old_bag = try output_index.getBagAsOf(self.allocator, timestamp);
+                var new_bag = try input_index.getBagAsOf(self.allocator, timestamp);
+                // Count things that are in new_bag
+                {
+                    var iter = new_bag.row_counts.iterator();
+                    while (iter.next()) |new_entry| {
+                        const diff = new_entry.value - (old_bag.row_counts.get(new_entry.key) orelse 0);
+                        if (diff != 0)
+                            try change_batch_builder.changes.append(.{
+                                .row = new_entry.key,
+                                .diff = diff,
+                                .timestamp = timestamp,
+                            });
+                    }
+                }
+                // Count things that are in old_bag and not in new_bag
+                {
+                    var iter = old_bag.row_counts.iterator();
+                    while (iter.next()) |old_entry| {
+                        if (!new_bag.row_counts.contains(old_entry.key)) {
+                            const diff = -old_entry.value;
+                            try change_batch_builder.changes.append(.{
+                                .row = old_entry.key,
+                                .diff = diff,
+                                .timestamp = timestamp,
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Emit changes
+            if (change_batch_builder.changes.items.len > 0) {
+                const change_batch = try change_batch_builder.finishAndClear();
+                try self.emitChangeBatch(node, change_batch);
             }
         }
 
@@ -862,6 +1009,7 @@ pub const Shard = struct {
     }
 
     pub fn doWork(self: *Shard) !void {
+        // Must always handle change batches before frontier advances, otherwise we might see changes arrive that are older than the current frontier
         if (try self.popChangeBatch()) |change_batch_at_node_input| {
             try self.processChangeBatch(change_batch_at_node_input.change_batch, change_batch_at_node_input.node_input);
         } else if (self.popFrontierAdvance()) |node| {

@@ -154,7 +154,7 @@ pub fn deepHashInto(hasher: anytype, key: anytype) void {
     }
     switch (ti) {
         .Int => @call(.{ .modifier = .always_inline }, hasher.update, .{std.mem.asBytes(&key)}),
-        .Float => |info| deepHashInto(hasher, @bitCast(std.meta.IntType(false, info.bits), key)),
+        .Float => |info| deepHashInto(hasher, @bitCast(std.meta.IntType(.unsigned, info.bits), key)),
         .Bool => deepHashInto(hasher, @boolToInt(key)),
         .Enum => deepHashInto(hasher, @enumToInt(key)),
         .Pointer => |pti| {
@@ -183,10 +183,9 @@ pub fn deepHashInto(hasher: anytype, key: anytype) void {
             if (info.tag_type) |tag_type| {
                 const tag = std.meta.activeTag(key);
                 deepHashInto(hasher, tag);
-                inline for (info.fields) |field| {
-                    const enum_field = field.enum_field.?;
-                    if (enum_field.value == @enumToInt(tag)) {
-                        deepHashInto(hasher, @field(key, enum_field.name));
+                inline for (@typeInfo(tag_type).Enum.fields) |fti| {
+                    if (@enumToInt(std.meta.activeTag(key)) == fti.value) {
+                        deepHashInto(hasher, @field(key, fti.name));
                         return;
                     }
                 }
