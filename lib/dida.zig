@@ -2,6 +2,8 @@ pub const meta = @import("dida/meta.zig");
 pub const common = @import("dida/common.zig");
 usingnamespace common;
 
+// TODO is possible to remove from HashMap without invalidating interator
+
 // Field names are weird to be consistent with std.math.Order
 pub const PartialOrder = enum {
     lt,
@@ -23,12 +25,6 @@ pub const Timestamp = struct {
     pub fn initLeast(allocator: *Allocator, num_coords: usize) !Timestamp {
         var coords = try allocator.alloc(usize, num_coords);
         for (coords) |*coord| coord.* = 0;
-        return Timestamp{ .coords = coords };
-    }
-
-    pub fn initGreatest(allocator: *Allocator, num_coords: usize) !Timestamp {
-        var coords = try allocator.alloc(usize, num_coords);
-        for (coords) |*coord| coord.* = std.math.maxInt(usize);
         return Timestamp{ .coords = coords };
     }
 
@@ -93,6 +89,14 @@ pub const Timestamp = struct {
         return .eq;
     }
 
+    // TODO shouldn't need this after we compare on subgraphs
+    pub fn softLexicalOrder(self: Timestamp, other: Timestamp) std.math.Order {
+        const len = min(self.coords.len, other.coords.len);
+        const order = Timestamp.lexicalOrder(.{ .coords = self.coords[0..len] }, .{ .coords = other.coords[0..len] });
+        if (order != .eq) return order;
+        return std.math.order(self.coords.len, other.coords.len);
+    }
+
     pub fn dumpInto(writer: anytype, indent: u32, self: Timestamp) anyerror!void {
         try writer.writeAll("T[");
         for (self.coords) |coord, i| {
@@ -106,98 +110,134 @@ pub const Timestamp = struct {
 
 pub const Frontier = struct {
     allocator: *Allocator,
-    // Invariant: non-empty
-    // Invariant: timestamps don't overlap - for any two timestamps A and B in timestamps `A.causalOrder(B) == .none`
-    timestamps: ArrayList(Timestamp),
+    // Invariant: timestamps don't overlap - for any two timestamps t1 and t2 in timestamps `t1.causalOrder(t2) == .none`
+    timestamps: DeepHashSet(Timestamp),
 
-    pub fn initLeast(allocator: *Allocator, num_timestamp_coords: usize) !Frontier {
-        const timestamp = try Timestamp.initLeast(allocator, num_timestamp_coords);
-        var timestamps = ArrayList(Timestamp).init(allocator);
-        try timestamps.append(timestamp);
+    pub fn initEmpty(allocator: *Allocator) Frontier {
         return Frontier{
             .allocator = allocator,
-            .timestamps = timestamps,
+            .timestamps = DeepHashSet(Timestamp).init(allocator),
         };
     }
 
-    pub fn initGreatest(allocator: *Allocator, num_timestamp_coords: usize) !Frontier {
-        const timestamp = try Timestamp.initGreatest(allocator, num_timestamp_coords);
-        var timestamps = ArrayList(Timestamp).init(allocator);
-        try timestamps.append(timestamp);
-        return Frontier{
-            .allocator = allocator,
-            .timestamps = timestamps,
-        };
-    }
-
-    pub fn clone(self: Frontier) !Frontier {
-        return Frontier{
-            .allocator = self.allocator,
-            .timestamps = try self.timestamps.clone(),
-        };
-    }
-
-    pub fn causalOrder(self: Frontier, timestamp: Timestamp) PartialOrder {
-        for (self.timestamps.items) |other_timestamp| {
-            const order = other_timestamp.causalOrder(timestamp);
+    pub fn causalOrder(self: Frontier, timestamp: Timestamp) std.math.Order {
+        var iter = self.timestamps.iterator();
+        while (iter.next()) |entry| {
+            const order = entry.key.causalOrder(timestamp);
             switch (order) {
-                .none => {},
                 .lt => return .lt,
-                .gt => return .gt,
                 .eq => return .eq,
+                .gt => return .gt,
+                .none => {},
             }
         }
-        return .none;
+        return .gt;
     }
 
-    pub fn advance(self: *Frontier, timestamp: Timestamp) !void {
-        var good_ix: usize = 0;
-        for (self.timestamps.items) |other_timestamp, bad_ix| {
-            switch (other_timestamp.causalOrder(timestamp)) {
-                .lt => {
-                    // overwrite this timestamp
-                },
-                .eq => {
-                    release_assert(good_ix == bad_ix, "If timestamp is already in frontier, then it can't have been greater than any other timestamp in frontier", .{});
+    pub const Direction = enum { Advance, Retreat };
+
+    pub fn move(self: *Frontier, comptime direction: Direction, timestamp: Timestamp, changes_into: *ArrayList(FrontierChange)) !void {
+        release_assert(changes_into.items.len == 0, "Need to start with an empty changes_into buffer so can use it to remove timestamps", .{});
+        var iter = self.timestamps.iterator();
+        while (iter.next()) |entry| {
+            switch (timestamp.causalOrder(entry.key)) {
+                .eq, if (direction == .Advance) .lt else .gt => {
+                    release_assert(changes_into.items.len == 0, "Frontier timestamps invariant was broken", .{});
                     return;
                 },
-                .gt => panic("Frontier went backwards, from {} to {}", .{ other_timestamp, timestamp }),
-                .none => {
-                    // keep this timestamp
-                    self.timestamps.items[good_ix] = other_timestamp;
-                    good_ix += 1;
+                if (direction == .Advance) .gt else .lt => {
+                    try changes_into.append(.{ .timestamp = entry.key, .diff = -1 });
                 },
+                .none => {},
             }
         }
-        self.timestamps.shrinkRetainingCapacity(good_ix);
-        try self.timestamps.append(timestamp);
+        // If we got this far, timestamp is being added to the frontier and might also be replacing some other timestamps that are currently on the frontier
+        for (changes_into.items) |change| {
+            self.timestamps.removeAssertDiscard(change.timestamp);
+        }
+        try changes_into.append(.{ .timestamp = timestamp, .diff = 1 });
+        try self.timestamps.put(timestamp, {});
     }
 
     pub fn retreat(self: *Frontier, timestamp: Timestamp) !void {
-        var good_ix: usize = 0;
-        for (self.timestamps.items) |other_timestamp, bad_ix| {
-            switch (other_timestamp.causalOrder(timestamp)) {
-                .gt => {
-                    // overwrite this timestamp
-                },
-                .eq => {
-                    release_assert(good_ix == bad_ix, "If timestamp is already in frontier, then it can't have been greater than any other timestamp in frontier", .{});
-                    return;
-                },
-                .lt => {
-                    // TODO should panic for symmetry with advance but I'm being lazy in processFrontierAdvance
-                    release_assert(good_ix == bad_ix, "If timestamp is less than one in frontier, then it can't have been greater than any other timestamp in frontier", .{});
-                    return;
-                },
-                .none => {
-                    // keep this timestamp
-                    self.timestamps.items[good_ix] = other_timestamp;
-                    good_ix += 1;
-                },
+        var changes_into = ArrayList(FrontierChange).init(self.allocator);
+        try self.move(.Retreat, timestamp, &changes_into);
+    }
+};
+
+pub const FrontierChange = struct {
+    timestamp: Timestamp,
+    diff: isize,
+};
+
+pub const SupportedFrontier = struct {
+    allocator: *Allocator,
+    support: DeepHashMap(Timestamp, usize),
+    // Invariant: frontier contains exactly the least timestamps from support
+    frontier: Frontier,
+
+    pub fn initEmpty(allocator: *Allocator) !SupportedFrontier {
+        return SupportedFrontier{
+            .allocator = allocator,
+            .support = DeepHashMap(Timestamp, usize).init(allocator),
+            .frontier = Frontier.initEmpty(allocator),
+        };
+    }
+
+    pub fn update(self: *SupportedFrontier, timestamp: Timestamp, diff: isize, changes_into: *ArrayList(FrontierChange)) !void {
+        const support_entry = try self.support.getOrPutValue(timestamp, 0);
+        support_entry.value = @intCast(usize, @intCast(isize, support_entry.value) + diff);
+
+        if (support_entry.value == 0) {
+            // Timestamp was just removed, might have been in frontier
+            self.support.removeAssertDiscard(timestamp);
+            if (self.frontier.timestamps.remove(timestamp)) |_| {
+                // Remove this timestamp
+                try changes_into.append(.{ .timestamp = timestamp, .diff = -1 });
+
+                // Find timestamps in support that might now be on the frontier
+                var candidates = ArrayList(Timestamp).init(self.allocator);
+                var iter = self.support.iterator();
+                while (iter.next()) |entry| {
+                    if (timestamp.causalOrder(entry.key) == .lt)
+                        try candidates.append(entry.key);
+                }
+
+                // Add in lexical order any candidates that are not past the current frontier (or past any earlier candidates)
+                std.sort.sort(Timestamp, candidates.items, {}, struct {
+                    fn lessThan(_: void, a: Timestamp, b: Timestamp) bool {
+                        return a.lexicalOrder(b) == .lt;
+                    }
+                }.lessThan);
+                for (candidates.items) |candidate| {
+                    if (self.frontier.causalOrder(candidate) == .gt) {
+                        try self.frontier.timestamps.put(candidate, {});
+                        try changes_into.append(.{ .timestamp = candidate, .diff = 1 });
+                    }
+                }
             }
         }
-        self.timestamps.shrinkRetainingCapacity(good_ix);
-        try self.timestamps.append(timestamp);
+
+        if (support_entry.value == diff) {
+            // Timestamp was just added, might be in frontier
+            if (self.frontier.causalOrder(timestamp) != .lt) {
+                // Add to frontier
+                try self.frontier.timestamps.put(timestamp, {});
+                try changes_into.append(.{ .timestamp = timestamp, .diff = 1 });
+
+                // Remove any other timestamp that is greater than the new timestamp
+                var to_remove = ArrayList(Timestamp).init(self.allocator);
+                var iter = self.frontier.timestamps.iterator();
+                while (iter.next()) |frontier_entry| {
+                    if (frontier_entry.key.causalOrder(timestamp) == .gt)
+                        try to_remove.append(frontier_entry.key);
+                }
+                for (to_remove.items) |other_timestamp| {
+                    self.frontier.timestamps.removeAssertDiscard(other_timestamp);
+                    try changes_into.append(.{ .timestamp = other_timestamp, .diff = -1 });
+                }
+            }
+        }
     }
 };
 
@@ -232,7 +272,7 @@ pub const ChangeBatchBuilder = struct {
 
         std.sort.sort(Change, self.changes.items, {}, struct {
             fn lessThan(_: void, a: Change, b: Change) bool {
-                return meta.deepCompare(a, b) == .lt;
+                return meta.deepOrder(a, b) == .lt;
             }
         }.lessThan);
 
@@ -249,7 +289,7 @@ pub const ChangeBatchBuilder = struct {
         }
         self.changes.shrink(prev_i + 1);
 
-        var lower_bound = try Frontier.initLeast(self.allocator, self.changes.items[0].timestamp.coords.len);
+        var lower_bound = Frontier.initEmpty(self.allocator);
         for (self.changes.items) |change| {
             try lower_bound.retreat(change.timestamp);
         }
@@ -284,7 +324,7 @@ pub const Index = struct {
     pub fn getBagAsOf(self: *Index, allocator: *Allocator, timestamp: Timestamp) !Bag {
         var bag = Bag.init(allocator);
         for (self.change_batches.items) |change_batch| {
-            if (change_batch.lower_bound.causalOrder(timestamp).isLessThanOrEqual()) {
+            if (change_batch.lower_bound.causalOrder(timestamp) != .gt) {
                 for (change_batch.changes) |change| {
                     if (change.timestamp.causalOrder(timestamp).isLessThanOrEqual()) {
                         try bag.update(change.row, change.diff);
@@ -418,6 +458,7 @@ pub const NodeState = union(enum) {
     Distinct: DistinctState,
 
     pub const InputState = struct {
+        frontier: Frontier,
         unflushed_changes: ChangeBatchBuilder,
     };
 
@@ -438,12 +479,35 @@ pub const NodeState = union(enum) {
         // * Take the leastUpperBound of the timestamps of every possible subset of changes in the input.
         // * Filter out timestamps that are before the output frontier of this node.
         pending_timestamps: DeepHashSet(Timestamp),
+
+        pub fn dumpInto(writer: anytype, indent: u32, self: DistinctState) anyerror!void {
+            try writer.writeAll("DistinctState{\n");
+
+            try writer.writeByteNTimes(' ', indent + 4);
+            try writer.writeAll("index:");
+            try meta.dumpInto(writer, indent + 8, self.index);
+            try writer.writeAll(",\n");
+
+            try writer.writeByteNTimes(' ', indent + 4);
+            try writer.writeAll("pending_timestamps: [\n");
+            {
+                var iter = self.pending_timestamps.iterator();
+                while (iter.next()) |entry| {
+                    try writer.writeByteNTimes(' ', indent + 8);
+                    try meta.dumpInto(writer, indent + 12, entry.key);
+                    try writer.writeAll(",\n");
+                }
+            }
+            try writer.writeByteNTimes(' ', indent + 4);
+            try writer.writeAll("],\n");
+        }
     };
 
     pub fn init(allocator: *Allocator, node_spec: NodeSpec) NodeState {
         return switch (node_spec) {
             .Input => |input_spec| .{
                 .Input = .{
+                    .frontier = Frontier.initEmpty(allocator),
                     .unflushed_changes = ChangeBatchBuilder.init(allocator),
                 },
             },
@@ -598,18 +662,23 @@ pub const Shard = struct {
     allocator: *Allocator,
     graph: Graph,
     node_states: []NodeState,
-    // Tracks where change batches might appear:
-    // * For Input, node_capabilities[node.id] reflects possible changes from the outside world. It is set by calling Shard.advanceInput. Shard.pushInput will reject changes with timestamps less than node_frontiers[node.id].
-    // * For other nodes, node_capabilities[node.id] reflects the lower_bound of any unprocessed_change_batches queued on their inputs
-    node_capabilities: []DeepHashMap(Timestamp, usize),
-    // Invariant: for any future change emitted from node, node_frontiers[node.id].compare(change.timestamp) != .lt
-    node_frontiers: []Frontier,
+    // Frontier for node *output*
+    // Invariant: all changes emitted from a node are greater than or equal to its frontier: node_frontiers[node.id].frontier.causalOrder(change.timestamp) != .lt
+    // TODO do we actually *need* to maintain frontiers for most nodes? for most nodes, input_frontier == output_frontier. could just forward via summary to actual downstream frontiers.
+    node_frontiers: []SupportedFrontier,
     unprocessed_change_batches: ArrayList(ChangeBatchAtNodeInput),
-    unprocessed_frontier_advances: DeepHashSet(Node),
+    // Diffs waiting to be applied to node *input*
+    // TODO sorted by timestamp.lexicalOrder and node
+    unprocessed_frontier_diffs: DeepHashMap(Pointstamp, isize),
 
     const ChangeBatchAtNodeInput = struct {
         change_batch: ChangeBatch,
         node_input: NodeInput,
+    };
+
+    const Pointstamp = struct {
+        node_input: NodeInput,
+        timestamp: Timestamp,
     };
 
     pub fn init(allocator: *Allocator, graph: Graph) !Shard {
@@ -619,49 +688,57 @@ pub const Shard = struct {
         for (node_states) |*node_state, node_id|
             node_state.* = NodeState.init(allocator, graph.node_specs[node_id]);
 
-        var node_capabilities = try allocator.alloc(DeepHashMap(Timestamp, usize), num_nodes);
-        for (node_capabilities) |*node_capability, node_id| {
-            node_capability.* = DeepHashMap(Timestamp, usize).init(allocator);
-            if (graph.node_specs[node_id] == .Input) {
-                const timestamp = try Timestamp.initLeast(allocator, graph.num_timestamp_coords[node_id]);
-                try node_capability.put(timestamp, 1);
-            }
-        }
+        var node_frontiers = try allocator.alloc(SupportedFrontier, num_nodes);
+        for (node_frontiers) |*node_frontier, node_id|
+            node_frontier.* = try SupportedFrontier.initEmpty(allocator);
 
-        var node_frontiers = try allocator.alloc(Frontier, num_nodes);
-        for (node_frontiers) |*node_frontier, node_id| {
-            node_frontier.* = try Frontier.initLeast(allocator, graph.num_timestamp_coords[node_id]);
-        }
+        var unprocessed_frontier_diffs = DeepHashMap(Pointstamp, isize).init(allocator);
 
-        var shard = Shard{
+        var self = Shard{
             .allocator = allocator,
             .graph = graph,
             .node_states = node_states,
-            .node_capabilities = node_capabilities,
             .node_frontiers = node_frontiers,
             .unprocessed_change_batches = ArrayList(ChangeBatchAtNodeInput).init(allocator),
-            .unprocessed_frontier_advances = DeepHashSet(Node).init(allocator),
+            .unprocessed_frontier_diffs = unprocessed_frontier_diffs,
         };
 
-        // Advance any internal frontiers that might not start at 0
-        for (graph.node_specs) |_, node_id| {
-            try shard.unprocessed_frontier_advances.put(.{ .id = node_id }, {});
+        // Init input frontiers
+        for (graph.node_specs) |node_spec, node_id| {
+            if (node_spec == .Input) {
+                const timestamp = try Timestamp.initLeast(allocator, graph.num_timestamp_coords[node_id]);
+                try self.node_states[node_id].Input.frontier.timestamps.put(timestamp, {});
+                _ = try self.updateFrontier(.{ .id = node_id }, timestamp, 1);
+            }
         }
-        while (shard.hasWork()) try shard.doWork();
+        while (self.hasWork()) try self.doWork();
 
-        return shard;
+        return self;
+    }
+
+    pub fn updateFrontierDiffs(self: *Shard, node_input: NodeInput, timestamp: Timestamp, diff: isize) !void {
+        var entry = try self.unprocessed_frontier_diffs.getOrPutValue(.{ .node_input = node_input, .timestamp = timestamp }, 0);
+        entry.value += diff;
+        if (entry.value == 0) self.unprocessed_frontier_diffs.removeAssertDiscard(entry.key);
+    }
+
+    pub fn updateFrontier(self: *Shard, node: Node, timestamp: Timestamp, diff: isize) !enum { Updated, NotUpdated } {
+        var frontier_changes = ArrayList(FrontierChange).init(self.allocator);
+        try self.node_frontiers[node.id].update(timestamp, diff, &frontier_changes);
+        for (frontier_changes.items) |frontier_change| {
+            for (self.graph.downstream_node_inputs[node.id]) |downstream_node_input| {
+                try self.updateFrontierDiffs(downstream_node_input, frontier_change.timestamp, frontier_change.diff);
+            }
+        }
+        return if (frontier_changes.items.len > 0) .Updated else .NotUpdated;
     }
 
     pub fn pushInput(self: *Shard, node: Node, change: Change) !void {
-        // Check that node capabilities allow this input
-        var iter = self.node_capabilities[node.id].iterator();
-        while (iter.next()) |entry|
-            release_assert(
-                change.timestamp.causalOrder(entry.key) != .lt,
-                "May not push inputs that are less than the Input node frontier set by Shard.advanceInput",
-                .{},
-            );
-
+        release_assert(
+            self.node_states[node.id].Input.frontier.causalOrder(change.timestamp) != .gt,
+            "May not push inputs that are less than the Input node frontier set by Shard.advanceInput",
+            .{},
+        );
         try self.node_states[node.id].Input.unflushed_changes.changes.append(change);
     }
 
@@ -677,75 +754,55 @@ pub const Shard = struct {
         // Have to flush input so that there aren't any pending changes with timestamps less than the new frontier
         try self.flushInput(node);
 
-        // Remove lesser timestamps
-        var timestamp_counts = &self.node_capabilities[node.id];
-        var dominated_timestamps = ArrayList(Timestamp).init(self.allocator);
-        var iter = timestamp_counts.iterator();
-        while (iter.next()) |entry| {
-            if (entry.key.causalOrder(timestamp).isLessThanOrEqual()) {
-                try dominated_timestamps.append(entry.key);
-            }
+        var changes = ArrayList(FrontierChange).init(self.allocator);
+        try self.node_states[node.id].Input.frontier.move(.Advance, timestamp, &changes);
+        for (changes.items) |change| {
+            _ = try self.updateFrontier(node, change.timestamp, change.diff);
         }
-        for (dominated_timestamps.items) |dominated_timestamp| {
-            timestamp_counts.removeAssertDiscard(dominated_timestamp);
-        }
-
-        // Add new timestamp
-        try timestamp_counts.put(timestamp, 1);
-
-        try self.unprocessed_frontier_advances.put(node, {});
     }
 
     pub fn emitChangeBatch(self: *Shard, from_node: Node, change_batch: ChangeBatch) !void {
+        // Check this is legal
+        {
+            const output_frontier = self.node_frontiers[from_node.id];
+            var iter = change_batch.lower_bound.timestamps.iterator();
+            while (iter.next()) |entry| {
+                release_assert(
+                    output_frontier.frontier.causalOrder(entry.key) != .gt,
+                    "Emitted a change at a timestamp that is behind the output frontier. Node {}, timestamp {}.",
+                    .{ from_node, entry.key },
+                );
+            }
+        }
+
         for (self.graph.downstream_node_inputs[from_node.id]) |to_node_input| {
             try self.unprocessed_change_batches.append(.{
                 .change_batch = change_batch,
                 .node_input = to_node_input,
             });
-            var capability = &self.node_capabilities[to_node_input.node.id];
-            for (change_batch.lower_bound.timestamps.items) |timestamp| {
-                var count = try capability.getOrPutValue(timestamp, 0);
-                count.value += 1;
+            var iter = change_batch.lower_bound.timestamps.iterator();
+            while (iter.next()) |entry| {
+                try self.updateFrontierDiffs(to_node_input, entry.key, 1);
             }
-            // Capabilities changed so frontier needs to be updated
-            try self.unprocessed_frontier_advances.put(to_node_input.node, {});
         }
     }
 
     pub fn popChangeBatch(self: *Shard) !?ChangeBatchAtNodeInput {
         if (self.unprocessed_change_batches.popOrNull()) |change_batch_at_node_input| {
-            const change_batch = change_batch_at_node_input.change_batch;
-            const node_input = change_batch_at_node_input.node_input;
-            var capability = &self.node_capabilities[node_input.node.id];
-            for (change_batch.lower_bound.timestamps.items) |timestamp| {
-                var count = capability.getEntry(timestamp).?;
-                count.value -= 1;
-                if (count.value == 0) {
-                    capability.removeAssertDiscard(timestamp);
-                }
+            var iter = change_batch_at_node_input.change_batch.lower_bound.timestamps.iterator();
+            while (iter.next()) |entry| {
+                try self.updateFrontierDiffs(change_batch_at_node_input.node_input, entry.key, -1);
             }
-            // Capabilities changed so frontier needs to be updated
-            try self.unprocessed_frontier_advances.put(node_input.node, {});
             return change_batch_at_node_input;
         } else {
             return null;
         }
     }
 
-    pub fn popFrontierAdvance(self: *Shard) ?Node {
-        var iter = self.unprocessed_frontier_advances.iterator();
-        if (iter.next()) |entry| {
-            const node = entry.key;
-            self.unprocessed_frontier_advances.removeAssertDiscard(node);
-            return node;
-        } else {
-            return null;
-        }
-    }
-
     pub fn processChangeBatch(self: *Shard, change_batch: ChangeBatch, node_input: NodeInput) !void {
-        const node_spec = self.graph.node_specs[node_input.node.id];
-        const node_state = &self.node_states[node_input.node.id];
+        const node = node_input.node;
+        const node_spec = self.graph.node_specs[node.id];
+        const node_state = &self.node_states[node.id];
         switch (node_spec) {
             .Input => panic("Input nodes should not have work pending on their input", .{}),
             .Map => |map| {
@@ -759,6 +816,15 @@ pub const Shard = struct {
             },
             .Index => {
                 // These won't be emitted until the frontier passes them
+                // TODO this is a lot of timestamps - is there a cheaper way to maintain the support for the index frontier?
+                for (change_batch.changes) |change| {
+                    release_assert(
+                        self.node_frontiers[node.id].frontier.causalOrder(change.timestamp) != .gt,
+                        "Index received a change that was behind its output frontier. Node {}, timestamp {}.",
+                        .{ node, change.timestamp },
+                    );
+                    _ = try self.updateFrontier(node, change.timestamp, 1);
+                }
                 try node_state.Index.pending_changes.appendSlice(change_batch.changes);
             },
             .Join => |join| {
@@ -828,7 +894,12 @@ pub const Shard = struct {
                 // TODO is there a faster way to do this?
                 for (change_batch.changes) |change| {
                     // change.timestamp is pending
-                    try node_state.Distinct.pending_timestamps.put(change.timestamp, {});
+                    {
+                        const old_entry = try node_state.Distinct.pending_timestamps.fetchPut(change.timestamp, {});
+                        if (old_entry == null) {
+                            _ = try self.updateFrontier(node, change.timestamp, 1);
+                        }
+                    }
 
                     // for any other_timestamp in pending_timestamps, leastUpperBound(change.timestamp, other_timestamp) is pending
                     var buffer = ArrayList(Timestamp).init(self.allocator);
@@ -842,187 +913,181 @@ pub const Shard = struct {
                         try buffer.append(timestamp);
                     }
                     for (buffer.items) |timestamp| {
-                        try node_state.Distinct.pending_timestamps.put(timestamp, {});
+                        const old_entry = try node_state.Distinct.pending_timestamps.fetchPut(timestamp, {});
+                        if (old_entry == null) {
+                            _ = try self.updateFrontier(node, timestamp, 1);
+                        }
                     }
                 }
             },
         }
     }
 
-    pub fn processFrontierAdvance(self: *Shard, node: Node) !void {
-        const node_spec = self.graph.node_specs[node.id];
-        const node_state = &self.node_states[node.id];
-        var old_frontier = &self.node_frontiers[node.id];
-        var new_frontier = try Frontier.initGreatest(self.allocator, self.graph.num_timestamp_coords[node.id]);
+    pub fn comparePointstamps(_: *Shard, this: Pointstamp, that: Pointstamp) std.math.Order {
+        const timestamp_order = this.timestamp.softLexicalOrder(that.timestamp);
+        if (timestamp_order != .eq) return timestamp_order;
+        const node_order = meta.deepOrder(this.node_input.node, that.node_input.node);
+        if (node_order != .eq) return node_order;
+        return std.math.order(this.node_input.input_ix, that.node_input.input_ix);
+    }
 
-        // Check upstream frontiers
-        {
-            for (node_spec.getInputs()) |input_node| {
-                const upstream_frontier = self.node_frontiers[input_node.id];
-                for (upstream_frontier.timestamps.items) |input_timestamp| {
-                    const output_timestamp = switch (self.graph.node_specs[node.id]) {
-                        .TimestampPush => try input_timestamp.pushCoord(self.allocator),
-                        .TimestampIncrement => try input_timestamp.incrementCoord(self.allocator),
-                        .TimestampPop => try input_timestamp.popCoord(self.allocator),
-                        else => input_timestamp,
-                    };
-                    try new_frontier.retreat(output_timestamp);
-                }
-            }
-        }
+    pub fn processFrontierDiffs(self: *Shard) !void {
+        // Nodes whose input frontiers have changed
+        // TODO is it worth tracking the actual change? might catch cases where the total diff is zero
+        var updated_nodes = DeepHashSet(Node).init(self.allocator);
 
-        // Check capabilities
-        {
-            var iter = self.node_capabilities[node.id].iterator();
+        // Propagate all diffs
+        // NOTE We have to propagate all of these before doing anything else - the intermediate states can be invalid
+        while (self.unprocessed_frontier_diffs.count() > 0) {
+
+            // Find min pointstamp
+            // TODO use a sorted data structure for unprocessed_frontier_diffs
+            var iter = self.unprocessed_frontier_diffs.iterator();
+            var min_entry = iter.next().?;
             while (iter.next()) |entry| {
-                const input_timestamp = entry.key;
-                const output_timestamp = switch (self.graph.node_specs[node.id]) {
-                    .TimestampPush => try input_timestamp.pushCoord(self.allocator),
-                    .TimestampIncrement => try input_timestamp.incrementCoord(self.allocator),
-                    .TimestampPop => try input_timestamp.popCoord(self.allocator),
-                    else => input_timestamp,
-                };
-                try new_frontier.retreat(output_timestamp);
+                if (self.comparePointstamps(entry.key, min_entry.key) == .lt)
+                    min_entry = entry;
             }
+            const node = min_entry.key.node_input.node;
+            const input_timestamp = min_entry.key.timestamp;
+            const diff = min_entry.value;
+            self.unprocessed_frontier_diffs.removeAssertDiscard(min_entry.key);
+
+            // An input frontier for this node, so we may need to take some action on it later
+            try updated_nodes.put(node, {});
+
+            // Work out how node changes the timestamp
+            const output_timestamp = switch (self.graph.node_specs[node.id]) {
+                .TimestampPush => try input_timestamp.pushCoord(self.allocator),
+                .TimestampIncrement => try input_timestamp.incrementCoord(self.allocator),
+                .TimestampPop => try input_timestamp.popCoord(self.allocator),
+                else => input_timestamp,
+            };
+
+            // Apply change to frontier
+            const updated = try self.updateFrontier(node, output_timestamp, diff);
         }
 
-        // Index-specific stuff
-        if (node_spec == .Index) {
-            // If this node contains an index, might be able to produce an output batch
-            // This has to happen BEFORE we take these pending changes into account for the output frontier
-            var change_batch_builder = ChangeBatchBuilder.init(self.allocator);
-            var pending_changes = ArrayList(Change).init(self.allocator);
-            for (node_state.Index.pending_changes.items) |change| {
-                if (new_frontier.causalOrder(change.timestamp) == .gt) {
-                    try change_batch_builder.changes.append(change);
-                } else {
-                    try pending_changes.append(change);
-                }
-            }
-            node_state.Index.pending_changes = pending_changes;
-            if (change_batch_builder.changes.items.len > 0) {
-                const change_batch = try change_batch_builder.finishAndClear();
-                try node_state.Index.index.change_batches.append(change_batch);
-                try self.emitChangeBatch(node, change_batch);
-            }
+        // Trigger special actions at nodes whose frontier has changed
+        // NOTE It's ok to buffer updates like this rather than going in pointstamp order, because these changes represent real capabilities, not just implied capabilities
+        //      In fact, if we mixed this in with the processing frontier diffs then they might see an invalid intermediate state for the frontier.
+        // TODO Probably should pop these one at a time though to avoid doWork being unbounded
+        var updated_nodes_iter = updated_nodes.iterator();
+        while (updated_nodes_iter.next()) |updated_nodes_entry| {
+            const node = updated_nodes_entry.key;
+            const node_spec = self.graph.node_specs[node.id];
+            const node_state = &self.node_states[node.id];
 
-            // Check any pending changes in the index
-            for (node_state.Index.pending_changes.items) |change|
-                try new_frontier.retreat(change.timestamp);
-        }
-
-        // Distinct-specific stuff
-        if (node_spec == .Distinct) {
-
-            // Going to emit a result for any timestamp that is before the input frontier
-            var timestamps_to_emit = ArrayList(Timestamp).init(self.allocator);
-            const input_frontier = self.node_frontiers[node_spec.Distinct.input.id];
-            {
-                var iter = node_state.Distinct.pending_timestamps.iterator();
-                while (iter.next()) |entry| {
-                    if (input_frontier.causalOrder(entry.key) == .gt)
-                        try timestamps_to_emit.append(entry.key);
-                }
-            }
-            // Remove emitted timestamps from pending timestamps
-            for (timestamps_to_emit.items) |timestamp| {
-                node_state.Distinct.pending_timestamps.removeAssertDiscard(timestamp);
-            }
-
-            // Sort timestamps
-            std.sort.sort(Timestamp, timestamps_to_emit.items, {}, struct {
-                fn lessThan(_: void, a: Timestamp, b: Timestamp) bool {
-                    return a.lexicalOrder(b) == .lt;
-                }
-            }.lessThan);
-
-            // Compute changes at each timestamp.
-            // Lexical order is a complete extension of causal order so we can be sure that for each timestamp all previous timestamps have already been handled.
-            // TODO think hard about what should happen if input counts are negative
-            var change_batch_builder = ChangeBatchBuilder.init(self.allocator);
-            const input_index = self.node_states[node_spec.Distinct.input.id].getIndex().?;
-            const output_index = self.node_states[node.id].getIndex().?;
-            for (timestamps_to_emit.items) |timestamp| {
-                const old_bag = try output_index.getBagAsOf(self.allocator, timestamp);
-                var new_bag = try input_index.getBagAsOf(self.allocator, timestamp);
-                // Count things that are in new_bag
-                {
-                    var iter = new_bag.row_counts.iterator();
-                    while (iter.next()) |new_entry| {
-                        const diff = 1 - (old_bag.row_counts.get(new_entry.key) orelse 0);
-                        if (diff != 0)
-                            try change_batch_builder.changes.append(.{
-                                .row = new_entry.key,
-                                .diff = diff,
-                                .timestamp = timestamp,
-                            });
+            // Index-specific stuff
+            if (node_spec == .Index) {
+                // Might be able to produce an output batch now that the frontier has advanced
+                var change_batch_builder = ChangeBatchBuilder.init(self.allocator);
+                var pending_changes = ArrayList(Change).init(self.allocator);
+                const input_frontier = self.node_frontiers[node_spec.Index.input.id];
+                for (node_state.Index.pending_changes.items) |change| {
+                    if (input_frontier.frontier.causalOrder(change.timestamp) == .gt) {
+                        try change_batch_builder.changes.append(change);
+                    } else {
+                        try pending_changes.append(change);
                     }
                 }
-                // Count things that are in old_bag and not in new_bag
+                node_state.Index.pending_changes = pending_changes;
+                if (change_batch_builder.changes.items.len > 0) {
+                    const change_batch = try change_batch_builder.finishAndClear();
+                    try node_state.Index.index.change_batches.append(change_batch);
+                    try self.emitChangeBatch(node, change_batch);
+                    for (change_batch.changes) |change| {
+                        _ = try self.updateFrontier(node, change.timestamp, -1);
+                    }
+                }
+            }
+
+            // Distinct-specific stuff
+            if (node_spec == .Distinct) {
+                const input_frontier = self.node_frontiers[node_spec.Distinct.input.id];
+
+                // Going to emit a result for any timestamp that is before the new input frontier
+                var timestamps_to_emit = ArrayList(Timestamp).init(self.allocator);
                 {
-                    var iter = old_bag.row_counts.iterator();
-                    while (iter.next()) |old_entry| {
-                        if (!new_bag.row_counts.contains(old_entry.key)) {
-                            const diff = -old_entry.value;
-                            try change_batch_builder.changes.append(.{
-                                .row = old_entry.key,
-                                .diff = diff,
-                                .timestamp = timestamp,
-                            });
+                    var iter = node_state.Distinct.pending_timestamps.iterator();
+                    while (iter.next()) |entry| {
+                        if (input_frontier.frontier.causalOrder(entry.key) == .gt)
+                            try timestamps_to_emit.append(entry.key);
+                    }
+                }
+
+                // Sort timestamps
+                std.sort.sort(Timestamp, timestamps_to_emit.items, {}, struct {
+                    fn lessThan(_: void, a: Timestamp, b: Timestamp) bool {
+                        return a.lexicalOrder(b) == .lt;
+                    }
+                }.lessThan);
+
+                // Compute changes at each timestamp.
+                // Lexical order is a complete extension of causal order so we can be sure that for each timestamp all previous timestamps have already been handled.
+                // TODO think hard about what should happen if input counts are negative
+                var change_batch_builder = ChangeBatchBuilder.init(self.allocator);
+                const input_index = self.node_states[node_spec.Distinct.input.id].getIndex().?;
+                const output_index = self.node_states[node.id].getIndex().?;
+                for (timestamps_to_emit.items) |timestamp| {
+                    const old_bag = try output_index.getBagAsOf(self.allocator, timestamp);
+                    var new_bag = try input_index.getBagAsOf(self.allocator, timestamp);
+                    // Count things that are in new_bag
+                    {
+                        var iter = new_bag.row_counts.iterator();
+                        while (iter.next()) |new_entry| {
+                            const diff = 1 - (old_bag.row_counts.get(new_entry.key) orelse 0);
+                            if (diff != 0)
+                                try change_batch_builder.changes.append(.{
+                                    .row = new_entry.key,
+                                    .diff = diff,
+                                    .timestamp = timestamp,
+                                });
+                        }
+                    }
+                    // Count things that are in old_bag and not in new_bag
+                    {
+                        var iter = old_bag.row_counts.iterator();
+                        while (iter.next()) |old_entry| {
+                            if (!new_bag.row_counts.contains(old_entry.key)) {
+                                const diff = -old_entry.value;
+                                try change_batch_builder.changes.append(.{
+                                    .row = old_entry.key,
+                                    .diff = diff,
+                                    .timestamp = timestamp,
+                                });
+                            }
                         }
                     }
                 }
-            }
 
-            // Emit changes
-            if (change_batch_builder.changes.items.len > 0) {
-                const change_batch = try change_batch_builder.finishAndClear();
-                try output_index.change_batches.append(change_batch);
-                try self.emitChangeBatch(node, change_batch);
-            }
+                // Emit changes
+                if (change_batch_builder.changes.items.len > 0) {
+                    const change_batch = try change_batch_builder.finishAndClear();
+                    try output_index.change_batches.append(change_batch);
+                    try self.emitChangeBatch(node, change_batch);
+                }
 
-            // Add any remaining pending timestamps to new frontier
-            {
-                var iter = node_state.Distinct.pending_timestamps.iterator();
-                while (iter.next()) |entry|
-                    try new_frontier.retreat(entry.key);
-            }
-        }
-
-        // Check if frontier changed
-        std.sort.sort(Timestamp, old_frontier.timestamps.items, {}, struct {
-            fn lessThan(_: void, a: Timestamp, b: Timestamp) bool {
-                return a.lexicalOrder(b) == .lt;
-            }
-        }.lessThan);
-        std.sort.sort(Timestamp, new_frontier.timestamps.items, {}, struct {
-            fn lessThan(_: void, a: Timestamp, b: Timestamp) bool {
-                return a.lexicalOrder(b) == .lt;
-            }
-        }.lessThan);
-        const updated = !meta.deepEqual(old_frontier.timestamps.items, new_frontier.timestamps.items);
-
-        old_frontier.* = new_frontier;
-
-        // If frontier changed, need to update everything downstream
-        if (updated) {
-            for (self.graph.downstream_node_inputs[node.id]) |downstream_node_input| {
-                try self.unprocessed_frontier_advances.put(downstream_node_input.node, {});
+                // Remove emitted timestamps from pending timestamps and from support
+                for (timestamps_to_emit.items) |timestamp| {
+                    node_state.Distinct.pending_timestamps.removeAssertDiscard(timestamp);
+                    _ = try self.updateFrontier(node, timestamp, -1);
+                }
             }
         }
     }
 
     pub fn hasWork(self: Shard) bool {
         return (self.unprocessed_change_batches.items.len > 0) or
-            (self.unprocessed_frontier_advances.count() > 0);
+            (self.unprocessed_frontier_diffs.count() > 0);
     }
 
     pub fn doWork(self: *Shard) !void {
         // Must always handle change batches before frontier advances, otherwise we might see changes arrive that are older than the current frontier
         if (try self.popChangeBatch()) |change_batch_at_node_input| {
             try self.processChangeBatch(change_batch_at_node_input.change_batch, change_batch_at_node_input.node_input);
-        } else if (self.popFrontierAdvance()) |node| {
-            try self.processFrontierAdvance(node);
+        } else if (self.unprocessed_frontier_diffs.count() > 0) {
+            try self.processFrontierDiffs();
         }
     }
 
@@ -1048,12 +1113,12 @@ pub const Shard = struct {
             try writer.writeAll(",\n");
 
             try writer.writeByteNTimes(' ', indent + 8);
-            try writer.writeAll("caps: {\n");
+            try writer.writeAll("support: {\n");
             {
-                var iter = self.node_capabilities[node_id].iterator();
+                var iter = self.node_frontiers[node_id].support.iterator();
                 while (iter.next()) |entry| {
                     try writer.writeByteNTimes(' ', indent + 12);
-                    try meta.dumpInto(writer, indent + 16, entry.key);
+                    try meta.dumpInto(writer, indent + 12, entry.key);
                     try std.fmt.format(writer, ": {},\n", .{entry.value});
                 }
             }
@@ -1061,12 +1126,17 @@ pub const Shard = struct {
             try writer.writeAll("},\n");
 
             try writer.writeByteNTimes(' ', indent + 8);
-            try writer.writeAll("frontier: ");
-            try meta.dumpInto(writer, indent + 12, self.node_frontiers[node_id].timestamps.items);
-            try writer.writeAll(",\n");
-
+            try writer.writeAll("frontier: {\n");
+            {
+                var iter = self.node_frontiers[node_id].frontier.timestamps.iterator();
+                while (iter.next()) |entry| {
+                    try writer.writeByteNTimes(' ', indent + 12);
+                    try meta.dumpInto(writer, indent + 12, entry.key);
+                    try writer.writeAll(",\n");
+                }
+            }
             try writer.writeByteNTimes(' ', indent + 8);
-            try std.fmt.format(writer, "unprocessed_frontier_update: {},\n", .{self.unprocessed_frontier_advances.contains(.{ .id = node_id })});
+            try writer.writeAll("},\n");
 
             try writer.writeByteNTimes(' ', indent + 8);
             try writer.writeAll("unprocessed_change_batches: [\n");

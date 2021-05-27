@@ -3,16 +3,16 @@
 usingnamespace @import("./common.zig");
 
 pub fn deepEqual(a: anytype, b: @TypeOf(a)) bool {
-    return deepCompare(a, b) == .eq;
+    return deepOrder(a, b) == .eq;
 }
 
-pub fn deepCompare(a: anytype, b: @TypeOf(a)) std.math.Order {
+pub fn deepOrder(a: anytype, b: @TypeOf(a)) std.math.Order {
     const T = @TypeOf(a);
     const ti = @typeInfo(T);
     switch (ti) {
         .Struct, .Enum, .Union => {
-            if (@hasDecl(T, "deepCompare")) {
-                return T.deepCompare(a, b);
+            if (@hasDecl(T, "deepOrder")) {
+                return T.deepOrder(a, b);
             }
         },
         else => {},
@@ -33,12 +33,12 @@ pub fn deepCompare(a: anytype, b: @TypeOf(a)) std.math.Order {
             return .eq;
         },
         .Enum => {
-            return deepCompare(@enumToInt(a), @enumToInt(b));
+            return deepOrder(@enumToInt(a), @enumToInt(b));
         },
         .Pointer => |pti| {
             switch (pti.size) {
                 .One => {
-                    return deepCompare(a.*, b.*);
+                    return deepOrder(a.*, b.*);
                 },
                 .Slice => {
                     if (a.len < b.len) {
@@ -48,20 +48,20 @@ pub fn deepCompare(a: anytype, b: @TypeOf(a)) std.math.Order {
                         return .gt;
                     }
                     for (a) |a_elem, a_ix| {
-                        const ordering = deepCompare(a_elem, b[a_ix]);
+                        const ordering = deepOrder(a_elem, b[a_ix]);
                         if (ordering != .eq) {
                             return ordering;
                         }
                     }
                     return .eq;
                 },
-                .Many, .C => @compileError("cannot deepCompare " ++ @typeName(T)),
+                .Many, .C => @compileError("cannot deepOrder " ++ @typeName(T)),
             }
         },
         .Optional => {
             if (a) |a_val| {
                 if (b) |b_val| {
-                    return deepCompare(a_val, b_val);
+                    return deepOrder(a_val, b_val);
                 } else {
                     return .gt;
                 }
@@ -75,7 +75,7 @@ pub fn deepCompare(a: anytype, b: @TypeOf(a)) std.math.Order {
         },
         .Array => |ati| {
             for (a) |a_elem, a_ix| {
-                const ordering = deepCompare(a_elem, b[a_ix]);
+                const ordering = deepOrder(a_elem, b[a_ix]);
                 if (ordering != .eq) {
                     return ordering;
                 }
@@ -84,7 +84,7 @@ pub fn deepCompare(a: anytype, b: @TypeOf(a)) std.math.Order {
         },
         .Struct => |sti| {
             inline for (sti.fields) |fti| {
-                const ordering = deepCompare(@field(a, fti.name), @field(b, fti.name));
+                const ordering = deepOrder(@field(a, fti.name), @field(b, fti.name));
                 if (ordering != .eq) {
                     return ordering;
                 }
@@ -103,7 +103,7 @@ pub fn deepCompare(a: anytype, b: @TypeOf(a)) std.math.Order {
                 }
                 inline for (@typeInfo(tag_type).Enum.fields) |fti| {
                     if (a_tag == fti.value) {
-                        return deepCompare(
+                        return deepOrder(
                             @field(a, fti.name),
                             @field(b, fti.name),
                         );
@@ -111,14 +111,14 @@ pub fn deepCompare(a: anytype, b: @TypeOf(a)) std.math.Order {
                 }
                 unreachable;
             } else {
-                @compileError("cannot deepCompare " ++ @typeName(T));
+                @compileError("cannot deepOrder " ++ @typeName(T));
             }
         },
         .Void => return .eq,
         .ErrorUnion => {
             if (a) |a_ok| {
                 if (b) |b_ok| {
-                    return deepCompare(a_ok, b_ok);
+                    return deepOrder(a_ok, b_ok);
                 } else |_| {
                     return .lt;
                 }
@@ -126,12 +126,12 @@ pub fn deepCompare(a: anytype, b: @TypeOf(a)) std.math.Order {
                 if (b) |_| {
                     return .gt;
                 } else |b_err| {
-                    return deepCompare(a_err, b_err);
+                    return deepOrder(a_err, b_err);
                 }
             }
         },
-        .ErrorSet => return deepCompare(@errorToInt(a), @errorToInt(b)),
-        else => @compileError("cannot deepCompare " ++ @typeName(T)),
+        .ErrorSet => return deepOrder(@errorToInt(a), @errorToInt(b)),
+        else => @compileError("cannot deepOrder " ++ @typeName(T)),
     }
 }
 
