@@ -18,8 +18,8 @@ pub fn main() !void {
 
     const edges = try graph_builder.addNode(.{ .Input = .{ .num_timestamp_coords = 1 } });
     const edges_1 = try graph_builder.addNode(.{ .TimestampPush = .{ .input = edges } });
-    const reach_in = try graph_builder.addNode(.{ .Union = .{ .input0 = edges_1, .input1 = null } });
-    const reach_index = try graph_builder.addNode(.{ .Index = .{ .input = reach_in } });
+    const reach_future = try graph_builder.addNode(.{ .TimestampIncrement = .{ .input = null } });
+    const reach_index = try graph_builder.addNode(.{ .Index = .{ .input = reach_future } });
     const distinct_reach_index = try graph_builder.addNode(.{ .Distinct = .{ .input = reach_index } });
     const swapped_edges = try graph_builder.addNode(.{
         .Map = .{
@@ -57,9 +57,9 @@ pub fn main() !void {
             }).drop_middle,
         },
     });
-    const back = try graph_builder.addNode(.{ .TimestampIncrement = .{ .input = without_middle } });
-    graph_builder.node_specs.items[reach_in.id].Union.input1 = back;
-    const reach_out = try graph_builder.addNode(.{ .TimestampPop = .{ .input = without_middle } });
+    const reach = try graph_builder.addNode(.{ .Union = .{ .inputs = .{ edges_1, without_middle } } });
+    graph_builder.node_specs.items[reach_future.id].TimestampIncrement.input = reach;
+    const reach_out = try graph_builder.addNode(.{ .TimestampPop = .{ .input = reach } });
     const out = try graph_builder.addNode(.{ .Output = .{ .input = reach_out } });
 
     const graph = try graph_builder.finishAndClear();
@@ -80,10 +80,11 @@ pub fn main() !void {
     try shard.advanceInput(edges, timestamp2);
 
     while (shard.hasWork()) {
+        //dida.common.dump(shard);
         try shard.doWork();
 
-        while (shard.popOutput(out)) |change| {
-            dida.common.dump(change);
+        while (shard.popOutput(out)) |change_batch| {
+            dida.common.dump(change_batch);
         }
     }
 

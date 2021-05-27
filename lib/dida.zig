@@ -360,7 +360,8 @@ pub const NodeSpec = union(enum) {
     };
 
     pub const TimestampIncrementSpec = struct {
-        input: Node,
+        // Initially null, will be set later to a future edge
+        input: ?Node,
     };
 
     pub const TimestampPopSpec = struct {
@@ -368,36 +369,31 @@ pub const NodeSpec = union(enum) {
     };
 
     pub const UnionSpec = struct {
-        input0: Node,
-        // Initially null, set when we create a backwards edge in a loop
-        input1: ?Node,
+        inputs: [2]Node,
     };
 
     pub const DistinctSpec = struct {
         input: Node,
     };
 
-    pub fn numInputs(self: NodeSpec) usize {
-        return switch (self) {
-            .Input => 0,
-            .Map, .Index, .Output, .TimestampPush, .TimestampIncrement, .TimestampPop, .Distinct => 1,
-            .Join, .Union => 2,
-        };
+    // Chain casts from *Node to *[1]Node to []Node
+    fn ptrToSlice(input: *const Node) []const Node {
+        const one_input: *const [1]Node = input;
+        return one_input;
     }
 
-    pub fn getInput(self: NodeSpec, input_ix: usize) Node {
-        release_assert(input_ix < self.numInputs(), "Invalid input_ix {} for node spec {}", .{ input_ix, self });
-        return switch (self) {
-            .Input => |_| unreachable,
-            .Map => |spec| spec.input,
-            .Index => |spec| spec.input,
-            .Output => |spec| spec.input,
-            .TimestampPush => |spec| spec.input,
-            .TimestampIncrement => |spec| spec.input,
-            .TimestampPop => |spec| spec.input,
-            .Distinct => |spec| spec.input,
-            .Join => |spec| spec.inputs[input_ix],
-            .Union => |spec| if (input_ix == 0) spec.input0 else spec.input1.?,
+    pub fn getInputs(self: *const NodeSpec) []const Node {
+        return switch (self.*) {
+            .Input => |_| &[_]Node{},
+            .Map => |*spec| ptrToSlice(&spec.input),
+            .Index => |*spec| ptrToSlice(&spec.input),
+            .Output => |*spec| ptrToSlice(&spec.input),
+            .TimestampPush => |*spec| ptrToSlice(&spec.input),
+            .TimestampIncrement => |*spec| ptrToSlice(&spec.input.?),
+            .TimestampPop => |*spec| ptrToSlice(&spec.input),
+            .Distinct => |*spec| ptrToSlice(&spec.input),
+            .Join => |*spec| &spec.inputs,
+            .Union => |*spec| &spec.inputs,
         };
     }
 
@@ -507,47 +503,51 @@ pub const GraphBuilder = struct {
     pub fn finishAndClear(self: *GraphBuilder) !Graph {
         const num_nodes = self.node_specs.items.len;
 
-        // Init state
-        var num_timestamp_coords = try self.allocator.alloc(usize, num_nodes);
+        // Collect downstream nodes
         var downstream_node_inputs = try self.allocator.alloc(ArrayList(NodeInput), num_nodes);
         for (self.node_specs.items) |_, node_id| {
             downstream_node_inputs[node_id] = ArrayList(NodeInput).init(self.allocator);
         }
-
-        // For each node, set downstream_node_inputs and num_timestamp_coords
         for (self.node_specs.items) |node_spec, node_id| {
-            const node = Node{ .id = node_id };
-
-            // For each input
-            var input_ix: usize = 0;
-            const num_inputs = node_spec.numInputs();
-            while (input_ix < num_inputs) : (input_ix += 1) {
-                const input_node = node_spec.getInput(input_ix);
-                try downstream_node_inputs[input_node.id].append(.{ .node = node, .input_ix = input_ix });
+            for (node_spec.getInputs()) |input_node, input_ix| {
+                try downstream_node_inputs[input_node.id].append(.{ .node = .{ .id = node_id }, .input_ix = input_ix });
             }
+        }
 
-            num_timestamp_coords[node_id] = switch (node_spec) {
-                .Input => |input_spec| input_spec.num_timestamp_coords,
-                .TimestampPush => num_timestamp_coords[node_spec.getInput(0).id] + 1,
-                .TimestampPop => num_timestamp_coords[node_spec.getInput(0).id] - 1,
-                else => num_timestamp_coords[node_spec.getInput(0).id],
-            };
+        // Figure out how many timestamp coords each node has
+        var num_timestamp_coords = try self.allocator.alloc(?usize, num_nodes);
+        for (num_timestamp_coords) |*num| num.* = null;
+        var updated = DeepHashSet(Node).init(self.allocator);
+        for (self.node_specs.items) |node_spec, node_id| {
+            if (node_spec == .Input) {
+                num_timestamp_coords[node_id] = node_spec.Input.num_timestamp_coords;
+                try updated.put(.{ .id = node_id }, {});
+            }
+        }
+        while (updated.iterator().next()) |entry| {
+            const node = entry.key;
+            updated.removeAssertDiscard(node);
+            for (downstream_node_inputs[node.id].items) |downstream_node_input| {
+                if (num_timestamp_coords[downstream_node_input.node.id] == null) {
+                    num_timestamp_coords[downstream_node_input.node.id] = switch (self.node_specs.items[downstream_node_input.node.id]) {
+                        .TimestampPush => |spec| num_timestamp_coords[node.id].? + 1,
+                        .TimestampPop => |spec| num_timestamp_coords[node.id].? - 1,
+                        else => num_timestamp_coords[node.id],
+                    };
+                    try updated.put(downstream_node_input.node, {});
+                }
+            }
         }
 
         // Validate graph
-        // TODO check that loops are all valid
         for (self.node_specs.items) |node_spec, node_id| {
-            var input_ix: usize = 1;
-            const num_inputs = node_spec.numInputs();
-            while (input_ix < num_inputs) : (input_ix += 1) {
-                const input_node = node_spec.getInput(input_ix);
+            for (node_spec.getInputs()) |input_node, input_ix| {
                 release_assert(input_node.id < num_nodes, "All input nodes must exist", .{});
-                if (!(node_spec == .Union and input_ix == 1))
-                    release_assert(
-                        input_node.id < node_id,
-                        "All inputs of a node must be earlier in the graph (except for the 2nd input to Union)",
-                        .{},
-                    );
+                if (node_spec == .TimestampIncrement) {
+                    release_assert(input_node.id > node_id, "TimestampIncrement nodes must have a later node as input", .{});
+                } else {
+                    release_assert(input_node.id < node_id, "All nodes (other than TimestampIncrement) must have an earlier node as input", .{});
+                }
                 switch (node_spec) {
                     .Join => |join| release_assert(
                         self.node_specs.items[input_node.id].hasIndex(),
@@ -561,23 +561,27 @@ pub const GraphBuilder = struct {
                     ),
                     else => {},
                 }
+                const this_input_num = num_timestamp_coords[input_node.id].?;
+                const first_input_num = num_timestamp_coords[node_spec.getInputs()[0].id].?;
                 release_assert(
-                    num_timestamp_coords[input_node.id] == num_timestamp_coords[node_spec.getInput(0).id],
-                    "Number of timestamp coordinates must match for all inputs to node {}",
-                    .{node_id},
+                    this_input_num == first_input_num,
+                    "Number of timestamp coordinates must match for all inputs to node {}. Input 0 has {} but input {} has {}.",
+                    .{ node_id, first_input_num, input_ix, this_input_num },
                 );
             }
         }
 
-        // Freeze ArrayLists
+        // Freeze
         var frozen_downstream_node_inputs = try self.allocator.alloc([]NodeInput, self.node_specs.items.len);
         for (downstream_node_inputs) |*node_inputs, node_id|
             frozen_downstream_node_inputs[node_id] = node_inputs.toOwnedSlice();
+        var frozen_num_timestamp_coords = try self.allocator.alloc(usize, self.node_specs.items.len);
+        for (frozen_num_timestamp_coords) |*num, i| num.* = num_timestamp_coords[i].?;
 
         return Graph{
             .allocator = self.allocator,
             .node_specs = self.node_specs.toOwnedSlice(),
-            .num_timestamp_coords = num_timestamp_coords,
+            .num_timestamp_coords = frozen_num_timestamp_coords,
             .downstream_node_inputs = frozen_downstream_node_inputs,
         };
     }
@@ -853,10 +857,8 @@ pub const Shard = struct {
 
         // Check upstream frontiers
         {
-            var num_inputs = node_spec.numInputs();
-            var input_ix: usize = 0;
-            while (input_ix < num_inputs) : (input_ix += 1) {
-                const upstream_frontier = self.node_frontiers[node_spec.getInput(input_ix).id];
+            for (node_spec.getInputs()) |input_node| {
+                const upstream_frontier = self.node_frontiers[input_node.id];
                 for (upstream_frontier.timestamps.items) |input_timestamp| {
                     const output_timestamp = switch (self.graph.node_specs[node.id]) {
                         .TimestampPush => try input_timestamp.pushCoord(self.allocator),
