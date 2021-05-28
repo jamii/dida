@@ -19,7 +19,8 @@ pub fn main() !void {
     const edges = try graph_builder.addNode(.{ .Input = .{ .num_timestamp_coords = 1 } });
     const edges_1 = try graph_builder.addNode(.{ .TimestampPush = .{ .input = edges } });
     const reach_future = try graph_builder.addNode(.{ .TimestampIncrement = .{ .input = null } });
-    const reach_future_index = try graph_builder.addNode(.{ .Index = .{ .input = reach_future } });
+    const reach_index = try graph_builder.addNode(.{ .Index = .{ .input = reach_future } });
+    const distinct_reach_index = try graph_builder.addNode(.{ .Distinct = .{ .input = reach_index } });
     const swapped_edges = try graph_builder.addNode(.{
         .Map = .{
             .input = edges_1,
@@ -37,7 +38,7 @@ pub fn main() !void {
     const joined = try graph_builder.addNode(.{
         .Join = .{
             .inputs = .{
-                reach_future_index,
+                distinct_reach_index,
                 swapped_edges_index,
             },
             .key_columns = 1,
@@ -57,10 +58,8 @@ pub fn main() !void {
         },
     });
     const reach = try graph_builder.addNode(.{ .Union = .{ .inputs = .{ edges_1, without_middle } } });
-    const reach_index = try graph_builder.addNode(.{ .Index = .{ .input = reach } });
-    const distinct_reach = try graph_builder.addNode(.{ .Distinct = .{ .input = reach_index } });
-    graph_builder.node_specs.items[reach_future.id].TimestampIncrement.input = distinct_reach;
-    const reach_out = try graph_builder.addNode(.{ .TimestampPop = .{ .input = distinct_reach } });
+    graph_builder.node_specs.items[reach_future.id].TimestampIncrement.input = reach;
+    const reach_out = try graph_builder.addNode(.{ .TimestampPop = .{ .input = distinct_reach_index } });
     const out = try graph_builder.addNode(.{ .Output = .{ .input = reach_out } });
 
     const graph = try graph_builder.finishAndClear();
