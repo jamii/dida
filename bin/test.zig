@@ -67,20 +67,34 @@ pub fn main() !void {
     const graph = try graph_builder.finishAndClear();
 
     var shard = try dida.Shard.init(allocator, graph);
+    const timestamp0 = dida.Timestamp{ .coords = &[_]u64{0} };
     const timestamp1 = dida.Timestamp{ .coords = &[_]u64{1} };
     const timestamp2 = dida.Timestamp{ .coords = &[_]u64{2} };
 
     const ab = dida.Row{ .values = &[_]dida.Value{ .{ .String = "a" }, .{ .String = "b" } } };
     const bc = dida.Row{ .values = &[_]dida.Value{ .{ .String = "b" }, .{ .String = "c" } } };
-    const cd = dida.Row{ .values = &[_]dida.Value{ .{ .String = "c" }, .{ .String = "d" } } };
+    const cd = dida.Row{ .values = &[_]dida.Value{ .{ .String = "b" }, .{ .String = "d" } } };
     const ca = dida.Row{ .values = &[_]dida.Value{ .{ .String = "c" }, .{ .String = "a" } } };
-    try shard.pushInput(edges, .{ .row = ab, .diff = 1, .timestamp = timestamp1 });
-    try shard.pushInput(edges, .{ .row = bc, .diff = 1, .timestamp = timestamp1 });
-    try shard.pushInput(edges, .{ .row = cd, .diff = 1, .timestamp = timestamp1 });
-    try shard.pushInput(edges, .{ .row = ca, .diff = 1, .timestamp = timestamp1 });
+    try shard.pushInput(edges, .{ .row = ab, .diff = 1, .timestamp = timestamp0 });
+    try shard.pushInput(edges, .{ .row = bc, .diff = 1, .timestamp = timestamp0 });
+    try shard.pushInput(edges, .{ .row = cd, .diff = 1, .timestamp = timestamp0 });
+    try shard.pushInput(edges, .{ .row = ca, .diff = 1, .timestamp = timestamp0 });
+    try shard.pushInput(edges, .{ .row = bc, .diff = -1, .timestamp = timestamp1 });
     try shard.flushInput(edges);
-    try shard.advanceInput(edges, timestamp2);
 
+    try shard.advanceInput(edges, timestamp1);
+    while (shard.hasWork()) {
+        // dida.common.dump(shard);
+        try shard.doWork();
+
+        while (shard.popOutput(out)) |change_batch| {
+            dida.common.dump(change_batch);
+        }
+    }
+
+    std.debug.print("Advancing!\n", .{});
+
+    try shard.advanceInput(edges, timestamp2);
     while (shard.hasWork()) {
         // dida.common.dump(shard);
         try shard.doWork();

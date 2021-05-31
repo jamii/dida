@@ -985,6 +985,8 @@ pub const Shard = struct {
             const timestamp_order = std.math.order(this.timestamp.coords[i], that.timestamp.coords[i]);
             if (timestamp_order != .eq) return timestamp_order;
         }
+        // If this.subgraphs.len != that.subgraphs.len at this point, it means that one is nested inside the other
+        // so any extra timestamp coords can't affect the could_result_in relation.
         const node_order = meta.deepOrder(this.node_input.node, that.node_input.node);
         if (node_order != .eq) return node_order;
         return std.math.order(this.node_input.input_ix, that.node_input.input_ix);
