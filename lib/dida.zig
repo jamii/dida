@@ -362,7 +362,7 @@ pub const NodeInput = struct {
 };
 
 pub const NodeSpec = union(enum) {
-    Input: InputSpec,
+    Input,
     Map: MapSpec,
     Index: IndexSpec,
     Join: JoinSpec,
@@ -372,10 +372,6 @@ pub const NodeSpec = union(enum) {
     TimestampPop: TimestampPopSpec,
     Union: UnionSpec,
     Distinct: DistinctSpec,
-
-    pub const InputSpec = struct {
-        num_timestamp_coords: usize,
-    };
 
     pub const MapSpec = struct {
         input: Node,
@@ -547,25 +543,54 @@ pub const NodeState = union(enum) {
     }
 };
 
+pub const Subgraph = struct {
+    id: usize,
+};
+
 pub const GraphBuilder = struct {
     allocator: *Allocator,
     node_specs: ArrayList(NodeSpec),
+    node_subgraphs: ArrayList(Subgraph),
+    subgraph_parents: ArrayList(Subgraph),
 
     pub fn init(allocator: *Allocator) GraphBuilder {
         return GraphBuilder{
             .allocator = allocator,
             .node_specs = ArrayList(NodeSpec).init(allocator),
+            .node_subgraphs = ArrayList(Subgraph).init(allocator),
+            .subgraph_parents = ArrayList(Subgraph).init(allocator),
         };
     }
 
-    pub fn addNode(self: *GraphBuilder, node_spec: NodeSpec) !Node {
+    pub fn addSubgraph(self: *GraphBuilder, parent: Subgraph) !Subgraph {
+        try self.subgraph_parents.append(parent);
+        return Subgraph{ .id = self.subgraph_parents.items.len };
+    }
+
+    pub fn addNode(self: *GraphBuilder, subgraph: Subgraph, node_spec: NodeSpec) !Node {
         const node = Node{ .id = self.node_specs.items.len };
         try self.node_specs.append(node_spec);
+        try self.node_subgraphs.append(subgraph);
         return node;
     }
 
     pub fn finishAndClear(self: *GraphBuilder) !Graph {
         const num_nodes = self.node_specs.items.len;
+        const num_subgraphs = self.subgraph_parents.items.len + 1;
+
+        // For each node, store its subgraph, its subgraphs parent, its subgraphs parents parent etc
+        var node_subgraphs = try self.allocator.alloc([]Subgraph, num_nodes);
+        for (self.node_subgraphs.items) |init_subgraph, node_id| {
+            var subgraphs = ArrayList(Subgraph).init(self.allocator);
+            var subgraph = init_subgraph;
+            while (true) {
+                try subgraphs.append(subgraph);
+                if (subgraph.id == 0) break;
+                subgraph = self.subgraph_parents.items[subgraph.id - 1];
+            }
+            std.mem.reverse(Subgraph, subgraphs.items);
+            node_subgraphs[node_id] = subgraphs.toOwnedSlice();
+        }
 
         // Collect downstream nodes
         var downstream_node_inputs = try self.allocator.alloc(ArrayList(NodeInput), num_nodes);
@@ -577,33 +602,27 @@ pub const GraphBuilder = struct {
                 try downstream_node_inputs[input_node.id].append(.{ .node = .{ .id = node_id }, .input_ix = input_ix });
             }
         }
+        var frozen_downstream_node_inputs = try self.allocator.alloc([]NodeInput, self.node_specs.items.len);
+        for (downstream_node_inputs) |*node_inputs, node_id|
+            frozen_downstream_node_inputs[node_id] = node_inputs.toOwnedSlice();
 
-        // Figure out how many timestamp coords each node has
-        var num_timestamp_coords = try self.allocator.alloc(?usize, num_nodes);
-        for (num_timestamp_coords) |*num| num.* = null;
-        var updated = DeepHashSet(Node).init(self.allocator);
-        for (self.node_specs.items) |node_spec, node_id| {
-            if (node_spec == .Input) {
-                num_timestamp_coords[node_id] = node_spec.Input.num_timestamp_coords;
-                try updated.put(.{ .id = node_id }, {});
-            }
-        }
-        while (updated.iterator().next()) |entry| {
-            const node = entry.key;
-            updated.removeAssertDiscard(node);
-            for (downstream_node_inputs[node.id].items) |downstream_node_input| {
-                if (num_timestamp_coords[downstream_node_input.node.id] == null) {
-                    num_timestamp_coords[downstream_node_input.node.id] = switch (self.node_specs.items[downstream_node_input.node.id]) {
-                        .TimestampPush => |spec| num_timestamp_coords[node.id].? + 1,
-                        .TimestampPop => |spec| num_timestamp_coords[node.id].? - 1,
-                        else => num_timestamp_coords[node.id],
-                    };
-                    try updated.put(downstream_node_input.node, {});
-                }
-            }
+        // Each subgraph has one more timestamp coords than it's parent
+        var subgraph_num_timestamp_coords = try self.allocator.alloc(usize, num_subgraphs);
+        for (subgraph_num_timestamp_coords) |*num, subgraph_id| {
+            num.* = if (subgraph_id == 0)
+                1
+            else
+                subgraph_num_timestamp_coords[self.subgraph_parents.items[subgraph_id - 1].id];
         }
 
         // Validate graph
+        for (self.subgraph_parents.items) |parent, subgraph_id_minus_one| {
+            release_assert(
+                parent.id < subgraph_id_minus_one + 1,
+                "The parent of a subgraph must have a smaller id than its child",
+                .{},
+            );
+        }
         for (self.node_specs.items) |node_spec, node_id| {
             for (node_spec.getInputs()) |input_node, input_ix| {
                 release_assert(input_node.id < num_nodes, "All input nodes must exist", .{});
@@ -625,27 +644,54 @@ pub const GraphBuilder = struct {
                     ),
                     else => {},
                 }
-                const this_input_num = num_timestamp_coords[input_node.id].?;
-                const first_input_num = num_timestamp_coords[node_spec.getInputs()[0].id].?;
-                release_assert(
-                    this_input_num == first_input_num,
-                    "Number of timestamp coordinates must match for all inputs to node {}. Input 0 has {} but input {} has {}.",
-                    .{ node_id, first_input_num, input_ix, this_input_num },
-                );
+                switch (node_spec) {
+                    .TimestampPush => {
+                        const input_subgraph = self.node_subgraphs.items[input_node.id];
+                        const output_subgraph = self.node_subgraphs.items[node_id];
+                        release_assert(
+                            output_subgraph.id > 0,
+                            "TimestampPush nodes cannot have an output on subgraph 0",
+                            .{},
+                        );
+                        release_assert(
+                            self.subgraph_parents.items[output_subgraph.id - 1].id == input_subgraph.id,
+                            "TimestampPush nodes must cross from a parent subgraph to a child subgraph",
+                            .{},
+                        );
+                    },
+                    .TimestampPop => {
+                        const input_subgraph = self.node_subgraphs.items[input_node.id];
+                        const output_subgraph = self.node_subgraphs.items[node_id];
+                        release_assert(
+                            input_subgraph.id > 0,
+                            "TimestampPop nodes cannot have an input on subgraph 0",
+                            .{},
+                        );
+                        release_assert(
+                            self.subgraph_parents.items[input_subgraph.id - 1].id == output_subgraph.id,
+                            "TimestampPop nodes must cross from a child subgraph to a parent subgraph",
+                            .{},
+                        );
+                    },
+                    else => {
+                        const input_subgraph = self.node_subgraphs.items[input_node.id];
+                        const output_subgraph = self.node_subgraphs.items[node_id];
+                        release_assert(
+                            input_subgraph.id == output_subgraph.id,
+                            "Nodes (other than TimestampPop and TimestampPush) must be on the same subgraph as their inputs",
+                            .{},
+                        );
+                    },
+                }
             }
         }
-
-        // Freeze
-        var frozen_downstream_node_inputs = try self.allocator.alloc([]NodeInput, self.node_specs.items.len);
-        for (downstream_node_inputs) |*node_inputs, node_id|
-            frozen_downstream_node_inputs[node_id] = node_inputs.toOwnedSlice();
-        var frozen_num_timestamp_coords = try self.allocator.alloc(usize, self.node_specs.items.len);
-        for (frozen_num_timestamp_coords) |*num, i| num.* = num_timestamp_coords[i].?;
 
         return Graph{
             .allocator = self.allocator,
             .node_specs = self.node_specs.toOwnedSlice(),
-            .num_timestamp_coords = frozen_num_timestamp_coords,
+            .node_subgraphs = node_subgraphs,
+            .subgraph_parents = self.subgraph_parents.toOwnedSlice(),
+            .subgraph_num_timestamp_coords = subgraph_num_timestamp_coords,
             .downstream_node_inputs = frozen_downstream_node_inputs,
         };
     }
@@ -654,7 +700,10 @@ pub const GraphBuilder = struct {
 pub const Graph = struct {
     allocator: *Allocator,
     node_specs: []const NodeSpec,
-    num_timestamp_coords: []usize,
+    node_subgraphs: []const []const Subgraph,
+    // Indexed by subgraph.id-1, because subgraph 0 has no parent
+    subgraph_parents: []const Subgraph,
+    subgraph_num_timestamp_coords: []usize,
     downstream_node_inputs: []const []const NodeInput,
 };
 
@@ -668,7 +717,6 @@ pub const Shard = struct {
     node_frontiers: []SupportedFrontier,
     unprocessed_change_batches: ArrayList(ChangeBatchAtNodeInput),
     // Diffs waiting to be applied to node *input*
-    // TODO sorted by timestamp.lexicalOrder and node
     unprocessed_frontier_diffs: DeepHashMap(Pointstamp, isize),
 
     const ChangeBatchAtNodeInput = struct {
@@ -678,6 +726,7 @@ pub const Shard = struct {
 
     const Pointstamp = struct {
         node_input: NodeInput,
+        subgraphs: []const Subgraph,
         timestamp: Timestamp,
     };
 
@@ -706,7 +755,7 @@ pub const Shard = struct {
         // Init input frontiers
         for (graph.node_specs) |node_spec, node_id| {
             if (node_spec == .Input) {
-                const timestamp = try Timestamp.initLeast(allocator, graph.num_timestamp_coords[node_id]);
+                const timestamp = try Timestamp.initLeast(allocator, graph.subgraph_num_timestamp_coords[graph.node_subgraphs[node_id][0].id]);
                 try self.node_states[node_id].Input.frontier.timestamps.put(timestamp, {});
                 _ = try self.updateFrontier(.{ .id = node_id }, timestamp, 1);
             }
@@ -717,7 +766,11 @@ pub const Shard = struct {
     }
 
     pub fn updateFrontierDiffs(self: *Shard, node_input: NodeInput, timestamp: Timestamp, diff: isize) !void {
-        var entry = try self.unprocessed_frontier_diffs.getOrPutValue(.{ .node_input = node_input, .timestamp = timestamp }, 0);
+        var entry = try self.unprocessed_frontier_diffs.getOrPutValue(.{
+            .node_input = node_input,
+            .subgraphs = self.graph.node_subgraphs[node_input.node.id],
+            .timestamp = timestamp,
+        }, 0);
         entry.value += diff;
         if (entry.value == 0) self.unprocessed_frontier_diffs.removeAssertDiscard(entry.key);
     }
@@ -923,9 +976,15 @@ pub const Shard = struct {
         }
     }
 
-    pub fn comparePointstamps(_: *Shard, this: Pointstamp, that: Pointstamp) std.math.Order {
-        const timestamp_order = this.timestamp.softLexicalOrder(that.timestamp);
-        if (timestamp_order != .eq) return timestamp_order;
+    pub fn orderPointstamps(_: *Shard, this: Pointstamp, that: Pointstamp) std.math.Order {
+        const min_len = min(this.subgraphs.len, that.subgraphs.len);
+        var i: usize = 0;
+        while (i < min_len) : (i += 1) {
+            const subgraph_order = meta.deepOrder(this.subgraphs[i], that.subgraphs[i]);
+            if (subgraph_order != .eq) return subgraph_order;
+            const timestamp_order = std.math.order(this.timestamp.coords[i], that.timestamp.coords[i]);
+            if (timestamp_order != .eq) return timestamp_order;
+        }
         const node_order = meta.deepOrder(this.node_input.node, that.node_input.node);
         if (node_order != .eq) return node_order;
         return std.math.order(this.node_input.input_ix, that.node_input.input_ix);
@@ -945,7 +1004,7 @@ pub const Shard = struct {
             var iter = self.unprocessed_frontier_diffs.iterator();
             var min_entry = iter.next().?;
             while (iter.next()) |entry| {
-                if (self.comparePointstamps(entry.key, min_entry.key) == .lt)
+                if (self.orderPointstamps(entry.key, min_entry.key) == .lt)
                     min_entry = entry;
             }
             const node = min_entry.key.node_input.node;

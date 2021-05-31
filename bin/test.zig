@@ -15,13 +15,15 @@ pub fn main() !void {
     }
 
     var graph_builder = dida.GraphBuilder.init(allocator);
+    const subgraph_0 = dida.Subgraph{ .id = 0 };
+    const subgraph_1 = try graph_builder.addSubgraph(subgraph_0);
 
-    const edges = try graph_builder.addNode(.{ .Input = .{ .num_timestamp_coords = 1 } });
-    const edges_1 = try graph_builder.addNode(.{ .TimestampPush = .{ .input = edges } });
-    const reach_future = try graph_builder.addNode(.{ .TimestampIncrement = .{ .input = null } });
-    const reach_index = try graph_builder.addNode(.{ .Index = .{ .input = reach_future } });
-    const distinct_reach_index = try graph_builder.addNode(.{ .Distinct = .{ .input = reach_index } });
-    const swapped_edges = try graph_builder.addNode(.{
+    const edges = try graph_builder.addNode(subgraph_0, .Input);
+    const edges_1 = try graph_builder.addNode(subgraph_1, .{ .TimestampPush = .{ .input = edges } });
+    const reach_future = try graph_builder.addNode(subgraph_1, .{ .TimestampIncrement = .{ .input = null } });
+    const reach_index = try graph_builder.addNode(subgraph_1, .{ .Index = .{ .input = reach_future } });
+    const distinct_reach_index = try graph_builder.addNode(subgraph_1, .{ .Distinct = .{ .input = reach_index } });
+    const swapped_edges = try graph_builder.addNode(subgraph_1, .{
         .Map = .{
             .input = edges_1,
             .function = (struct {
@@ -34,8 +36,8 @@ pub fn main() !void {
             }).swap,
         },
     });
-    const swapped_edges_index = try graph_builder.addNode(.{ .Index = .{ .input = swapped_edges } });
-    const joined = try graph_builder.addNode(.{
+    const swapped_edges_index = try graph_builder.addNode(subgraph_1, .{ .Index = .{ .input = swapped_edges } });
+    const joined = try graph_builder.addNode(subgraph_1, .{
         .Join = .{
             .inputs = .{
                 distinct_reach_index,
@@ -44,7 +46,7 @@ pub fn main() !void {
             .key_columns = 1,
         },
     });
-    const without_middle = try graph_builder.addNode(.{
+    const without_middle = try graph_builder.addNode(subgraph_1, .{
         .Map = .{
             .input = joined,
             .function = (struct {
@@ -57,10 +59,10 @@ pub fn main() !void {
             }).drop_middle,
         },
     });
-    const reach = try graph_builder.addNode(.{ .Union = .{ .inputs = .{ edges_1, without_middle } } });
+    const reach = try graph_builder.addNode(subgraph_1, .{ .Union = .{ .inputs = .{ edges_1, without_middle } } });
     graph_builder.node_specs.items[reach_future.id].TimestampIncrement.input = reach;
-    const reach_out = try graph_builder.addNode(.{ .TimestampPop = .{ .input = distinct_reach_index } });
-    const out = try graph_builder.addNode(.{ .Output = .{ .input = reach_out } });
+    const reach_out = try graph_builder.addNode(subgraph_0, .{ .TimestampPop = .{ .input = distinct_reach_index } });
+    const out = try graph_builder.addNode(subgraph_0, .{ .Output = .{ .input = reach_out } });
 
     const graph = try graph_builder.finishAndClear();
 
