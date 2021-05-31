@@ -598,15 +598,6 @@ pub const GraphBuilder = struct {
         for (downstream_node_inputs) |*node_inputs, node_id|
             frozen_downstream_node_inputs[node_id] = node_inputs.toOwnedSlice();
 
-        // Each subgraph has one more timestamp coords than it's parent
-        var subgraph_num_timestamp_coords = try self.allocator.alloc(usize, num_subgraphs);
-        for (subgraph_num_timestamp_coords) |*num, subgraph_id| {
-            num.* = if (subgraph_id == 0)
-                1
-            else
-                subgraph_num_timestamp_coords[self.subgraph_parents.items[subgraph_id - 1].id];
-        }
-
         // Validate graph
         for (self.subgraph_parents.items) |parent, subgraph_id_minus_one| {
             release_assert(
@@ -683,7 +674,6 @@ pub const GraphBuilder = struct {
             .node_specs = self.node_specs.toOwnedSlice(),
             .node_subgraphs = node_subgraphs,
             .subgraph_parents = self.subgraph_parents.toOwnedSlice(),
-            .subgraph_num_timestamp_coords = subgraph_num_timestamp_coords,
             .downstream_node_inputs = frozen_downstream_node_inputs,
         };
     }
@@ -695,7 +685,6 @@ pub const Graph = struct {
     node_subgraphs: []const []const Subgraph,
     // Indexed by subgraph.id-1, because subgraph 0 has no parent
     subgraph_parents: []const Subgraph,
-    subgraph_num_timestamp_coords: []usize,
     downstream_node_inputs: []const []const NodeInput,
 };
 
@@ -747,7 +736,7 @@ pub const Shard = struct {
         // Init input frontiers
         for (graph.node_specs) |node_spec, node_id| {
             if (node_spec == .Input) {
-                const timestamp = try Timestamp.initLeast(allocator, graph.subgraph_num_timestamp_coords[graph.node_subgraphs[node_id][0].id]);
+                const timestamp = try Timestamp.initLeast(allocator, graph.node_subgraphs[node_id].len);
                 try self.node_states[node_id].Input.frontier.timestamps.put(timestamp, {});
                 _ = try self.updateFrontier(.{ .id = node_id }, timestamp, 1);
             }
