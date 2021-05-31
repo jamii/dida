@@ -1056,6 +1056,7 @@ pub const Shard = struct {
             }
 
             // Distinct-specific stuff
+            // TODO this is very inefficient
             if (node_spec == .Distinct) {
                 const input_frontier = self.node_frontiers[node_spec.Distinct.input.id];
 
