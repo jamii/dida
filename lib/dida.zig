@@ -89,14 +89,6 @@ pub const Timestamp = struct {
         return .eq;
     }
 
-    // TODO shouldn't need this after we compare on subgraphs
-    pub fn softLexicalOrder(self: Timestamp, other: Timestamp) std.math.Order {
-        const len = min(self.coords.len, other.coords.len);
-        const order = Timestamp.lexicalOrder(.{ .coords = self.coords[0..len] }, .{ .coords = other.coords[0..len] });
-        if (order != .eq) return order;
-        return std.math.order(self.coords.len, other.coords.len);
-    }
-
     pub fn dumpInto(writer: anytype, indent: u32, self: Timestamp) anyerror!void {
         try writer.writeAll("T[");
         for (self.coords) |coord, i| {
