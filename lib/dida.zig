@@ -404,12 +404,6 @@ pub const NodeSpec = union(enum) {
         input: Node,
     };
 
-    // Chain casts from *Node to *[1]Node to []Node
-    fn ptrToSlice(input: *const Node) []const Node {
-        const one_input: *const [1]Node = input;
-        return one_input;
-    }
-
     pub fn getInputs(self: *const NodeSpec) []const Node {
         return switch (self.*) {
             .Input => |_| &[_]Node{},
