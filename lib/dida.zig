@@ -407,13 +407,13 @@ pub const NodeSpec = union(enum) {
     pub fn getInputs(self: *const NodeSpec) []const Node {
         return switch (self.*) {
             .Input => |_| &[_]Node{},
-            .Map => |*spec| ptrToSlice(&spec.input),
-            .Index => |*spec| ptrToSlice(&spec.input),
-            .Output => |*spec| ptrToSlice(&spec.input),
-            .TimestampPush => |*spec| ptrToSlice(&spec.input),
-            .TimestampIncrement => |*spec| ptrToSlice(&spec.input.?),
-            .TimestampPop => |*spec| ptrToSlice(&spec.input),
-            .Distinct => |*spec| ptrToSlice(&spec.input),
+            .Map => |*spec| ptrToSlice(Node, &spec.input),
+            .Index => |*spec| ptrToSlice(Node, &spec.input),
+            .Output => |*spec| ptrToSlice(Node, &spec.input),
+            .TimestampPush => |*spec| ptrToSlice(Node, &spec.input),
+            .TimestampIncrement => |*spec| ptrToSlice(Node, &spec.input.?),
+            .TimestampPop => |*spec| ptrToSlice(Node, &spec.input),
+            .Distinct => |*spec| ptrToSlice(Node, &spec.input),
             .Join => |*spec| &spec.inputs,
             .Union => |*spec| &spec.inputs,
         };
@@ -951,20 +951,24 @@ pub const Shard = struct {
         }
     }
 
+    // Produces an ordering on Pointstamp that is compatible with causality.
+    // IE if the existence of a change at `this` causes a change to later be produced at `that`, then we need to have `orderPointstamps(this, that) == .lt`.
+    // The invariants enforced for the graph structure guarantee that this is possible.
     pub fn orderPointstamps(_: *Shard, this: Pointstamp, that: Pointstamp) std.math.Order {
         const min_len = min(this.subgraphs.len, that.subgraphs.len);
         var i: usize = 0;
         while (i < min_len) : (i += 1) {
-            const subgraph_order = meta.deepOrder(this.subgraphs[i], that.subgraphs[i]);
-            if (subgraph_order != .eq) return subgraph_order;
+            // If `this` and `that` are in different subgraphs then there is no way for a change to travel from a later node to an earlier node without incrementing the timestamp coord at `i-1`.
+            if (this.subgraphs[i].id != that.subgraphs[i].id)
+                return meta.deepOrder(this.node_input, that.node_input);
+
+            // If `this` and `that` are in the same subgraph but one has a higher timestamp coord at `i` than the other then there is no way the higher timestamp could be decremented to produce the lower timestamp.
             const timestamp_order = std.math.order(this.timestamp.coords[i], that.timestamp.coords[i]);
             if (timestamp_order != .eq) return timestamp_order;
         }
-        // If this.subgraphs.len != that.subgraphs.len at this point, it means that one is nested inside the other
-        // so any extra timestamp coords can't affect the could_result_in relation.
-        const node_order = meta.deepOrder(this.node_input.node, that.node_input.node);
-        if (node_order != .eq) return node_order;
-        return std.math.order(this.node_input.input_ix, that.node_input.input_ix);
+        // If we get this far, either `this` and `that` are in the same subgraph or one is in a subgraph that is nested inside the other.
+        // Either way there is no way for a change to travel from a later node to an earlier node without incrementing the timestamp coord at `min_len-1`.
+        return meta.deepOrder(this.node_input, that.node_input);
     }
 
     pub fn processFrontierDiffs(self: *Shard) !void {

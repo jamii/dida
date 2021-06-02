@@ -53,8 +53,8 @@ pub fn format(allocator: *Allocator, comptime fmt: []const u8, args: anytype) ![
     return buf.items;
 }
 
-// Chain casts from *Node to *[1]Node to []Node
-fn ptrToSlice(input: *const Node) []const Node {
-    const one_input: *const [1]Node = input;
+// Chain casts from *T to *[1]T to []T
+pub fn ptrToSlice(comptime T: type, input: *const T) []const T {
+    const one_input: *const [1]T = input;
     return one_input;
 }
