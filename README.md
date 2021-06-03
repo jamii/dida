@@ -4,9 +4,9 @@ The jargon-free version: You write code that manipulates collections using famil
 
 ## Design
 
-Dida is heavily based on [differential dataflow](https://github.com/TimelyDataflow/differential-dataflow/) (DD) and informed by experience at [materialize](https://materialize.com/).
+Dida is heavily based on [differential dataflow](https://github.com/TimelyDataflow/differential-dataflow/) (DD) and is informed by experience using DD as a backend at [materialize](https://materialize.com/).
 
-Compare to DD, dida aims to:
+Compared to DD, dida aims to:
 
 * [ ] Be [easier to use and understand](https://scattered-thoughts.net/writing/why-isnt-differential-dataflow-more-popular/). (DD aims to be as flexible, extensible and composable as possible, which makes sense for a research platform but can make the code very difficult to follow.)
    * [ ] Tentatively aim to keep the core under 3kloc. (For comparison timely dataflow and differential dataflow total 14-16kloc depending on which components you count).
@@ -71,9 +71,11 @@ Compare to DD, dida aims to:
     * [x] Schedule work in a correct order
     * [ ] Figure out how to schedule work for best throughput/latency
     * [ ] Ensure that the runtime of `doWork` is roughly bounded
+      * [ ] Enforce a maximum batch size and suspend operations that would produce more than one batch
   * [x] Single-threaded cooperative worker
   * [ ] Multi-threaded workers
     * [ ] Expose as state machine for easy simulation
+  * [ ] Memory management
 * [ ] Testing
 * [ ] Bindings
   * [ ] Wasm
@@ -82,5 +84,5 @@ Compare to DD, dida aims to:
   * [ ] Zig
   * [ ] Wasm
   * [ ] Javascript
-* [ ] Debuggers / vizualization
+* [ ] Debuggers / visualization
 * [ ] Documentation / book
