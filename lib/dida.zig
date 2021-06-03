@@ -643,15 +643,10 @@ pub const Graph = struct {
                     );
                 }
                 switch (node_spec) {
-                    .Join => |join| assert(
+                    .Join, .Distinct => assert(
                         self.node_specs[input_node.id].hasIndex(),
-                        "Inputs to Join node must contain an index",
-                        .{},
-                    ),
-                    .Distinct => |distinct| assert(
-                        self.node_specs[input_node.id].hasIndex(),
-                        "Input to Distinct node must contain an index",
-                        .{},
+                        "Inputs to {} node must contain an index",
+                        .{std.meta.activeTag(node_spec)},
                     ),
                     else => {},
                 }
