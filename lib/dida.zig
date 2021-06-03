@@ -973,7 +973,7 @@ pub const Shard = struct {
     // Produces an ordering on Pointstamp that is compatible with causality.
     // IE if the existence of a change at `this` causes a change to later be produced at `that`, then we need to have `orderPointstamps(this, that) == .lt`.
     // The invariants enforced for the graph structure guarantee that this is possible.
-    pub fn orderPointstamps(_: *Shard, this: Pointstamp, that: Pointstamp) std.math.Order {
+    pub fn orderPointstamps(this: Pointstamp, that: Pointstamp) std.math.Order {
         const min_len = min(this.subgraphs.len, that.subgraphs.len);
         var i: usize = 0;
         while (i < min_len) : (i += 1) {
@@ -1004,7 +1004,7 @@ pub const Shard = struct {
             var iter = self.unprocessed_frontier_diffs.iterator();
             var min_entry = iter.next().?;
             while (iter.next()) |entry| {
-                if (self.orderPointstamps(entry.key, min_entry.key) == .lt)
+                if (orderPointstamps(entry.key, min_entry.key) == .lt)
                     min_entry = entry;
             }
             const node = min_entry.key.node_input.node;
