@@ -2,7 +2,7 @@ pub const meta = @import("dida/meta.zig");
 pub const common = @import("dida/common.zig");
 usingnamespace common;
 
-// TODO is possible to remove from HashMap without invalidating interator
+// TODO Its possible to remove from HashMap without invalidating interator which would simplify some of the code below. But might not always be true.
 
 // Field names are weird to be consistent with std.math.Order
 pub const PartialOrder = enum {
@@ -705,7 +705,6 @@ pub const Shard = struct {
     node_states: []NodeState,
     // Frontier for node *output*
     // Invariant: all changes emitted from a node are greater than or equal to its frontier: node_frontiers[node.id].frontier.causalOrder(change.timestamp) != .lt
-    // TODO do we actually *need* to maintain frontiers for most nodes? for most nodes, input_frontier == output_frontier. could just forward via summary to actual downstream frontiers.
     node_frontiers: []SupportedFrontier,
     unprocessed_change_batches: ArrayList(ChangeBatchAtNodeInput),
     // Diffs waiting to be applied to node *input*
