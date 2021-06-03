@@ -702,8 +702,8 @@ pub const Shard = struct {
     // Invariant: all changes emitted from a node are greater than or equal to its frontier: node_frontiers[node.id].frontier.causalOrder(change.timestamp) != .lt
     node_frontiers: []SupportedFrontier,
     unprocessed_change_batches: ArrayList(ChangeBatchAtNodeInput),
-    // Diffs waiting to be applied to node *input*
-    unprocessed_frontier_diffs: DeepHashMap(Pointstamp, isize),
+    // Updates waiting to be applied to node *input*
+    unprocessed_frontier_updates: DeepHashMap(Pointstamp, isize),
 
     const ChangeBatchAtNodeInput = struct {
         change_batch: ChangeBatch,
@@ -727,7 +727,7 @@ pub const Shard = struct {
         for (node_frontiers) |*node_frontier, node_id|
             node_frontier.* = try SupportedFrontier.initEmpty(allocator);
 
-        var unprocessed_frontier_diffs = DeepHashMap(Pointstamp, isize).init(allocator);
+        var unprocessed_frontier_updates = DeepHashMap(Pointstamp, isize).init(allocator);
 
         var self = Shard{
             .allocator = allocator,
@@ -735,7 +735,7 @@ pub const Shard = struct {
             .node_states = node_states,
             .node_frontiers = node_frontiers,
             .unprocessed_change_batches = ArrayList(ChangeBatchAtNodeInput).init(allocator),
-            .unprocessed_frontier_diffs = unprocessed_frontier_diffs,
+            .unprocessed_frontier_updates = unprocessed_frontier_updates,
         };
 
         // Init input frontiers
@@ -743,33 +743,12 @@ pub const Shard = struct {
             if (node_spec == .Input) {
                 const timestamp = try Timestamp.initLeast(allocator, graph.node_subgraphs[node_id].len);
                 try self.node_states[node_id].Input.frontier.timestamps.put(timestamp, {});
-                _ = try self.updateFrontier(.{ .id = node_id }, timestamp, 1);
+                _ = try self.applyFrontierUpdate(.{ .id = node_id }, timestamp, 1);
             }
         }
         while (self.hasWork()) try self.doWork();
 
         return self;
-    }
-
-    pub fn updateFrontierDiffs(self: *Shard, node_input: NodeInput, timestamp: Timestamp, diff: isize) !void {
-        var entry = try self.unprocessed_frontier_diffs.getOrPutValue(.{
-            .node_input = node_input,
-            .subgraphs = self.graph.node_subgraphs[node_input.node.id],
-            .timestamp = timestamp,
-        }, 0);
-        entry.value += diff;
-        if (entry.value == 0) self.unprocessed_frontier_diffs.removeAssertDiscard(entry.key);
-    }
-
-    pub fn updateFrontier(self: *Shard, node: Node, timestamp: Timestamp, diff: isize) !enum { Updated, NotUpdated } {
-        var frontier_changes = ArrayList(FrontierChange).init(self.allocator);
-        try self.node_frontiers[node.id].update(timestamp, diff, &frontier_changes);
-        for (frontier_changes.items) |frontier_change| {
-            for (self.graph.downstream_node_inputs[node.id]) |downstream_node_input| {
-                try self.updateFrontierDiffs(downstream_node_input, frontier_change.timestamp, frontier_change.diff);
-            }
-        }
-        return if (frontier_changes.items.len > 0) .Updated else .NotUpdated;
     }
 
     pub fn pushInput(self: *Shard, node: Node, change: Change) !void {
@@ -795,7 +774,7 @@ pub const Shard = struct {
         var changes = ArrayList(FrontierChange).init(self.allocator);
         try self.node_states[node.id].Input.frontier.move(.Advance, timestamp, &changes);
         for (changes.items) |change| {
-            _ = try self.updateFrontier(node, change.timestamp, change.diff);
+            _ = try self.applyFrontierUpdate(node, change.timestamp, change.diff);
         }
     }
 
@@ -820,7 +799,7 @@ pub const Shard = struct {
             });
             var iter = change_batch.lower_bound.timestamps.iterator();
             while (iter.next()) |entry| {
-                try self.updateFrontierDiffs(to_node_input, entry.key, 1);
+                try self.queueFrontierUpdate(to_node_input, entry.key, 1);
             }
         }
     }
@@ -829,7 +808,7 @@ pub const Shard = struct {
         if (self.unprocessed_change_batches.popOrNull()) |change_batch_at_node_input| {
             var iter = change_batch_at_node_input.change_batch.lower_bound.timestamps.iterator();
             while (iter.next()) |entry| {
-                try self.updateFrontierDiffs(change_batch_at_node_input.node_input, entry.key, -1);
+                try self.queueFrontierUpdate(change_batch_at_node_input.node_input, entry.key, -1);
             }
             return change_batch_at_node_input;
         } else {
@@ -863,7 +842,7 @@ pub const Shard = struct {
                         "Index received a change that was behind its output frontier. Node {}, timestamp {}.",
                         .{ node, change.timestamp },
                     );
-                    _ = try self.updateFrontier(node, change.timestamp, 1);
+                    _ = try self.applyFrontierUpdate(node, change.timestamp, 1);
                 }
                 try node_state.Index.pending_changes.appendSlice(change_batch.changes);
             },
@@ -939,7 +918,7 @@ pub const Shard = struct {
                     {
                         const old_entry = try node_state.Distinct.pending_timestamps.fetchPut(change.timestamp, {});
                         if (old_entry == null) {
-                            _ = try self.updateFrontier(node, change.timestamp, 1);
+                            _ = try self.applyFrontierUpdate(node, change.timestamp, 1);
                         }
                     }
 
@@ -957,12 +936,33 @@ pub const Shard = struct {
                     for (buffer.items) |timestamp| {
                         const old_entry = try node_state.Distinct.pending_timestamps.fetchPut(timestamp, {});
                         if (old_entry == null) {
-                            _ = try self.updateFrontier(node, timestamp, 1);
+                            _ = try self.applyFrontierUpdate(node, timestamp, 1);
                         }
                     }
                 }
             },
         }
+    }
+
+    pub fn queueFrontierUpdate(self: *Shard, node_input: NodeInput, timestamp: Timestamp, diff: isize) !void {
+        var entry = try self.unprocessed_frontier_updates.getOrPutValue(.{
+            .node_input = node_input,
+            .subgraphs = self.graph.node_subgraphs[node_input.node.id],
+            .timestamp = timestamp,
+        }, 0);
+        entry.value += diff;
+        if (entry.value == 0) self.unprocessed_frontier_updates.removeAssertDiscard(entry.key);
+    }
+
+    pub fn applyFrontierUpdate(self: *Shard, node: Node, timestamp: Timestamp, diff: isize) !enum { Updated, NotUpdated } {
+        var frontier_changes = ArrayList(FrontierChange).init(self.allocator);
+        try self.node_frontiers[node.id].update(timestamp, diff, &frontier_changes);
+        for (frontier_changes.items) |frontier_change| {
+            for (self.graph.downstream_node_inputs[node.id]) |downstream_node_input| {
+                try self.queueFrontierUpdate(downstream_node_input, frontier_change.timestamp, frontier_change.diff);
+            }
+        }
+        return if (frontier_changes.items.len > 0) .Updated else .NotUpdated;
     }
 
     // Produces an ordering on Pointstamp that is compatible with causality.
@@ -985,18 +985,18 @@ pub const Shard = struct {
         return meta.deepOrder(this.node_input, that.node_input);
     }
 
-    pub fn processFrontierDiffs(self: *Shard) !void {
+    pub fn processFrontierUpdates(self: *Shard) !void {
         // Nodes whose input frontiers have changed
         // TODO is it worth tracking the actual change? might catch cases where the total diff is zero
         var updated_nodes = DeepHashSet(Node).init(self.allocator);
 
-        // Propagate all diffs
+        // Propagate frontier updates
         // NOTE We have to propagate all of these before doing anything else - the intermediate states can be invalid
-        while (self.unprocessed_frontier_diffs.count() > 0) {
+        while (self.unprocessed_frontier_updates.count() > 0) {
 
             // Find min pointstamp
-            // TODO use a sorted data structure for unprocessed_frontier_diffs
-            var iter = self.unprocessed_frontier_diffs.iterator();
+            // TODO use a sorted data structure for unprocessed_frontier_updates
+            var iter = self.unprocessed_frontier_updates.iterator();
             var min_entry = iter.next().?;
             while (iter.next()) |entry| {
                 if (orderPointstamps(entry.key, min_entry.key) == .lt)
@@ -1005,7 +1005,7 @@ pub const Shard = struct {
             const node = min_entry.key.node_input.node;
             const input_timestamp = min_entry.key.timestamp;
             const diff = min_entry.value;
-            self.unprocessed_frontier_diffs.removeAssertDiscard(min_entry.key);
+            self.unprocessed_frontier_updates.removeAssertDiscard(min_entry.key);
 
             // An input frontier for this node, so we may need to take some action on it later
             try updated_nodes.put(node, {});
@@ -1019,7 +1019,7 @@ pub const Shard = struct {
             };
 
             // Apply change to frontier
-            const updated = try self.updateFrontier(node, output_timestamp, diff);
+            const updated = try self.applyFrontierUpdate(node, output_timestamp, diff);
         }
 
         // Trigger special actions at nodes whose frontier has changed
@@ -1050,7 +1050,7 @@ pub const Shard = struct {
                     try node_state.Index.index.change_batches.append(change_batch);
                     try self.emitChangeBatch(node, change_batch);
                     for (change_batch.changes) |change| {
-                        _ = try self.updateFrontier(node, change.timestamp, -1);
+                        _ = try self.applyFrontierUpdate(node, change.timestamp, -1);
                     }
                 }
             }
@@ -1124,7 +1124,7 @@ pub const Shard = struct {
                 // Remove emitted timestamps from pending timestamps and from support
                 for (timestamps_to_emit.items) |timestamp| {
                     node_state.Distinct.pending_timestamps.removeAssertDiscard(timestamp);
-                    _ = try self.updateFrontier(node, timestamp, -1);
+                    _ = try self.applyFrontierUpdate(node, timestamp, -1);
                 }
             }
         }
@@ -1132,15 +1132,15 @@ pub const Shard = struct {
 
     pub fn hasWork(self: Shard) bool {
         return (self.unprocessed_change_batches.items.len > 0) or
-            (self.unprocessed_frontier_diffs.count() > 0);
+            (self.unprocessed_frontier_updates.count() > 0);
     }
 
     pub fn doWork(self: *Shard) !void {
         // Must always handle change batches before frontier advances, otherwise we might see changes arrive that are older than the current frontier
         if (try self.popChangeBatch()) |change_batch_at_node_input| {
             try self.processChangeBatch(change_batch_at_node_input.change_batch, change_batch_at_node_input.node_input);
-        } else if (self.unprocessed_frontier_diffs.count() > 0) {
-            try self.processFrontierDiffs();
+        } else if (self.unprocessed_frontier_updates.count() > 0) {
+            try self.processFrontierUpdates();
         }
     }
 

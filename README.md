@@ -66,7 +66,7 @@ Compared to DD, dida aims to:
   * [ ] Progress tracking
     * [x] Incremental frontier maintenance
     * [ ] Finer-grained change tracking to avoid empty updates
-    * [ ] Use a sorted data-structure for `unprocessed_frontier_diffs`
+    * [ ] Use a sorted data-structure for `unprocessed_frontier_updates`
   * [ ] Scheduling
     * [x] Schedule work in a correct order
     * [ ] Figure out how to schedule work for best throughput/latency
