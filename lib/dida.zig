@@ -595,84 +595,17 @@ pub const GraphBuilder = struct {
         for (downstream_node_inputs) |*node_inputs, node_id|
             frozen_downstream_node_inputs[node_id] = node_inputs.toOwnedSlice();
 
-        // Validate graph
-        for (self.subgraph_parents.items) |parent, subgraph_id_minus_one| {
-            assert(
-                parent.id < subgraph_id_minus_one + 1,
-                "The parent of a subgraph must have a smaller id than its child",
-                .{},
-            );
-        }
-        for (self.node_specs.items) |node_spec, node_id| {
-            for (node_spec.getInputs()) |input_node, input_ix| {
-                assert(input_node.id < num_nodes, "All input nodes must exist", .{});
-                if (node_spec == .TimestampIncrement) {
-                    assert(input_node.id > node_id, "TimestampIncrement nodes must have a later node as input", .{});
-                } else {
-                    assert(input_node.id < node_id, "All nodes (other than TimestampIncrement) must have an earlier node as input", .{});
-                }
-                switch (node_spec) {
-                    .Join => |join| assert(
-                        self.node_specs.items[input_node.id].hasIndex(),
-                        "Inputs to Join node must be contain an index",
-                        .{},
-                    ),
-                    .Distinct => |distinct| assert(
-                        self.node_specs.items[input_node.id].hasIndex(),
-                        "Input to Distinct node must contain an index",
-                        .{},
-                    ),
-                    else => {},
-                }
-                switch (node_spec) {
-                    .TimestampPush => {
-                        const input_subgraph = self.node_subgraphs.items[input_node.id];
-                        const output_subgraph = self.node_subgraphs.items[node_id];
-                        assert(
-                            output_subgraph.id > 0,
-                            "TimestampPush nodes cannot have an output on subgraph 0",
-                            .{},
-                        );
-                        assert(
-                            self.subgraph_parents.items[output_subgraph.id - 1].id == input_subgraph.id,
-                            "TimestampPush nodes must cross from a parent subgraph to a child subgraph",
-                            .{},
-                        );
-                    },
-                    .TimestampPop => {
-                        const input_subgraph = self.node_subgraphs.items[input_node.id];
-                        const output_subgraph = self.node_subgraphs.items[node_id];
-                        assert(
-                            input_subgraph.id > 0,
-                            "TimestampPop nodes cannot have an input on subgraph 0",
-                            .{},
-                        );
-                        assert(
-                            self.subgraph_parents.items[input_subgraph.id - 1].id == output_subgraph.id,
-                            "TimestampPop nodes must cross from a child subgraph to a parent subgraph",
-                            .{},
-                        );
-                    },
-                    else => {
-                        const input_subgraph = self.node_subgraphs.items[input_node.id];
-                        const output_subgraph = self.node_subgraphs.items[node_id];
-                        assert(
-                            input_subgraph.id == output_subgraph.id,
-                            "Nodes (other than TimestampPop and TimestampPush) must be on the same subgraph as their inputs",
-                            .{},
-                        );
-                    },
-                }
-            }
-        }
-
-        return Graph{
+        var graph = Graph{
             .allocator = self.allocator,
             .node_specs = self.node_specs.toOwnedSlice(),
             .node_subgraphs = node_subgraphs,
             .subgraph_parents = self.subgraph_parents.toOwnedSlice(),
             .downstream_node_inputs = frozen_downstream_node_inputs,
         };
+
+        graph.validate();
+
+        return graph;
     }
 };
 
@@ -683,6 +616,87 @@ pub const Graph = struct {
     // Indexed by subgraph.id-1, because subgraph 0 has no parent
     subgraph_parents: []const Subgraph,
     downstream_node_inputs: []const []const NodeInput,
+
+    pub fn validate(self: Graph) void {
+        const num_nodes = self.node_specs.len;
+        for (self.subgraph_parents) |parent, subgraph_id_minus_one| {
+            assert(
+                parent.id < subgraph_id_minus_one + 1,
+                "The parent of a subgraph must have a smaller id than its child",
+                .{},
+            );
+        }
+        for (self.node_specs) |node_spec, node_id| {
+            for (node_spec.getInputs()) |input_node, input_ix| {
+                assert(input_node.id < num_nodes, "All input nodes must exist", .{});
+                if (node_spec == .TimestampIncrement) {
+                    assert(
+                        input_node.id > node_id,
+                        "TimestampIncrement nodes must have a later node as input",
+                        .{},
+                    );
+                } else {
+                    assert(
+                        input_node.id < node_id,
+                        "All nodes (other than TimestampIncrement) must have an earlier node as input",
+                        .{},
+                    );
+                }
+                switch (node_spec) {
+                    .Join => |join| assert(
+                        self.node_specs[input_node.id].hasIndex(),
+                        "Inputs to Join node must be contain an index",
+                        .{},
+                    ),
+                    .Distinct => |distinct| assert(
+                        self.node_specs[input_node.id].hasIndex(),
+                        "Input to Distinct node must contain an index",
+                        .{},
+                    ),
+                    else => {},
+                }
+                switch (node_spec) {
+                    .TimestampPush => {
+                        const input_subgraph = last(Subgraph, self.node_subgraphs[input_node.id]);
+                        const output_subgraph = last(Subgraph, self.node_subgraphs[node_id]);
+                        assert(
+                            output_subgraph.id > 0,
+                            "TimestampPush nodes cannot have an output on subgraph 0",
+                            .{},
+                        );
+                        assert(
+                            self.subgraph_parents[output_subgraph.id - 1].id == input_subgraph.id,
+                            "TimestampPush nodes must cross from a parent subgraph to a child subgraph",
+                            .{},
+                        );
+                    },
+                    .TimestampPop => {
+                        const input_subgraph = last(Subgraph, self.node_subgraphs[input_node.id]);
+                        const output_subgraph = last(Subgraph, self.node_subgraphs[node_id]);
+                        assert(
+                            input_subgraph.id > 0,
+                            "TimestampPop nodes cannot have an input on subgraph 0",
+                            .{},
+                        );
+                        assert(
+                            self.subgraph_parents[input_subgraph.id - 1].id == output_subgraph.id,
+                            "TimestampPop nodes must cross from a child subgraph to a parent subgraph",
+                            .{},
+                        );
+                    },
+                    else => {
+                        const input_subgraph = last(Subgraph, self.node_subgraphs[input_node.id]);
+                        const output_subgraph = last(Subgraph, self.node_subgraphs[node_id]);
+                        assert(
+                            input_subgraph.id == output_subgraph.id,
+                            "Nodes (other than TimestampPop and TimestampPush) must be on the same subgraph as their inputs",
+                            .{},
+                        );
+                    },
+                }
+            }
+        }
+    }
 };
 
 pub const Shard = struct {

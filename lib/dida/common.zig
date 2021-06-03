@@ -58,3 +58,8 @@ pub fn ptrToSlice(comptime T: type, input: *const T) []const T {
     const one_input: *const [1]T = input;
     return one_input;
 }
+
+pub fn last(comptime T: type, slice: []const T) T {
+    assert(slice.len > 0, "Tried to take last item of a 0-length slice", .{});
+    return slice[slice.len - 1];
+}
