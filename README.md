@@ -9,7 +9,7 @@ Dida is heavily based on [differential dataflow](https://github.com/TimelyDatafl
 Compare to DD, dida aims to:
 
 * [ ] Be [easier to use and understand](https://scattered-thoughts.net/writing/why-isnt-differential-dataflow-more-popular/). (DD aims to be as flexible, extensible and composable as possible, which makes sense for a research platform but can make the code very difficult to follow.)
-   * [-] Tentatively aim to keep the core under 3kloc. (For comparison timely dataflow and differential dataflow total 14-16kloc depending on which components you count).
+   * [ ] Tentatively aim to keep the core under 3kloc. (For comparison timely dataflow and differential dataflow total 14-16kloc depending on which components you count).
    * [x] Only implement as much of [timely dataflow](https://github.com/TimelyDataflow/timely-dataflow/) as is needed to support the features in DD.
    * [x] Only support timestamps which are products of integers. (DD supports timestamps which are arbitary lattices, but I haven't yet seen any uses that can't be encoded as products of integers.)
    * [x] Use a simpler progress tracking algorithm which doesn't require path summaries, multiple outputs per node or internal edges within nodes.
@@ -17,8 +17,8 @@ Compare to DD, dida aims to:
    * [ ] Optionally log all actions for easier debugging and vizualization.
    * [ ] Provide well-documented default implementations for common tasks (eg writing output to a file).
 * [ ] Better support use as an interpreter backend and for binding to other languages.  
-  * [-] Split the api into a data-centric runtime-checked core, and a per-binding-language strongly-typed sugar that helps make dataflows correct-by-construction. (The DD api provides excellent compile-time safety but is hard to map across FFI into a language with a different type system.)
-  * [-] Don't rely on specialization for performance, since it requires compilation and also doesn't work well cross-language. This will require rethinking eg how functions are lifted over batches.
+  * [ ] Split the api into a data-centric runtime-checked core, and a per-binding-language strongly-typed sugar that helps make dataflows correct-by-construction. (The DD api provides excellent compile-time safety but is hard to map across FFI into a language with a different type system.)
+  * [ ] Don't rely on specialization for performance, since it requires compilation and also doesn't work well cross-language. This will require rethinking eg how functions are lifted over batches.
   * [ ] Support storing data inline in indexes when the size is only known at runtime. (Differential dataflow can support this, but materialize currently stores each row in a separate heap allocation even if the row is all fixed-width types.)
   * [ ] Support reference-counted values without adding overhead for non-reference-counted values. This is needed for eg pinning javascript objects but also helps reduce memory usage in string-heavy dataflows. (Materialize could reference-count eg strings but would then pay for the row-by-row Drop impl on all data, not just string data.)
   * [ ] Support being embedded in another event loop. (Differential dataflow can be run a step at a time, but the amount of work per step is not bounded so it can block the event loop for arbitrary amounts of time.)
@@ -28,45 +28,46 @@ Compare to DD, dida aims to:
 
 ## Implementation
 
-* [-] Core
-  * [-] Data
+* [ ] Core
+  * [ ] Data
     * [ ] Treat data as untyped bytes in the core
   * [x] Timestamps
   * [x] Frontiers
-  * [-] Change batches
+  * [ ] Change batches
     * [x] Sort and coalesce changes
     * [ ] Use columnar storage
     * [ ] Only store one copy of each row, regardless of number of timestamps/diffs
-  * [-] Nodes
+  * [ ] Nodes
     * [x] Input
     * [x] Output
-    * [-] Map
+    * [ ] Map
+      * [x] Basic logic
       * [ ] Replace with general linear operator
     * [x] TimestampPush/Increment/Pop
     * [x] Union
-    * [-] Index
+    * [ ] Index
       * [x] Basic logic
       * [ ] Cursors
       * [ ] Merge layers
       * [ ] Merge layers incrementally
       * [ ] Compact layers
       * [ ] Figure out a cheaper way to maintain frontier support?
-    * [-] Distinct
+    * [ ] Distinct
       * [x] Basic logic
       * [ ] Efficient implementation using cursors
       * [ ] Figure out a cheaper way to maintain pending timestamps?
-    * [-] Join
+    * [ ] Join
       * [x] Basic logic
       * [ ] Efficient implementation using cursors
     * [ ] Reduce
     * [ ] Exchange
   * [x] Graph
     * [x] Validation
-  * [-] Progress tracking
+  * [ ] Progress tracking
     * [x] Incremental frontier maintenance
     * [ ] Finer-grained change tracking to avoid empty updates
     * [ ] Use a sorted data-structure for `unprocessed_frontier_diffs`
-  * [-] Scheduling
+  * [ ] Scheduling
     * [x] Schedule work in a correct order
     * [ ] Figure out how to schedule work for best throughput/latency
     * [ ] Ensure that the runtime of `doWork` is roughly bounded
