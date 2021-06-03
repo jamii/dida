@@ -42,13 +42,13 @@ pub const Timestamp = struct {
     }
 
     pub fn popCoord(self: Timestamp, allocator: *Allocator) !Timestamp {
-        release_assert(self.coords.len > 0, "Tried to call popCoord on a timestamp with length 0", .{});
+        assert(self.coords.len > 0, "Tried to call popCoord on a timestamp with length 0", .{});
         const new_coords = try std.mem.dupe(allocator, usize, self.coords[0 .. self.coords.len - 1]);
         return Timestamp{ .coords = new_coords };
     }
 
     pub fn leastUpperBound(allocator: *Allocator, self: Timestamp, other: Timestamp) !Timestamp {
-        release_assert(self.coords.len == other.coords.len, "Tried to compute leastUpperBound of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
+        assert(self.coords.len == other.coords.len, "Tried to compute leastUpperBound of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
         var output_coords = try allocator.alloc(usize, self.coords.len);
         for (self.coords) |self_coord, i| {
             const other_coord = other.coords[i];
@@ -58,7 +58,7 @@ pub const Timestamp = struct {
     }
 
     pub fn causalOrder(self: Timestamp, other: Timestamp) PartialOrder {
-        release_assert(self.coords.len == other.coords.len, "Tried to compute causalOrder of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
+        assert(self.coords.len == other.coords.len, "Tried to compute causalOrder of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
         var lt: usize = 0;
         var gt: usize = 0;
         var eq: usize = 0;
@@ -77,7 +77,7 @@ pub const Timestamp = struct {
     }
 
     pub fn lexicalOrder(self: Timestamp, other: Timestamp) std.math.Order {
-        release_assert(self.coords.len == other.coords.len, "Tried to compute lexicalOrder of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
+        assert(self.coords.len == other.coords.len, "Tried to compute lexicalOrder of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
         for (self.coords) |self_coord, i| {
             const other_coord = other.coords[i];
             switch (std.math.order(self_coord, other_coord)) {
@@ -129,12 +129,12 @@ pub const Frontier = struct {
     pub const Direction = enum { Advance, Retreat };
 
     pub fn move(self: *Frontier, comptime direction: Direction, timestamp: Timestamp, changes_into: *ArrayList(FrontierChange)) !void {
-        release_assert(changes_into.items.len == 0, "Need to start with an empty changes_into buffer so can use it to remove timestamps", .{});
+        assert(changes_into.items.len == 0, "Need to start with an empty changes_into buffer so can use it to remove timestamps", .{});
         var iter = self.timestamps.iterator();
         while (iter.next()) |entry| {
             switch (timestamp.causalOrder(entry.key)) {
                 .eq, if (direction == .Advance) .lt else .gt => {
-                    release_assert(changes_into.items.len == 0, "Frontier timestamps invariant was broken", .{});
+                    assert(changes_into.items.len == 0, "Frontier timestamps invariant was broken", .{});
                     return;
                 },
                 if (direction == .Advance) .gt else .lt => {
@@ -259,8 +259,8 @@ pub const ChangeBatchBuilder = struct {
         };
     }
 
-    pub fn finishAndClear(self: *ChangeBatchBuilder) !ChangeBatch {
-        release_assert(self.changes.items.len > 0, "Refusing to build an empty change batch", .{});
+    pub fn finishAndClear(self: *ChangeBatchBuilder) !?ChangeBatch {
+        if (self.changes.items.len == 0) return null;
 
         std.sort.sort(Change, self.changes.items, {}, struct {
             fn lessThan(_: void, a: Change, b: Change) bool {
@@ -275,11 +275,14 @@ pub const ChangeBatchBuilder = struct {
             if (meta.deepEqual(prev_change.row, change.row) and meta.deepEqual(prev_change.timestamp, change.timestamp)) {
                 prev_change.diff += change.diff;
             } else {
-                prev_i += 1;
-                self.changes.items[prev_i] = change;
+                if (prev_change.diff != 0) {
+                    prev_i += 1;
+                    self.changes.items[prev_i] = change;
+                }
             }
         }
         self.changes.shrink(prev_i + 1);
+        if (self.changes.items.len == 0) return null;
 
         var lower_bound = Frontier.initEmpty(self.allocator);
         for (self.changes.items) |change| {
@@ -458,7 +461,7 @@ pub const NodeState = union(enum) {
         index: Index,
         // These are times in the future at which the output might change even if there is no new input.
         // To calculate:
-        // * Take the leastUpperBound of the timestamps of every possible subset of changes in the input.
+        // * Take the leastUpperBound of the timestamps of every possible subset of changes in the input node.
         // * Filter out timestamps that are before the output frontier of this node.
         pending_timestamps: DeepHashSet(Timestamp),
 
@@ -594,7 +597,7 @@ pub const GraphBuilder = struct {
 
         // Validate graph
         for (self.subgraph_parents.items) |parent, subgraph_id_minus_one| {
-            release_assert(
+            assert(
                 parent.id < subgraph_id_minus_one + 1,
                 "The parent of a subgraph must have a smaller id than its child",
                 .{},
@@ -602,19 +605,19 @@ pub const GraphBuilder = struct {
         }
         for (self.node_specs.items) |node_spec, node_id| {
             for (node_spec.getInputs()) |input_node, input_ix| {
-                release_assert(input_node.id < num_nodes, "All input nodes must exist", .{});
+                assert(input_node.id < num_nodes, "All input nodes must exist", .{});
                 if (node_spec == .TimestampIncrement) {
-                    release_assert(input_node.id > node_id, "TimestampIncrement nodes must have a later node as input", .{});
+                    assert(input_node.id > node_id, "TimestampIncrement nodes must have a later node as input", .{});
                 } else {
-                    release_assert(input_node.id < node_id, "All nodes (other than TimestampIncrement) must have an earlier node as input", .{});
+                    assert(input_node.id < node_id, "All nodes (other than TimestampIncrement) must have an earlier node as input", .{});
                 }
                 switch (node_spec) {
-                    .Join => |join| release_assert(
+                    .Join => |join| assert(
                         self.node_specs.items[input_node.id].hasIndex(),
                         "Inputs to Join node must be contain an index",
                         .{},
                     ),
-                    .Distinct => |distinct| release_assert(
+                    .Distinct => |distinct| assert(
                         self.node_specs.items[input_node.id].hasIndex(),
                         "Input to Distinct node must contain an index",
                         .{},
@@ -625,12 +628,12 @@ pub const GraphBuilder = struct {
                     .TimestampPush => {
                         const input_subgraph = self.node_subgraphs.items[input_node.id];
                         const output_subgraph = self.node_subgraphs.items[node_id];
-                        release_assert(
+                        assert(
                             output_subgraph.id > 0,
                             "TimestampPush nodes cannot have an output on subgraph 0",
                             .{},
                         );
-                        release_assert(
+                        assert(
                             self.subgraph_parents.items[output_subgraph.id - 1].id == input_subgraph.id,
                             "TimestampPush nodes must cross from a parent subgraph to a child subgraph",
                             .{},
@@ -639,12 +642,12 @@ pub const GraphBuilder = struct {
                     .TimestampPop => {
                         const input_subgraph = self.node_subgraphs.items[input_node.id];
                         const output_subgraph = self.node_subgraphs.items[node_id];
-                        release_assert(
+                        assert(
                             input_subgraph.id > 0,
                             "TimestampPop nodes cannot have an input on subgraph 0",
                             .{},
                         );
-                        release_assert(
+                        assert(
                             self.subgraph_parents.items[input_subgraph.id - 1].id == output_subgraph.id,
                             "TimestampPop nodes must cross from a child subgraph to a parent subgraph",
                             .{},
@@ -653,7 +656,7 @@ pub const GraphBuilder = struct {
                     else => {
                         const input_subgraph = self.node_subgraphs.items[input_node.id];
                         const output_subgraph = self.node_subgraphs.items[node_id];
-                        release_assert(
+                        assert(
                             input_subgraph.id == output_subgraph.id,
                             "Nodes (other than TimestampPop and TimestampPush) must be on the same subgraph as their inputs",
                             .{},
@@ -762,7 +765,7 @@ pub const Shard = struct {
     }
 
     pub fn pushInput(self: *Shard, node: Node, change: Change) !void {
-        release_assert(
+        assert(
             self.node_states[node.id].Input.frontier.causalOrder(change.timestamp) != .gt,
             "May not push inputs that are less than the Input node frontier set by Shard.advanceInput",
             .{},
@@ -772,8 +775,7 @@ pub const Shard = struct {
 
     pub fn flushInput(self: *Shard, node: Node) !void {
         var unflushed_changes = &self.node_states[node.id].Input.unflushed_changes;
-        if (unflushed_changes.changes.items.len > 0) {
-            const change_batch = try unflushed_changes.finishAndClear();
+        if (try unflushed_changes.finishAndClear()) |change_batch| {
             try self.emitChangeBatch(node, change_batch);
         }
     }
@@ -795,7 +797,7 @@ pub const Shard = struct {
             const output_frontier = self.node_frontiers[from_node.id];
             var iter = change_batch.lower_bound.timestamps.iterator();
             while (iter.next()) |entry| {
-                release_assert(
+                assert(
                     output_frontier.frontier.causalOrder(entry.key) != .gt,
                     "Emitted a change at a timestamp that is behind the output frontier. Node {}, timestamp {}.",
                     .{ from_node, entry.key },
@@ -834,19 +836,21 @@ pub const Shard = struct {
         switch (node_spec) {
             .Input => panic("Input nodes should not have work pending on their input", .{}),
             .Map => |map| {
-                var output_change_batch = ChangeBatchBuilder.init(self.allocator);
+                var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 for (change_batch.changes) |change| {
                     var output_change = change; // copy
                     output_change.row = try map.function(change.row);
-                    try output_change_batch.changes.append(output_change);
+                    try output_change_batch_builder.changes.append(output_change);
                 }
-                try self.emitChangeBatch(node_input.node, try output_change_batch.finishAndClear());
+                if (try output_change_batch_builder.finishAndClear()) |output_change_batch| {
+                    try self.emitChangeBatch(node_input.node, output_change_batch);
+                }
             },
             .Index => {
                 // These won't be emitted until the frontier passes them
                 // TODO this is a lot of timestamps - is there a cheaper way to maintain the support for the index frontier?
                 for (change_batch.changes) |change| {
-                    release_assert(
+                    assert(
                         self.node_frontiers[node.id].frontier.causalOrder(change.timestamp) != .gt,
                         "Index received a change that was behind its output frontier. Node {}, timestamp {}.",
                         .{ node, change.timestamp },
@@ -857,7 +861,7 @@ pub const Shard = struct {
             },
             .Join => |join| {
                 const index = self.node_states[join.inputs[1 - node_input.input_ix].id].getIndex().?;
-                var output_change_batch = ChangeBatchBuilder.init(self.allocator);
+                var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 for (change_batch.changes) |change| {
                     const this_key = change.row.values[0..join.key_columns];
                     for (index.change_batches.items) |other_change_batch| {
@@ -874,44 +878,46 @@ pub const Shard = struct {
                                     .diff = change.diff * other_change.diff,
                                     .timestamp = try Timestamp.leastUpperBound(self.allocator, change.timestamp, other_change.timestamp),
                                 };
-                                try output_change_batch.changes.append(output_change);
+                                try output_change_batch_builder.changes.append(output_change);
                             }
                         }
                     }
                 }
-                if (output_change_batch.changes.items.len > 0) {
-                    try self.emitChangeBatch(node_input.node, try output_change_batch.finishAndClear());
+                if (try output_change_batch_builder.finishAndClear()) |output_change_batch| {
+                    try self.emitChangeBatch(node_input.node, output_change_batch);
                 }
             },
             .Output => {
                 try node_state.Output.unpopped_change_batches.append(change_batch);
             },
             .TimestampPush => {
-                var output_change_batch = ChangeBatchBuilder.init(self.allocator);
+                var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 for (change_batch.changes) |change| {
                     var output_change = change; // copy
                     output_change.timestamp = try change.timestamp.pushCoord(self.allocator);
-                    try output_change_batch.changes.append(output_change);
+                    try output_change_batch_builder.changes.append(output_change);
                 }
-                try self.emitChangeBatch(node_input.node, try output_change_batch.finishAndClear());
+                try self.emitChangeBatch(node_input.node, (try output_change_batch_builder.finishAndClear()).?);
             },
             .TimestampIncrement => {
-                var output_change_batch = ChangeBatchBuilder.init(self.allocator);
+                var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 for (change_batch.changes) |change| {
                     var output_change = change; // copy
                     output_change.timestamp = try change.timestamp.incrementCoord(self.allocator);
-                    try output_change_batch.changes.append(output_change);
+                    try output_change_batch_builder.changes.append(output_change);
                 }
-                try self.emitChangeBatch(node_input.node, try output_change_batch.finishAndClear());
+                try self.emitChangeBatch(node_input.node, (try output_change_batch_builder.finishAndClear()).?);
             },
             .TimestampPop => {
-                var output_change_batch = ChangeBatchBuilder.init(self.allocator);
+                var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 for (change_batch.changes) |change| {
                     var output_change = change; // copy
                     output_change.timestamp = try change.timestamp.popCoord(self.allocator);
-                    try output_change_batch.changes.append(output_change);
+                    try output_change_batch_builder.changes.append(output_change);
                 }
-                try self.emitChangeBatch(node_input.node, try output_change_batch.finishAndClear());
+                if (try output_change_batch_builder.finishAndClear()) |output_change_batch| {
+                    try self.emitChangeBatch(node_input.node, output_change_batch);
+                }
             },
             .Union => {
                 // Pass straight through
@@ -1032,8 +1038,7 @@ pub const Shard = struct {
                     }
                 }
                 node_state.Index.pending_changes = pending_changes;
-                if (change_batch_builder.changes.items.len > 0) {
-                    const change_batch = try change_batch_builder.finishAndClear();
+                if (try change_batch_builder.finishAndClear()) |change_batch| {
                     try node_state.Index.index.change_batches.append(change_batch);
                     try self.emitChangeBatch(node, change_batch);
                     for (change_batch.changes) |change| {
@@ -1103,8 +1108,7 @@ pub const Shard = struct {
                 }
 
                 // Emit changes
-                if (change_batch_builder.changes.items.len > 0) {
-                    const change_batch = try change_batch_builder.finishAndClear();
+                if (try change_batch_builder.finishAndClear()) |change_batch| {
                     try output_index.change_batches.append(change_batch);
                     try self.emitChangeBatch(node, change_batch);
                 }

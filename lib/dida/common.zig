@@ -14,7 +14,7 @@ pub const ArrayList = std.ArrayList;
 pub const HashMap = std.HashMap;
 pub const AutoHashMap = std.AutoHashMap;
 
-pub fn release_assert(condition: bool, comptime message: []const u8, args: anytype) void {
+pub fn assert(condition: bool, comptime message: []const u8, args: anytype) void {
     if (!condition) panic(message, args);
 }
 
