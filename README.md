@@ -79,10 +79,15 @@ Compared to DD, dida aims to:
 * [ ] Testing
 * [ ] Bindings
   * [ ] Wasm
-  * [ ] Javascript
+  * [ ] Node.js
+    * [ ] Basic sketch
+    * [ ] Type tags
+    * [ ] Exceptions
+    * [ ] Memory management
+    * [ ] Panic handler
 * [ ] Sugar
   * [ ] Zig
   * [ ] Wasm
-  * [ ] Javascript
+  * [ ] Node.js
 * [ ] Debuggers / visualization
 * [ ] Documentation / book

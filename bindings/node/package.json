@@ -1,10 +1,10 @@
 {
-  "name": "zig-napi-example",
+  "name": "dida",
   "version": "0.0.0",
-  "description": "example napi package in zig",
-  "main": "example.js",
+  "description": "",
+  "main": "test.js",
   "scripts": {
-    "build": "zig build-lib -dynamic -lc -isystem $NIX_NODEJS/include/node example.zig -femit-bin=example.node"
+    "build": "zig build-lib -dynamic -lc -isystem $NIX_NODEJS/include/node dida_node.zig -femit-bin=dida.node --main-pkg-path ../../"
   },
   "author": "Isaac Freund <ifreund@ifreund.xyz>",
   "license": "0BSD"
