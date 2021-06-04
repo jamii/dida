@@ -41,11 +41,12 @@ fn GraphBuilder_constructor(env: c.napi_env, info: c.napi_callback_info) callcon
 
     const args_and_this = napiGetCbInfo(env, info, 0);
 
-    const graph_builder = allocator.create(dida.GraphBuilder) catch dida.common.panic("OOM", .{});
+    const graph_builder = allocator.create(dida.GraphBuilder) catch |err| dida.common.panic("{}", .{err});
     graph_builder.* = dida.GraphBuilder.init(allocator);
 
     // TODO this fails for some reason
     //_ = napiCall(c.napi_wrap, .{ env, args_and_this.this, @ptrCast(*c_void, graph_builder), null, null }, c.napi_ref);
+
     // TODO do we need to store the wrapper somewhere?
     napiCall(c.napi_wrap, .{ env, args_and_this.this, @ptrCast(*c_void, graph_builder), null, null, null }, void);
 
@@ -54,22 +55,19 @@ fn GraphBuilder_constructor(env: c.napi_env, info: c.napi_callback_info) callcon
 
 fn GraphBuilder_addSubgraph(env: c.napi_env, info: c.napi_callback_info) callconv(.C) c.napi_value {
     const args_and_this = napiGetCbInfo(env, info, 1);
-    const js_parent_id = args_and_this.args[0];
+    const graph_builder = napiUnwrap(env, args_and_this.this, dida.GraphBuilder);
+    const parent_id = napiGetValue(env, args_and_this.args[0], usize);
 
-    const js_parent_id_type = napiCall(c.napi_typeof, .{ env, js_parent_id }, c.napi_valuetype);
-    dida.common.assert(js_parent_id_type == .napi_number, "Expected napi_number, found {}", .{js_parent_id_type});
-    const parent_id = @intCast(usize, napiCall(c.napi_get_value_int64, .{ env, js_parent_id }, i64));
+    const subgraph = graph_builder.addSubgraph(.{ .id = parent_id }) catch |err| dida.common.panic("{}", .{err});
 
-    const graph_builder = @ptrCast(*dida.GraphBuilder, @alignCast(@alignOf(dida.GraphBuilder), napiCall(c.napi_unwrap, .{ env, args_and_this.this }, ?*c_void)));
-    const subgraph = graph_builder.addSubgraph(.{ .id = parent_id }) catch dida.common.panic("OOM", .{});
-
-    const js_id = napiCall(c.napi_create_int64, .{ env, @intCast(i64, subgraph.id) }, c.napi_value);
-    return js_id;
+    return napiCreateValue(env, subgraph.id);
 }
 
-fn napiCall(comptime napi_fn: anytype, args: anytype, comptime return_type: type) return_type {
-    if (return_type != void) {
-        var result: return_type = undefined;
+// --- helpers ---
+
+fn napiCall(comptime napi_fn: anytype, args: anytype, comptime ReturnType: type) ReturnType {
+    if (ReturnType != void) {
+        var result: ReturnType = undefined;
         const status: c.napi_status = @call(.{}, napi_fn, args ++ .{&result});
         dida.common.assert(status == .napi_ok, "Call returned status {}", .{status});
         return result;
@@ -89,4 +87,41 @@ fn napiGetCbInfo(env: c.napi_env, info: c.napi_callback_info, comptime expected_
         .args = args,
         .this = this,
     };
+}
+
+const usize_bits = @bitSizeOf(usize);
+comptime {
+    if (usize_bits != 64 and usize_bits != 32) {
+        @compileError("Can only handle 32 bit or 64 bit architectures");
+    }
+}
+
+fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
+    const cast_value = switch (@TypeOf(value)) {
+        usize => @intCast(isize, value),
+        else => value,
+    };
+    const napi_fn = switch (@TypeOf(cast_value)) {
+        isize => if (usize_bits == 64) c.napi_create_int64 else c.napi_create_int32,
+        else => dida.common.panic("Don't know how to create napi value for {}", @TypeOf(cast_value)),
+    };
+    return napiCall(napi_fn, .{ env, cast_value }, c.napi_value);
+}
+
+fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type) ReturnType {
+    const napi_fn = switch (ReturnType) {
+        usize, isize => if (usize_bits == 64) c.napi_get_value_int64 else c.napi.get_value_int32,
+        else => dida.common.panic("Don't know how to get napi value for {}", @TypeOf(cast_value)),
+    };
+    const CastType = switch (ReturnType) {
+        usize => isize,
+        else => ReturnType,
+    };
+    const result = napiCall(napi_fn, .{ env, value }, CastType);
+    return @intCast(ReturnType, result);
+}
+
+fn napiUnwrap(env: c.napi_env, value: c.napi_value, comptime WrappedType: type) *WrappedType {
+    const pointer = napiCall(c.napi_unwrap, .{ env, value }, ?*c_void);
+    return @ptrCast(*WrappedType, @alignCast(@alignOf(WrappedType), pointer));
 }
