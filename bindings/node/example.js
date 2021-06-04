@@ -1,8 +1,9 @@
 const dida = require('./dida.node');
 
 var graph_builder = new dida.GraphBuilder();
+console.log(graph_builder);
 //const subgraph_0 = dida.Subgraph(0);
-const subgraph_1 = graph_builder.addSubgraph(0);
+const subgraph_1 = graph_builder.addSubgraph({id: 0});
 console.log(subgraph_1);
 //const subgraph_1 = graph_builder.addSubgraph(subgraph_0);
 //
