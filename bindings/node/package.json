@@ -1,0 +1,11 @@
+{
+  "name": "zig-napi-example",
+  "version": "0.0.0",
+  "description": "example napi package in zig",
+  "main": "example.js",
+  "scripts": {
+    "build": "zig build-lib -dynamic -lc -isystem $NIX_NODEJS/include/node example.zig -femit-bin=example.node"
+  },
+  "author": "Isaac Freund <ifreund@ifreund.xyz>",
+  "license": "0BSD"
+}
