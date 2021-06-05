@@ -1,9 +1,20 @@
 const dida = require('./dida.node');
 
-var graph_builder = new dida.GraphBuilder();
+function GraphBuilder() {
+    this.external = dida.GraphBuilder_init();
+}
+GraphBuilder.prototype.addSubgraph = function(id) {
+    return dida.GraphBuilder_addSubgraph(this.external, id);
+}
+
+function Subgraph(id) {
+    this.id = id;
+}
+
+var graph_builder = new GraphBuilder();
 console.log(graph_builder);
-//const subgraph_0 = dida.Subgraph(0);
-const subgraph_1 = graph_builder.addSubgraph({id: 0});
+const subgraph_0 = new Subgraph(0);
+const subgraph_1 = graph_builder.addSubgraph(subgraph_0);
 console.log(subgraph_1);
 //const subgraph_1 = graph_builder.addSubgraph(subgraph_0);
 //

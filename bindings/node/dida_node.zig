@@ -14,50 +14,31 @@ const allocator = &arena.allocator;
 
 export fn napi_register_module_v1(env: c.napi_env, exports: c.napi_value) c.napi_value {
     {
-        const name = "GraphBuilder";
-        const properties = [_]c.napi_property_descriptor{
-            .{
-                .utf8name = "addSubgraph",
-                .name = null,
-                .method = GraphBuilder_addSubgraph,
-                .getter = null,
-                .setter = null,
-                .value = null,
-                // TODO use napi_default_method?
-                .attributes = .napi_default,
-                .data = null,
-            },
-        };
-        const class = napiCall(c.napi_define_class, .{ env, name, name.len, GraphBuilder_constructor, null, properties.len, &properties }, c.napi_value);
-        napiCall(c.napi_set_named_property, .{ env, exports, "GraphBuilder", class }, void);
+        const GraphBuilder_init_fn = napiCall(c.napi_create_function, .{ env, "GraphBuilder_init", "GraphBuilder_init".len, GraphBuilder_init, null }, c.napi_value);
+        napiCall(c.napi_set_named_property, .{ env, exports, "GraphBuilder_init", GraphBuilder_init_fn }, void);
+    }
+
+    {
+        const GraphBuilder_addSubgraph_fn = napiCall(c.napi_create_function, .{ env, "GraphBuilder_addSubgraph", "GraphBuilder_addSubgraph".len, GraphBuilder_addSubgraph, null }, c.napi_value);
+        napiCall(c.napi_set_named_property, .{ env, exports, "GraphBuilder_addSubgraph", GraphBuilder_addSubgraph_fn }, void);
     }
 
     return exports;
 }
 
-fn GraphBuilder_constructor(env: c.napi_env, info: c.napi_callback_info) callconv(.C) c.napi_value {
-    const target = napiCall(c.napi_get_new_target, .{ env, info }, c.napi_value);
-    // TODO Uncaught TypeError: Class constructor Bar cannot be invoked without 'new'
-    dida.common.assert(target != null, "Wasn't called with new", .{});
-
+fn GraphBuilder_init(env: c.napi_env, info: c.napi_callback_info) callconv(.C) c.napi_value {
     const args_and_this = napiGetCbInfo(env, info, 0);
 
     const graph_builder = allocator.create(dida.GraphBuilder) catch |err| dida.common.panic("{}", .{err});
     graph_builder.* = dida.GraphBuilder.init(allocator);
 
-    // TODO this fails for some reason
-    //_ = napiCall(c.napi_wrap, .{ env, args_and_this.this, @ptrCast(*c_void, graph_builder), null, null }, c.napi_ref);
-
-    // TODO do we need to store the wrapper somewhere?
-    napiCall(c.napi_wrap, .{ env, args_and_this.this, @ptrCast(*c_void, graph_builder), null, null, null }, void);
-
-    return null;
+    return napiCreateExternal(env, graph_builder);
 }
 
 fn GraphBuilder_addSubgraph(env: c.napi_env, info: c.napi_callback_info) callconv(.C) c.napi_value {
-    const args_and_this = napiGetCbInfo(env, info, 1);
-    const graph_builder = napiUnwrap(env, args_and_this.this, dida.GraphBuilder);
-    const parent = napiGetValue(env, args_and_this.args[0], dida.Subgraph);
+    const args_and_this = napiGetCbInfo(env, info, 2);
+    const graph_builder = napiGetExternal(env, args_and_this.args[0], dida.GraphBuilder);
+    const parent = napiGetValue(env, args_and_this.args[1], dida.Subgraph);
 
     const subgraph = graph_builder.addSubgraph(parent) catch |err| dida.common.panic("{}", .{err});
 
@@ -95,6 +76,17 @@ comptime {
     if (usize_bits != 64 and usize_bits != 32) {
         @compileError("Can only handle 32 bit or 64 bit architectures");
     }
+}
+
+fn napiCreateExternal(env: c.napi_env, value: anytype) c.napi_value {
+    const info = @typeInfo(@TypeOf(value));
+    dida.common.assert(info == .Pointer and info.Pointer.size == .One, "napiCreateExternal should be called with *T, got {}", .{@typeName(@TypeOf(value))});
+    return napiCall(c.napi_create_external, .{ env, @ptrCast(*c_void, value), null, null }, c.napi_value);
+}
+
+fn napiGetExternal(env: c.napi_env, value: c.napi_value, comptime ReturnType: type) *ReturnType {
+    const ptr = napiCall(c.napi_get_value_external, .{ env, value }, ?*c_void);
+    return @ptrCast(*ReturnType, @alignCast(@alignOf(ReturnType), ptr));
 }
 
 fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
@@ -155,9 +147,4 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
         },
         else => dida.common.panic("Dont know how to get value of type {}", .{ReturnType}),
     }
-}
-
-fn napiUnwrap(env: c.napi_env, value: c.napi_value, comptime WrappedType: type) *WrappedType {
-    const pointer = napiCall(c.napi_unwrap, .{ env, value }, ?*c_void);
-    return @ptrCast(*WrappedType, @alignCast(@alignOf(WrappedType), pointer));
 }
