@@ -13,14 +13,9 @@ var arena = std.heap.ArenaAllocator.init(&gpa.allocator);
 const allocator = &arena.allocator;
 
 export fn napi_register_module_v1(env: c.napi_env, exports: c.napi_value) c.napi_value {
-    const GraphBuilder_init_fn = napiCall(c.napi_create_function, .{ env, "GraphBuilder_init", "GraphBuilder_init".len, GraphBuilder_init, null }, c.napi_value);
-    napiCall(c.napi_set_named_property, .{ env, exports, "GraphBuilder_init", GraphBuilder_init_fn }, void);
-
-    const GraphBuilder_addSubgraph_fn = napiCall(c.napi_create_function, .{ env, "GraphBuilder_addSubgraph", "GraphBuilder_addSubgraph".len, GraphBuilder_addSubgraph, null }, c.napi_value);
-    napiCall(c.napi_set_named_property, .{ env, exports, "GraphBuilder_addSubgraph", GraphBuilder_addSubgraph_fn }, void);
-
-    const GraphBuilder_addNode_fn = napiCall(c.napi_create_function, .{ env, "GraphBuilder_addNode", "GraphBuilder_addNode".len, GraphBuilder_addNode, null }, c.napi_value);
-    napiCall(c.napi_set_named_property, .{ env, exports, "GraphBuilder_addNode", GraphBuilder_addNode_fn }, void);
+    napiExportFn(env, exports, GraphBuilder_init, "GraphBuilder_init");
+    napiExportFn(env, exports, GraphBuilder_addSubgraph, "GraphBuilder_addSubgraph");
+    napiExportFn(env, exports, GraphBuilder_addNode, "GraphBuilder_addNode");
 
     return exports;
 }
@@ -67,6 +62,11 @@ fn napiCall(comptime napi_fn: anytype, args: anytype, comptime ReturnType: type)
         const status: c.napi_status = @call(.{}, napi_fn, args);
         dida.common.assert(status == .napi_ok, "Call returned status {}", .{status});
     }
+}
+
+fn napiExportFn(env: c.napi_env, exports: c.napi_value, export_fn: anytype, export_fn_name: [:0]const u8) void {
+    const napi_fn = napiCall(c.napi_create_function, .{ env, export_fn_name, export_fn_name.len, export_fn, null }, c.napi_value);
+    napiCall(c.napi_set_named_property, .{ env, exports, export_fn_name, napi_fn }, void);
 }
 
 fn napiGetCbInfo(env: c.napi_env, info: c.napi_callback_info, comptime expected_num_args: usize) struct { args: [expected_num_args]c.napi_value, this: c.napi_value } {
