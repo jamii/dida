@@ -165,8 +165,8 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
                         const payload = napiGetValue(env, napiCall(c.napi_get_named_property, .{ env, value, "payload" }, c.napi_value), union_field_info.field_type);
                         return @unionInit(ReturnType, union_field_info.name, payload);
                     }
-                    unreachable;
                 }
+                unreachable;
             } else {
                 @compileError("Can't get value for untagged union type " ++ @typeName(ReturnType));
             }
@@ -185,11 +185,24 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
                 if (std.mem.eql(u8, tag_name, field_info.name)) {
                     return @intToEnum(ReturnType, field_info.value);
                 }
-                dida.common.panic("Type {} does not contain a tag named \"{}\"", .{ @typeName(ReturnType), tag_name });
             }
+            dida.common.panic("Type {} does not contain a tag named \"{}\"", .{ @typeName(ReturnType), tag_name });
+        },
+        .Optional => |optional_info| {
+            const napi_type = napiCall(c.napi_typeof, .{ env, value }, c.napi_valuetype);
+            return switch (napi_type) {
+                .napi_undefined, .napi_null => null,
+                else => napiGetValue(env, value, optional_info.child),
+            };
+        },
+        .Array => |array_info| {
+            dida.common.TODO();
         },
         .Void => {
             return {};
+        },
+        .Fn => {
+            dida.common.TODO();
         },
         else => @compileError("Dont know how to get value for type " ++ @typeName(ReturnType)),
     }

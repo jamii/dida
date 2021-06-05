@@ -6,7 +6,9 @@ const subgraph_1 = graph_builder.addSubgraph(subgraph_0);
 console.log(subgraph_1);
 const edges = graph_builder.addNode(subgraph_0, new NodeSpec.Input());
 console.log(edges);
-//const edges_1 = graph_builder.addNode(subgraph_1, dida.TimestampPush({ input: edges }));
+const edges_1 = graph_builder.addNode(subgraph_1, new NodeSpec.TimestampPush(edges));
+
+console.log(edges_1);
 
 //const reach_future = graph_builder.addNode(subgraph_1, .{ .TimestampIncrement = .{ .input = null } });
 //const reach_index = graph_builder.addNode(subgraph_1, .{ .Index = .{ .input = reach_future } });
