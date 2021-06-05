@@ -370,7 +370,7 @@ pub const NodeSpec = union(enum) {
 
     pub const MapSpec = struct {
         input: Node,
-        function: fn (row: Row) error{OutOfMemory}!Row,
+        map_fn: fn (row: Row) error{OutOfMemory}!Row,
     };
 
     pub const IndexSpec = struct {
@@ -778,7 +778,7 @@ pub const Shard = struct {
         }
     }
 
-    pub fn emitChangeBatch(self: *Shard, from_node: Node, change_batch: ChangeBatch) !void {
+    fn emitChangeBatch(self: *Shard, from_node: Node, change_batch: ChangeBatch) !void {
         // Check this is legal
         {
             const output_frontier = self.node_frontiers[from_node.id];
@@ -804,7 +804,7 @@ pub const Shard = struct {
         }
     }
 
-    pub fn popChangeBatch(self: *Shard) !?ChangeBatchAtNodeInput {
+    fn popChangeBatch(self: *Shard) !?ChangeBatchAtNodeInput {
         if (self.unprocessed_change_batches.popOrNull()) |change_batch_at_node_input| {
             var iter = change_batch_at_node_input.change_batch.lower_bound.timestamps.iterator();
             while (iter.next()) |entry| {
@@ -816,7 +816,7 @@ pub const Shard = struct {
         }
     }
 
-    pub fn processChangeBatch(self: *Shard, change_batch: ChangeBatch, node_input: NodeInput) !void {
+    fn processChangeBatch(self: *Shard, change_batch: ChangeBatch, node_input: NodeInput) !void {
         const node = node_input.node;
         const node_spec = self.graph.node_specs[node.id];
         const node_state = &self.node_states[node.id];
@@ -826,7 +826,7 @@ pub const Shard = struct {
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 for (change_batch.changes) |change| {
                     var output_change = change; // copy
-                    output_change.row = try map.function(change.row);
+                    output_change.row = try map.map_fn(change.row);
                     try output_change_batch_builder.changes.append(output_change);
                 }
                 if (try output_change_batch_builder.finishAndClear()) |output_change_batch| {
@@ -944,7 +944,7 @@ pub const Shard = struct {
         }
     }
 
-    pub fn queueFrontierUpdate(self: *Shard, node_input: NodeInput, timestamp: Timestamp, diff: isize) !void {
+    fn queueFrontierUpdate(self: *Shard, node_input: NodeInput, timestamp: Timestamp, diff: isize) !void {
         var entry = try self.unprocessed_frontier_updates.getOrPutValue(.{
             .node_input = node_input,
             .subgraphs = self.graph.node_subgraphs[node_input.node.id],
@@ -954,7 +954,7 @@ pub const Shard = struct {
         if (entry.value == 0) self.unprocessed_frontier_updates.removeAssertDiscard(entry.key);
     }
 
-    pub fn applyFrontierUpdate(self: *Shard, node: Node, timestamp: Timestamp, diff: isize) !enum { Updated, NotUpdated } {
+    fn applyFrontierUpdate(self: *Shard, node: Node, timestamp: Timestamp, diff: isize) !enum { Updated, NotUpdated } {
         var frontier_changes = ArrayList(FrontierChange).init(self.allocator);
         try self.node_frontiers[node.id].update(timestamp, diff, &frontier_changes);
         for (frontier_changes.items) |frontier_change| {
@@ -968,7 +968,7 @@ pub const Shard = struct {
     // Produces an ordering on Pointstamp that is compatible with causality.
     // IE if the existence of a change at `this` causes a change to later be produced at `that`, then we need to have `orderPointstamps(this, that) == .lt`.
     // The invariants enforced for the graph structure guarantee that this is possible.
-    pub fn orderPointstamps(this: Pointstamp, that: Pointstamp) std.math.Order {
+    fn orderPointstamps(this: Pointstamp, that: Pointstamp) std.math.Order {
         const min_len = min(this.subgraphs.len, that.subgraphs.len);
         var i: usize = 0;
         while (i < min_len) : (i += 1) {
@@ -985,7 +985,7 @@ pub const Shard = struct {
         return meta.deepOrder(this.node_input, that.node_input);
     }
 
-    pub fn processFrontierUpdates(self: *Shard) !void {
+    fn processFrontierUpdates(self: *Shard) !void {
         // Nodes whose input frontiers have changed
         // TODO is it worth tracking the actual change? might catch cases where the total diff is zero
         var updated_nodes = DeepHashSet(Node).init(self.allocator);
@@ -1148,7 +1148,7 @@ pub const Shard = struct {
         return self.node_states[node.id].Output.unpopped_change_batches.popOrNull();
     }
 
-    pub fn dumpInto(writer: anytype, indent: u32, self: Shard) anyerror!void {
+    fn dumpInto(writer: anytype, indent: u32, self: Shard) anyerror!void {
         try writer.writeAll("Shard{\n");
 
         for (self.graph.node_specs) |node_spec, node_id| {
