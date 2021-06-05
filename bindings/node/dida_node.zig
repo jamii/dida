@@ -13,15 +13,14 @@ var arena = std.heap.ArenaAllocator.init(&gpa.allocator);
 const allocator = &arena.allocator;
 
 export fn napi_register_module_v1(env: c.napi_env, exports: c.napi_value) c.napi_value {
-    {
-        const GraphBuilder_init_fn = napiCall(c.napi_create_function, .{ env, "GraphBuilder_init", "GraphBuilder_init".len, GraphBuilder_init, null }, c.napi_value);
-        napiCall(c.napi_set_named_property, .{ env, exports, "GraphBuilder_init", GraphBuilder_init_fn }, void);
-    }
+    const GraphBuilder_init_fn = napiCall(c.napi_create_function, .{ env, "GraphBuilder_init", "GraphBuilder_init".len, GraphBuilder_init, null }, c.napi_value);
+    napiCall(c.napi_set_named_property, .{ env, exports, "GraphBuilder_init", GraphBuilder_init_fn }, void);
 
-    {
-        const GraphBuilder_addSubgraph_fn = napiCall(c.napi_create_function, .{ env, "GraphBuilder_addSubgraph", "GraphBuilder_addSubgraph".len, GraphBuilder_addSubgraph, null }, c.napi_value);
-        napiCall(c.napi_set_named_property, .{ env, exports, "GraphBuilder_addSubgraph", GraphBuilder_addSubgraph_fn }, void);
-    }
+    const GraphBuilder_addSubgraph_fn = napiCall(c.napi_create_function, .{ env, "GraphBuilder_addSubgraph", "GraphBuilder_addSubgraph".len, GraphBuilder_addSubgraph, null }, c.napi_value);
+    napiCall(c.napi_set_named_property, .{ env, exports, "GraphBuilder_addSubgraph", GraphBuilder_addSubgraph_fn }, void);
+
+    const GraphBuilder_addNode_fn = napiCall(c.napi_create_function, .{ env, "GraphBuilder_addNode", "GraphBuilder_addNode".len, GraphBuilder_addNode, null }, c.napi_value);
+    napiCall(c.napi_set_named_property, .{ env, exports, "GraphBuilder_addNode", GraphBuilder_addNode_fn }, void);
 
     return exports;
 }
@@ -43,6 +42,17 @@ fn GraphBuilder_addSubgraph(env: c.napi_env, info: c.napi_callback_info) callcon
     const subgraph = graph_builder.addSubgraph(parent) catch |err| dida.common.panic("{}", .{err});
 
     return napiCreateValue(env, subgraph);
+}
+
+fn GraphBuilder_addNode(env: c.napi_env, info: c.napi_callback_info) callconv(.C) c.napi_value {
+    const args_and_this = napiGetCbInfo(env, info, 3);
+    const graph_builder = napiGetExternal(env, args_and_this.args[0], dida.GraphBuilder);
+    const subgraph = napiGetValue(env, args_and_this.args[1], dida.Subgraph);
+    const node_spec = napiGetValue(env, args_and_this.args[2], dida.NodeSpec);
+
+    const node = graph_builder.addNode(subgraph, node_spec) catch |err| dida.common.panic("{}", .{err});
+
+    return napiCreateValue(env, node);
 }
 
 // --- helpers ---
@@ -80,7 +90,8 @@ comptime {
 
 fn napiCreateExternal(env: c.napi_env, value: anytype) c.napi_value {
     const info = @typeInfo(@TypeOf(value));
-    dida.common.assert(info == .Pointer and info.Pointer.size == .One, "napiCreateExternal should be called with *T, got {}", .{@typeName(@TypeOf(value))});
+    if (!(info == .Pointer and info.Pointer.size == .One))
+        @compileError("napiCreateExternal should be called with *T, got " ++ @typeName(@TypeOf(value)));
     return napiCall(c.napi_create_external, .{ env, @ptrCast(*c_void, value), null, null }, c.napi_value);
 }
 
@@ -115,7 +126,7 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
             }
             return result;
         },
-        else => dida.common.panic("Dont know how to create value of type {}", .{@TypeOf(value)}),
+        else => @compileError("Dont know how to create value of type " ++ @typeName(ReturnType)),
     }
 }
 
@@ -145,6 +156,41 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
             }
             return result;
         },
-        else => dida.common.panic("Dont know how to get value of type {}", .{ReturnType}),
+        .Union => |union_info| {
+            if (union_info.tag_type) |tag_type| {
+                const tag = napiGetValue(env, napiCall(c.napi_get_named_property, .{ env, value, "tag" }, c.napi_value), tag_type);
+                inline for (@typeInfo(tag_type).Enum.fields) |enum_field_info, i| {
+                    if (@enumToInt(tag) == enum_field_info.value) {
+                        const union_field_info = union_info.fields[i];
+                        const payload = napiGetValue(env, napiCall(c.napi_get_named_property, .{ env, value, "payload" }, c.napi_value), union_field_info.field_type);
+                        return @unionInit(ReturnType, union_field_info.name, payload);
+                    }
+                    unreachable;
+                }
+            } else {
+                @compileError("Can't get value for untagged union type " ++ @typeName(ReturnType));
+            }
+        },
+        .Enum => |enum_info| {
+            comptime var max_len: usize = 0;
+            inline for (enum_info.fields) |field_info| {
+                comptime {
+                    max_len = dida.common.max(max_len, field_info.name.len);
+                }
+            }
+            var buffer: [max_len]u8 = undefined;
+            const buffer_size = napiCall(c.napi_get_value_string_utf8, .{ env, value, &buffer, max_len }, usize);
+            const tag_name = buffer[0..buffer_size];
+            inline for (enum_info.fields) |field_info| {
+                if (std.mem.eql(u8, tag_name, field_info.name)) {
+                    return @intToEnum(ReturnType, field_info.value);
+                }
+                dida.common.panic("Type {} does not contain a tag named \"{}\"", .{ @typeName(ReturnType), tag_name });
+            }
+        },
+        .Void => {
+            return {};
+        },
+        else => @compileError("Dont know how to get value for type " ++ @typeName(ReturnType)),
     }
 }

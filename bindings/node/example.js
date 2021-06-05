@@ -3,22 +3,27 @@ const dida = require('./dida.node');
 function GraphBuilder() {
     this.external = dida.GraphBuilder_init();
 }
-GraphBuilder.prototype.addSubgraph = function(id) {
-    return dida.GraphBuilder_addSubgraph(this.external, id);
+GraphBuilder.prototype.addSubgraph = function(parent) {
+    return dida.GraphBuilder_addSubgraph(this.external, parent);
+}
+GraphBuilder.prototype.addNode = function(subgraph, node_spec) {
+    return dida.GraphBuilder_addNode(this.external, subgraph, node_spec);
 }
 
 function Subgraph(id) {
     this.id = id;
 }
+const NodeSpec = {
+    Input: function () {
+        this.tag = "Input";
+        this.payload = undefined;
+    },
+};
 
 var graph_builder = new GraphBuilder();
-console.log(graph_builder);
 const subgraph_0 = new Subgraph(0);
 const subgraph_1 = graph_builder.addSubgraph(subgraph_0);
-console.log(subgraph_1);
-//const subgraph_1 = graph_builder.addSubgraph(subgraph_0);
-//
-//const edges = graph_builder.addNode(subgraph_0, dida.Input());
+const edges = graph_builder.addNode(subgraph_0, new NodeSpec.Input());
 //const edges_1 = graph_builder.addNode(subgraph_1, dida.TimestampPush({ input: edges }));
 
 //const reach_future = graph_builder.addNode(subgraph_1, .{ .TimestampIncrement = .{ .input = null } });
