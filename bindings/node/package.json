@@ -6,6 +6,6 @@
   "scripts": {
     "build": "zig build-lib -dynamic -lc -isystem $NIX_NODEJS/include/node dida_node.zig -femit-bin=dida.node --main-pkg-path ../../"
   },
-  "author": "Isaac Freund <ifreund@ifreund.xyz>",
-  "license": "0BSD"
+  "author": "Jamie Brandon <jamie@scattered-thoughts.net>",
+  "license": "UNLICENSED"
 }
