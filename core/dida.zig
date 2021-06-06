@@ -572,48 +572,12 @@ pub const GraphBuilder = struct {
     }
 
     pub fn finishAndClear(self: *GraphBuilder) !Graph {
-        const num_nodes = self.node_specs.items.len;
-        const num_subgraphs = self.subgraph_parents.items.len + 1;
-
-        // For each node, store its subgraph, its subgraphs parent, its subgraphs parents parent etc
-        var node_subgraphs = try self.allocator.alloc([]Subgraph, num_nodes);
-        for (self.node_subgraphs.items) |init_subgraph, node_id| {
-            var subgraphs = ArrayList(Subgraph).init(self.allocator);
-            var subgraph = init_subgraph;
-            while (true) {
-                try subgraphs.append(subgraph);
-                if (subgraph.id == 0) break;
-                subgraph = self.subgraph_parents.items[subgraph.id - 1];
-            }
-            std.mem.reverse(Subgraph, subgraphs.items);
-            node_subgraphs[node_id] = subgraphs.toOwnedSlice();
-        }
-
-        // Collect downstream nodes
-        var downstream_node_inputs = try self.allocator.alloc(ArrayList(NodeInput), num_nodes);
-        for (self.node_specs.items) |_, node_id| {
-            downstream_node_inputs[node_id] = ArrayList(NodeInput).init(self.allocator);
-        }
-        for (self.node_specs.items) |node_spec, node_id| {
-            for (node_spec.getInputs()) |input_node, input_ix| {
-                try downstream_node_inputs[input_node.id].append(.{ .node = .{ .id = node_id }, .input_ix = input_ix });
-            }
-        }
-        var frozen_downstream_node_inputs = try self.allocator.alloc([]NodeInput, self.node_specs.items.len);
-        for (downstream_node_inputs) |*node_inputs, node_id|
-            frozen_downstream_node_inputs[node_id] = node_inputs.toOwnedSlice();
-
-        var graph = Graph{
-            .allocator = self.allocator,
-            .node_specs = self.node_specs.toOwnedSlice(),
-            .node_subgraphs = node_subgraphs,
-            .subgraph_parents = self.subgraph_parents.toOwnedSlice(),
-            .downstream_node_inputs = frozen_downstream_node_inputs,
-        };
-
-        graph.validate();
-
-        return graph;
+        return Graph.init(
+            self.allocator,
+            self.node_specs.toOwnedSlice(),
+            self.node_subgraphs.toOwnedSlice(),
+            self.subgraph_parents.toOwnedSlice(),
+        );
     }
 };
 
@@ -624,6 +588,56 @@ pub const Graph = struct {
     // Indexed by subgraph.id-1, because subgraph 0 has no parent
     subgraph_parents: []const Subgraph,
     downstream_node_inputs: []const []const NodeInput,
+
+    pub fn init(allocator: *Allocator, node_specs: []const NodeSpec, node_immediate_subgraphs: []const Subgraph, subgraph_parents: []const Subgraph) !Graph {
+        const num_nodes = node_specs.len;
+        const num_subgraphs = subgraph_parents.len + 1; // +1 because subgraph 0 has no parent
+        dida.common.assert(
+            node_immediate_subgraphs.len == num_nodes,
+            "node_specs and node_immediate_subgraphs should have same length, got {} vs {}",
+            .{ node_immediate_subgraphs.len, num_nodes },
+        );
+
+        // For each node, store its subgraph, its subgraphs parent, its subgraphs parents parent etc
+        var node_subgraphs = try allocator.alloc([]Subgraph, num_nodes);
+        for (node_immediate_subgraphs) |immediate_subgraph, node_id| {
+            var subgraphs = ArrayList(Subgraph).init(allocator);
+            var subgraph = immediate_subgraph;
+            while (true) {
+                try subgraphs.append(subgraph);
+                if (subgraph.id == 0) break;
+                subgraph = subgraph_parents[subgraph.id - 1];
+            }
+            std.mem.reverse(Subgraph, subgraphs.items);
+            node_subgraphs[node_id] = subgraphs.toOwnedSlice();
+        }
+
+        // Collect downstream nodes
+        var downstream_node_inputs = try allocator.alloc(ArrayList(NodeInput), num_nodes);
+        for (node_specs) |_, node_id| {
+            downstream_node_inputs[node_id] = ArrayList(NodeInput).init(allocator);
+        }
+        for (node_specs) |node_spec, node_id| {
+            for (node_spec.getInputs()) |input_node, input_ix| {
+                try downstream_node_inputs[input_node.id].append(.{ .node = .{ .id = node_id }, .input_ix = input_ix });
+            }
+        }
+        var frozen_downstream_node_inputs = try allocator.alloc([]NodeInput, node_specs.len);
+        for (downstream_node_inputs) |*node_inputs, node_id|
+            frozen_downstream_node_inputs[node_id] = node_inputs.toOwnedSlice();
+
+        var self = Graph{
+            .allocator = allocator,
+            .node_specs = node_specs,
+            .node_subgraphs = node_subgraphs,
+            .subgraph_parents = subgraph_parents,
+            .downstream_node_inputs = frozen_downstream_node_inputs,
+        };
+
+        self.validate();
+
+        return self;
+    }
 
     pub fn validate(self: Graph) void {
         const num_nodes = self.node_specs.len;
