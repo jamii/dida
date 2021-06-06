@@ -1,3 +1,5 @@
+const util = require('util');
+
 var graph_builder = new GraphBuilder();
 const subgraph_0 = new Subgraph(0);
 const subgraph_1 = graph_builder.addSubgraph(subgraph_0);
@@ -46,7 +48,7 @@ while (shard.hasWork()) {
     while (true) {
         const change_batch = shard.popOutput(out);
         if (change_batch == undefined) break;
-        console.log(change_batch);
+        console.log(util.inspect(change_batch, false, null, true));
     }
 }
 
@@ -58,6 +60,6 @@ while (shard.hasWork()) {
     while (true) {
         const change_batch = shard.popOutput(out);
         if (change_batch == undefined) break;
-        console.log(change_batch);
+        console.log(util.inspect(change_batch, false, null, true));
     }
 }

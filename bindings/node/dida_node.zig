@@ -192,8 +192,16 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
     }
 
     if (@TypeOf(value) == dida.Frontier) {
-        // TODO
-        return napiCall(c.napi_get_undefined, .{env}, c.napi_value);
+        const len = value.timestamps.count();
+        const napi_array = napiCall(c.napi_create_array_with_length, .{ env, @intCast(u32, len) }, c.napi_value);
+        var iter = value.timestamps.iterator();
+        var i: usize = 0;
+        while (iter.next()) |entry| {
+            const napi_timestamp = napiCreateValue(env, entry.key);
+            napiCall(c.napi_set_element, .{ env, napi_array, @intCast(u32, i), napi_timestamp }, void);
+            i += 1;
+        }
+        return napi_array;
     }
 
     const info = @typeInfo(@TypeOf(value));
