@@ -17,6 +17,12 @@ pub fn main() !void {
     var writer = std.io.getStdOut().writer();
     try writer.writeAll("const dida = require('./dida.node');\n\n");
     var already_generated = dida.common.DeepHashSet(TypeId).init(allocator);
+
+    // Don't generate wrappers for these
+    inline for (.{ dida.Row, dida.Value }) |T| {
+        try already_generated.put(typeId(T), {});
+    }
+
     inline for (value_types) |T| {
         try generate_constructor(writer, &already_generated, T);
     }
