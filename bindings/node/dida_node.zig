@@ -145,8 +145,11 @@ fn napiCreateExternal(env: c.napi_env, value: anytype) c.napi_value {
 fn napiGetExternal(env: c.napi_env, value: c.napi_value, comptime ReturnType: type) ReturnType {
     if (comptime serdeStrategy(ReturnType) != .External)
         @compileError("Used napiGetExternal on a type that is expected to require napiGetValue: " ++ @typeName(ReturnType));
+    const info = @typeInfo(ReturnType);
+    if (!(info == .Pointer and info.Pointer.size == .One))
+        @compileError("napiGetExternal should be called with *T, got " ++ @typeName(ReturnType));
     const ptr = napiCall(c.napi_get_value_external, .{ env, value }, ?*c_void);
-    return @ptrCast(ReturnType, @alignCast(@alignOf(@typeInfo(ReturnType).Pointer.child), ptr));
+    return @ptrCast(ReturnType, @alignCast(@alignOf(info.Pointer.child), ptr));
 }
 
 fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
