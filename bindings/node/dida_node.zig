@@ -16,7 +16,7 @@ export fn napi_register_module_v1(env: c.napi_env, exports: c.napi_value) c.napi
     napiExportFn(env, exports, napiWrapFn(GraphBuilder_init), "GraphBuilder_init");
     napiExportFn(env, exports, napiWrapFn(dida.GraphBuilder.addSubgraph), "GraphBuilder_addSubgraph");
     napiExportFn(env, exports, napiWrapFn(dida.GraphBuilder.addNode), "GraphBuilder_addNode");
-    //napiExportFn(env, exports, GraphBuilder_finishAndClear, "GraphBuilder_finishAndClear");
+    napiExportFn(env, exports, napiWrapFn(dida.GraphBuilder.finishAndClear), "GraphBuilder_finishAndClear");
 
     return exports;
 }
@@ -30,9 +30,39 @@ const SerdeStrategy = enum {
     Value,
 };
 fn serdeStrategy(comptime T: type) SerdeStrategy {
-    return switch (T) {
-        *dida.GraphBuilder => .External,
-        else => .Value,
+    return switch (@typeInfo(T)) {
+        .Fn => .Value, // TODO
+        else => switch (T) {
+            *dida.GraphBuilder,
+            dida.GraphBuilder,
+            *dida.Graph,
+            dida.Graph,
+            => .External,
+
+            void,
+            usize,
+            dida.Timestamp,
+            dida.Value,
+            dida.Row,
+            dida.Subgraph,
+            dida.Node,
+            ?dida.Node,
+            [2]dida.Node,
+            dida.NodeSpec,
+            std.meta.TagType(dida.NodeSpec),
+            dida.NodeSpec.MapSpec,
+            dida.NodeSpec.JoinSpec,
+            dida.NodeSpec.TimestampPushSpec,
+            dida.NodeSpec.TimestampPopSpec,
+            dida.NodeSpec.TimestampIncrementSpec,
+            dida.NodeSpec.IndexSpec,
+            dida.NodeSpec.UnionSpec,
+            dida.NodeSpec.DistinctSpec,
+            dida.NodeSpec.OutputSpec,
+            => .Value,
+
+            else => @compileError("No SerdeStrategy for " ++ @typeName(T)),
+        },
     };
 }
 
@@ -50,7 +80,7 @@ fn napiCall(comptime napi_fn: anytype, args: anytype, comptime ReturnType: type)
     }
 }
 
-fn napiExportFn(env: c.napi_env, exports: c.napi_value, export_fn: anytype, export_fn_name: [:0]const u8) void {
+fn napiExportFn(env: c.napi_env, exports: c.napi_value, export_fn: c.napi_callback, export_fn_name: [:0]const u8) void {
     const napi_fn = napiCall(c.napi_create_function, .{ env, export_fn_name, export_fn_name.len, export_fn, null }, c.napi_value);
     napiCall(c.napi_set_named_property, .{ env, exports, export_fn_name, napi_fn }, void);
 }
@@ -65,12 +95,12 @@ fn napiWrapFn(comptime zig_fn: anytype) c.napi_callback {
                 const napi_arg = napi_args[i];
                 const zig_arg_type = @TypeOf(zig_args[i]);
                 zig_args[i] = switch (comptime serdeStrategy(zig_arg_type)) {
-                    .External => napiGetExternal(env, napi_arg, @typeInfo(zig_arg_type).Pointer.child),
+                    .External => napiGetExternal(env, napi_arg, zig_arg_type),
                     .Value => napiGetValue(env, napi_arg, zig_arg_type),
                 };
             }
             const result = @call(.{}, zig_fn, zig_args) catch |err| dida.common.panic("{}", .{err});
-            switch (comptime serdeStrategy(*@TypeOf(result))) {
+            switch (comptime serdeStrategy(@TypeOf(result))) {
                 .External => {
                     const result_ptr = allocator.create(@TypeOf(result)) catch |err| dida.common.panic("{}", .{err});
                     result_ptr.* = result;
@@ -104,18 +134,24 @@ comptime {
 }
 
 fn napiCreateExternal(env: c.napi_env, value: anytype) c.napi_value {
+    if (comptime serdeStrategy(@TypeOf(value)) != .External)
+        @compileError("Used napiCreateExternal on a type that is expected to require napiCreateValue: " ++ @typeName(@TypeOf(value)));
     const info = @typeInfo(@TypeOf(value));
     if (!(info == .Pointer and info.Pointer.size == .One))
         @compileError("napiCreateExternal should be called with *T, got " ++ @typeName(@TypeOf(value)));
     return napiCall(c.napi_create_external, .{ env, @ptrCast(*c_void, value), null, null }, c.napi_value);
 }
 
-fn napiGetExternal(env: c.napi_env, value: c.napi_value, comptime ReturnType: type) *ReturnType {
+fn napiGetExternal(env: c.napi_env, value: c.napi_value, comptime ReturnType: type) ReturnType {
+    if (comptime serdeStrategy(ReturnType) != .External)
+        @compileError("Used napiGetExternal on a type that is expected to require napiGetValue: " ++ @typeName(ReturnType));
     const ptr = napiCall(c.napi_get_value_external, .{ env, value }, ?*c_void);
-    return @ptrCast(*ReturnType, @alignCast(@alignOf(ReturnType), ptr));
+    return @ptrCast(ReturnType, @alignCast(@alignOf(@typeInfo(ReturnType).Pointer.child), ptr));
 }
 
 fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
+    if (comptime serdeStrategy(@TypeOf(value)) != .Value)
+        @compileError("Used napiCreateValue on a type that is expected to require napiCreateExternal: " ++ @typeName(@TypeOf(value)));
     const info = @typeInfo(@TypeOf(value));
     switch (info) {
         .Int => {
@@ -146,6 +182,8 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
 }
 
 fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type) ReturnType {
+    if (comptime serdeStrategy(ReturnType) != .Value)
+        @compileError("Used napiGetValue on a type that is expected to require napiGetExternal: " ++ @typeName(ReturnType));
     const info = @typeInfo(ReturnType);
     switch (info) {
         .Int => {
