@@ -17,7 +17,6 @@ graph_builder.connectLoop(reach, reach_future);
 const reach_out = graph_builder.addNode(subgraph_0, new NodeSpec.TimestampPop(distinct_reach_index));
 const out = graph_builder.addNode(subgraph_0, new NodeSpec.Output(reach_out));
 
-// TODO graph should have a wrapper object
 const graph = graph_builder.finishAndClear();
 
 var shard = new Shard(graph);

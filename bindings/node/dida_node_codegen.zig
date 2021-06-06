@@ -78,7 +78,7 @@ fn generate_constructor(writer: anytype, already_generated: *dida.common.DeepHas
                         try std.fmt.format(
                             writer,
                             \\function {}({}) {{
-                            \\    this.external = dida.{}_init({});
+                            \\    this.external = dida.{}_init({}).external;
                             \\}}
                             \\
                         ,
@@ -111,7 +111,7 @@ fn generate_constructor(writer: anytype, already_generated: *dida.common.DeepHas
                         try std.fmt.format(
                             writer,
                             \\{}.prototype.{} = function {}({}) {{
-                            \\    return dida.{}_{}(this.external, {});
+                            \\    return dida.{}_{}(this, {});
                             \\}}
                             \\
                         ,

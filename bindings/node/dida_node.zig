@@ -170,7 +170,10 @@ fn napiCreateExternal(env: c.napi_env, value: anytype) c.napi_value {
     const info = @typeInfo(@TypeOf(value));
     if (!(info == .Pointer and info.Pointer.size == .One))
         @compileError("napiCreateExternal should be called with *T, got " ++ @typeName(@TypeOf(value)));
-    return napiCall(c.napi_create_external, .{ env, @ptrCast(*c_void, value), null, null }, c.napi_value);
+    const external = napiCall(c.napi_create_external, .{ env, @ptrCast(*c_void, value), null, null }, c.napi_value);
+    const result = napiCall(c.napi_create_object, .{env}, c.napi_value);
+    napiCall(c.napi_set_named_property, .{ env, result, "external", external }, void);
+    return result;
 }
 
 fn napiGetExternal(env: c.napi_env, value: c.napi_value, comptime ReturnType: type) ReturnType {
@@ -179,7 +182,8 @@ fn napiGetExternal(env: c.napi_env, value: c.napi_value, comptime ReturnType: ty
     const info = @typeInfo(ReturnType);
     if (!(info == .Pointer and info.Pointer.size == .One))
         @compileError("napiGetExternal should be called with *T, got " ++ @typeName(ReturnType));
-    const ptr = napiCall(c.napi_get_value_external, .{ env, value }, ?*c_void);
+    const external = napiCall(c.napi_get_named_property, .{ env, value, "external" }, c.napi_value);
+    const ptr = napiCall(c.napi_get_value_external, .{ env, external }, ?*c_void);
     return @ptrCast(ReturnType, @alignCast(@alignOf(info.Pointer.child), ptr));
 }
 
