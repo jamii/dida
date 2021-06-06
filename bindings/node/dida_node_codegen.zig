@@ -1,65 +1,17 @@
-const std = @import("std");
-const dida = @import("../../core/dida.zig");
-
-var gpa = std.heap.GeneralPurposeAllocator(.{
-    .safety = true,
-    .never_unmap = true,
-}){};
-const allocator = &gpa.allocator;
-
-// TODO eventually generate this from a list of exported functions
-const value_types = .{
-    dida.GraphBuilder,
-    dida.Shard,
-};
+usingnamespace @import("./dida_node_common.zig");
 
 pub fn main() !void {
     var writer = std.io.getStdOut().writer();
     try writer.writeAll("const dida = require('./dida.node');\n\n");
-    var already_generated = dida.common.DeepHashSet(TypeId).init(allocator);
-
-    // Don't generate wrappers for these
-    inline for (.{ dida.Row, dida.Value }) |T| {
-        try already_generated.put(typeId(T), {});
-    }
-
-    inline for (value_types) |T| {
-        try generate_constructor(writer, &already_generated, T);
+    inline for (types_with_js_constructors) |T| {
+        try generateConstructor(writer, T);
     }
 }
 
-// Beautiful hack from https://github.com/ziglang/zig/issues/5459
-const TypeId = struct {
-    id: usize,
-};
-fn typeId(comptime T: type) TypeId {
-    return .{
-        .id = @ptrToInt(&struct {
-            var x: u8 = 0;
-        }.x),
-    };
-}
-
-fn ToJsType(comptime ZigType: type) type {
-    return switch (ZigType) {
-        dida.Frontier => Frontier,
-        else => ZigType,
-    };
-}
-
-pub const Frontier = struct {
-    timestamps: []dida.Timestamp,
-};
-
-fn generate_constructor(writer: anytype, already_generated: *dida.common.DeepHashSet(TypeId), comptime ZigType: type) !void {
-    const JsType = ToJsType(ZigType);
-
-    if (already_generated.contains(typeId(JsType))) return;
-    try already_generated.put(typeId(JsType), {});
-
-    const info = @typeInfo(JsType);
-    switch (JsType) {
-        dida.GraphBuilder, dida.Shard => {
+fn generateConstructor(writer: anytype, comptime Type: type) !void {
+    const info = @typeInfo(Type);
+    switch (comptime serdeStrategy(Type)) {
+        .External => {
             inline for (info.Struct.decls) |decl_info| {
                 if (decl_info.is_pub and decl_info.data == .Fn) {
                     if (std.mem.eql(u8, decl_info.name, "init")) {
@@ -83,9 +35,9 @@ fn generate_constructor(writer: anytype, already_generated: *dida.common.DeepHas
                             \\
                         ,
                             .{
-                                @typeName(JsType),
+                                @typeName(Type),
                                 try std.mem.join(allocator, ", ", &arg_names),
-                                @typeName(JsType),
+                                @typeName(Type),
                                 try std.mem.join(allocator, ", ", &arg_names),
                             },
                         );
@@ -116,19 +68,15 @@ fn generate_constructor(writer: anytype, already_generated: *dida.common.DeepHas
                             \\
                         ,
                             .{
-                                @typeName(JsType),
+                                @typeName(Type),
                                 decl_info.name,
                                 decl_info.name,
                                 try std.mem.join(allocator, ", ", &arg_names),
-                                @typeName(JsType),
+                                @typeName(Type),
                                 decl_info.name,
                                 try std.mem.join(allocator, ", ", &arg_names),
                             },
                         );
-
-                        inline for (args) |arg_info| {
-                            try generate_constructor(writer, already_generated, arg_info.arg_type.?);
-                        }
                     }
                 }
             }
@@ -136,18 +84,8 @@ fn generate_constructor(writer: anytype, already_generated: *dida.common.DeepHas
         },
         else => {
             switch (info) {
-                .Int, .Float => {},
-                .Pointer => |pointer_info| {
-                    try generate_constructor(writer, already_generated, pointer_info.child);
-                },
-                .Array => |array_info| {
-                    try generate_constructor(writer, already_generated, array_info.child);
-                },
-                .Optional => |array_info| {
-                    try generate_constructor(writer, already_generated, array_info.child);
-                },
                 .Struct => |struct_info| {
-                    try std.fmt.format(writer, "function {}(", .{@typeName(JsType)});
+                    try std.fmt.format(writer, "function {}(", .{@typeName(Type)});
                     inline for (struct_info.fields) |field_info| {
                         try std.fmt.format(writer, "{}, ", .{field_info.name});
                     }
@@ -156,14 +94,11 @@ fn generate_constructor(writer: anytype, already_generated: *dida.common.DeepHas
                         try std.fmt.format(writer, "    this.{} = {};\n", .{ field_info.name, field_info.name });
                     }
                     try writer.writeAll("}\n\n");
-                    inline for (struct_info.fields) |field_info| {
-                        try generate_constructor(writer, already_generated, field_info.field_type);
-                    }
                 },
                 .Union => |union_info| {
                     if (union_info.tag_type) |tag_type| {
                         // TODO name payload args instead of using `arguments[i]`
-                        try std.fmt.format(writer, "const {} = {{\n", .{@typeName(JsType)});
+                        try std.fmt.format(writer, "const {} = {{\n", .{@typeName(Type)});
                         inline for (union_info.fields) |field_info| {
                             const payload = switch (field_info.field_type) {
                                 []const u8, f64 => "arguments[0]",
@@ -187,17 +122,11 @@ fn generate_constructor(writer: anytype, already_generated: *dida.common.DeepHas
                             );
                         }
                         try writer.writeAll("};\n\n");
-                        inline for (union_info.fields) |field_info| {
-                            try generate_constructor(writer, already_generated, field_info.field_type);
-                        }
                     } else {
-                        @compileError("Can't handle non-tagged union type " ++ @typeName(JsType));
+                        @compileError("Can't know how to make constructor for non-tagged union type " ++ @typeName(Type));
                     }
                 },
-                .Void, .Fn => {
-                    // TODO maybe should look at arg/return types for Fn?
-                },
-                else => @compileError("Can't handle type " ++ @typeName(JsType)),
+                else => @compileError("Don't know how to make constructor for type " ++ @typeName(Type)),
             }
         },
     }

@@ -1,16 +1,8 @@
-const std = @import("std");
-const dida = @import("../../core/dida.zig");
+usingnamespace @import("./dida_node_common.zig");
 
 const c = @cImport({
     @cInclude("node_api.h");
 });
-
-var gpa = std.heap.GeneralPurposeAllocator(.{
-    .safety = true,
-    .never_unmap = true,
-}){};
-var arena = std.heap.ArenaAllocator.init(&gpa.allocator);
-const allocator = &arena.allocator;
 
 export fn napi_register_module_v1(env: c.napi_env, exports: c.napi_value) c.napi_value {
     napiExportFn(env, exports, napiWrapFn(GraphBuilder_init), "GraphBuilder_init");
@@ -18,6 +10,8 @@ export fn napi_register_module_v1(env: c.napi_env, exports: c.napi_value) c.napi
     napiExportFn(env, exports, napiWrapFn(dida.GraphBuilder.addNode), "GraphBuilder_addNode");
     napiExportFn(env, exports, napiWrapFn(dida.GraphBuilder.connectLoop), "GraphBuilder_connectLoop");
     napiExportFn(env, exports, napiWrapFn(dida.GraphBuilder.finishAndClear), "GraphBuilder_finishAndClear");
+
+    napiExportFn(env, exports, napiWrapFn(Graph_init), "Graph_init");
 
     napiExportFn(env, exports, napiWrapFn(Shard_init), "Shard_init");
     napiExportFn(env, exports, napiWrapFn(dida.Shard.pushInput), "Shard_pushInput");
@@ -34,63 +28,12 @@ fn GraphBuilder_init() !dida.GraphBuilder {
     return dida.GraphBuilder.init(allocator);
 }
 
-fn Shard_init(graph: *const dida.Graph) !dida.Shard {
-    return dida.Shard.init(allocator, graph);
+fn Graph_init(node_specs: []const dida.NodeSpec, node_immediate_subgraphs: []const dida.Subgraph, subgraph_parents: []const dida.Subgraph) !dida.Graph {
+    return dida.Graph.init(allocator, node_specs, node_immediate_subgraphs, subgraph_parents);
 }
 
-const SerdeStrategy = enum {
-    External,
-    Value,
-};
-fn serdeStrategy(comptime T: type) SerdeStrategy {
-    return switch (T) {
-        dida.GraphBuilder,
-        *dida.GraphBuilder,
-        dida.Graph,
-        *dida.Graph,
-        *const dida.Graph,
-        dida.Shard,
-        *dida.Shard,
-        *const dida.Shard,
-        => .External,
-
-        void,
-        bool,
-        usize,
-        isize,
-        []const usize,
-        dida.Timestamp,
-        dida.Frontier,
-        f64,
-        []const u8,
-        dida.Value,
-        std.meta.TagType(dida.Value),
-        []const dida.Value,
-        dida.Row,
-        dida.Change,
-        []dida.Change,
-        dida.ChangeBatch,
-        ?dida.ChangeBatch,
-        dida.Subgraph,
-        dida.Node,
-        ?dida.Node,
-        [2]dida.Node,
-        dida.NodeSpec,
-        std.meta.TagType(dida.NodeSpec),
-        dida.NodeSpec.MapSpec,
-        *dida.NodeSpec.MapSpec.Mapper,
-        dida.NodeSpec.JoinSpec,
-        dida.NodeSpec.TimestampPushSpec,
-        dida.NodeSpec.TimestampPopSpec,
-        dida.NodeSpec.TimestampIncrementSpec,
-        dida.NodeSpec.IndexSpec,
-        dida.NodeSpec.UnionSpec,
-        dida.NodeSpec.DistinctSpec,
-        dida.NodeSpec.OutputSpec,
-        => .Value,
-
-        else => @compileError("No SerdeStrategy for " ++ @typeName(T)),
-    };
+fn Shard_init(graph: *const dida.Graph) !dida.Shard {
+    return dida.Shard.init(allocator, graph);
 }
 
 // --- helpers ---
@@ -165,11 +108,13 @@ comptime {
 }
 
 fn napiCreateExternal(env: c.napi_env, value: anytype) c.napi_value {
+    const info = @typeInfo(@TypeOf(value));
     if (comptime serdeStrategy(@TypeOf(value)) != .External)
         @compileError("Used napiCreateExternal on a type that is expected to require napiCreateValue: " ++ @typeName(@TypeOf(value)));
-    const info = @typeInfo(@TypeOf(value));
     if (!(info == .Pointer and info.Pointer.size == .One))
         @compileError("napiCreateExternal should be called with *T, got " ++ @typeName(@TypeOf(value)));
+    if (comptime !hasJsConstructor(info.Pointer.child))
+        @compileError("Tried to create an external for a type that doesn't have a matching js constructor: " ++ @typeName(@TypeOf(value)));
     const external = napiCall(c.napi_create_external, .{ env, @ptrCast(*c_void, value), null, null }, c.napi_value);
     const result = napiCall(c.napi_create_object, .{env}, c.napi_value);
     napiCall(c.napi_set_named_property, .{ env, result, "external", external }, void);
@@ -247,7 +192,8 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
             return napiCall(napi_fn, .{ env, value }, c.napi_value);
         },
         .Struct => |struct_info| {
-            // TODO would like to use napi_new_instance to name this object, but it requires having already registered a constructor
+            if (comptime !hasJsConstructor(@TypeOf(value)))
+                @compileError("Tried to create a value for a struct type that doesn't have a matching js constructor: " ++ @typeName(@TypeOf(value)));
             const result = napiCall(c.napi_create_object, .{env}, c.napi_value);
             inline for (struct_info.fields) |field_info| {
                 var field_name: [field_info.name.len:0]u8 = undefined;
@@ -260,7 +206,8 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
         },
         .Union => |union_info| {
             if (union_info.tag_type) |tag_type| {
-                // TODO would like to use napi_new_instance to name this object, but it requires having already registered a constructor
+                if (comptime !hasJsConstructor(@TypeOf(value)))
+                    @compileError("Tried to create a value for a union type that doesn't have a matching js constructor: " ++ @typeName(@TypeOf(value)));
                 const result = napiCall(c.napi_create_object, .{env}, c.napi_value);
                 const tag = std.meta.activeTag(value);
                 const tag_name = @tagName(tag);
