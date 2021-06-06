@@ -191,6 +191,13 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
         return napiCall(c.napi_create_string_utf8, .{ env, @ptrCast([*]const u8, value), value.len }, c.napi_value);
     }
 
+    if (@TypeOf(value) == dida.Value) {
+        return switch (value) {
+            .String => |string| napiCreateValue(env, string),
+            .Number => |number| napiCreateValue(env, number),
+        };
+    }
+
     if (@TypeOf(value) == dida.Frontier) {
         const len = value.timestamps.count();
         const napi_array = napiCall(c.napi_create_array_with_length, .{ env, @intCast(u32, len) }, c.napi_value);
@@ -334,6 +341,15 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
         _ = napiCall(c.napi_get_value_string_utf8, .{ env, value, @ptrCast([*:0]u8, string), len + 1 }, usize);
         // TODO will this be a problem when we want to free it?
         return string[0..len];
+    }
+
+    if (ReturnType == dida.Value) {
+        const napi_type = napiCall(c.napi_typeof, .{ env, value }, c.napi_valuetype);
+        return switch (napi_type) {
+            .napi_string => dida.Value{ .String = napiGetValue(env, value, []const u8) },
+            .napi_number => dida.Value{ .Number = napiGetValue(env, value, f64) },
+            else => dida.common.panic("Don't know how to get a dida.Value from {}", .{napi_type}),
+        };
     }
 
     if (ReturnType == *dida.NodeSpec.MapSpec.Mapper) {

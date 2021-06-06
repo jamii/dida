@@ -25,16 +25,10 @@ const timestamp0 = new Timestamp([0]);
 const timestamp1 = new Timestamp([1]);
 const timestamp2 = new Timestamp([2]);
 
-// TODO this seems silly
-const a = new Value.String("a");
-const b = new Value.String("b");
-const c = new Value.String("c");
-const d = new Value.String("d");
-
-const ab = new Row([a, b]);
-const bc = new Row([b, c]);
-const cd = new Row([b, d]);
-const ca = new Row([c, a]);
+const ab = new Row(["a", "b"]);
+const bc = new Row(["b", "c"]);
+const cd = new Row(["b", "d"]);
+const ca = new Row(["c", "a"]);
 shard.pushInput(edges, new Change(ab, timestamp0, 1));
 shard.pushInput(edges, new Change(bc, timestamp0, 1));
 shard.pushInput(edges, new Change(cd, timestamp0, 1));
