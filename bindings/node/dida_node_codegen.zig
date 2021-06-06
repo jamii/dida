@@ -14,19 +14,20 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
         .External => {
             inline for (info.Struct.decls) |decl_info| {
                 if (decl_info.is_pub and decl_info.data == .Fn) {
-                    if (std.mem.eql(u8, decl_info.name, "init")) {
-                        const fn_decl_info = decl_info.data.Fn;
-                        const fn_info = @typeInfo(fn_decl_info.fn_type).Fn;
-                        // First arg is allocator
-                        const args = fn_info.args[1..];
+                    const fn_decl_info = decl_info.data.Fn;
+                    const fn_info = @typeInfo(fn_decl_info.fn_type).Fn;
+                    // First arg is allocator or self
+                    const args = fn_info.args[1..];
 
-                        // TODO fn_decl_info.arg_names.len is empty
-                        //      See https://github.com/ziglang/zig/issues/8259
-                        var arg_names: [args.len][]const u8 = undefined;
-                        for (arg_names) |*arg_name, i| {
-                            arg_name.* = try dida.common.format(allocator, "arg{}", .{i});
-                        }
+                    // TODO fn_decl_info.arg_names.len is empty
+                    //      See https://github.com/ziglang/zig/issues/8259
+                    var arg_names: [args.len][]const u8 = undefined;
+                    for (arg_names) |*arg_name, i| {
+                        arg_name.* = try dida.common.format(allocator, "arg{}", .{i});
+                    }
 
+                    // NOTE this relies on `init` being the first decl
+                    if (comptime std.mem.eql(u8, decl_info.name, "init")) {
                         try std.fmt.format(
                             writer,
                             \\function {}({}) {{
@@ -36,34 +37,17 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                         ,
                             .{
                                 @typeName(Type),
-                                try std.mem.join(allocator, ", ", &arg_names),
+                                std.mem.join(allocator, ", ", &arg_names),
                                 @typeName(Type),
-                                try std.mem.join(allocator, ", ", &arg_names),
+                                std.mem.join(allocator, ", ", &arg_names),
                             },
                         );
-                    }
-                }
-            }
-            inline for (info.Struct.decls) |decl_info| {
-                if (decl_info.is_pub and decl_info.data == .Fn) {
-                    // TODO not sure why this condition needs to be separated out to satisfy compiler
-                    if (!std.mem.eql(u8, decl_info.name, "init")) {
-                        const fn_decl_info = decl_info.data.Fn;
-                        const fn_info = @typeInfo(fn_decl_info.fn_type).Fn;
-                        // First arg is self
-                        const args = fn_info.args[1..];
-
-                        // TODO fn_decl_info.arg_names.len is empty
-                        //      See https://github.com/ziglang/zig/issues/8259
-                        var arg_names: [args.len][]const u8 = undefined;
-                        for (arg_names) |*arg_name, i| {
-                            arg_name.* = try dida.common.format(allocator, "arg{}", .{i});
-                        }
-
+                    } else {
                         try std.fmt.format(
                             writer,
                             \\{}.prototype.{} = function {}({}) {{
-                            \\    return dida.{}_{}(this, {});
+                            \\    const result = dida.{}_{}(this, {});
+                            \\    return result;
                             \\}}
                             \\
                         ,
@@ -71,10 +55,10 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                                 @typeName(Type),
                                 decl_info.name,
                                 decl_info.name,
-                                try std.mem.join(allocator, ", ", &arg_names),
+                                std.mem.join(allocator, ", ", &arg_names),
                                 @typeName(Type),
                                 decl_info.name,
-                                try std.mem.join(allocator, ", ", &arg_names),
+                                std.mem.join(allocator, ", ", &arg_names),
                             },
                         );
                     }
@@ -107,7 +91,10 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                                     const num_args = @typeInfo(field_info.field_type).Struct.fields.len;
                                     var args: [num_args][]const u8 = undefined;
                                     for (args) |*arg, arg_ix| arg.* = try dida.common.format(allocator, "arguments[{}]", .{arg_ix});
-                                    break :payload try dida.common.format(allocator, "new {}({})", .{ @typeName(field_info.field_type), try std.mem.join(allocator, ", ", &args) });
+                                    break :payload try dida.common.format(allocator, "new {}({})", .{
+                                        @typeName(field_info.field_type),
+                                        std.mem.join(allocator, ", ", &args),
+                                    });
                                 },
                             };
                             try std.fmt.format(

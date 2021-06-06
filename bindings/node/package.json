@@ -4,7 +4,7 @@
   "description": "",
   "main": "test.js",
   "scripts": {
-    "build": "zig build-lib -dynamic -lc -isystem $NIX_NODEJS/include/node ./dida_node_runtime.zig -femit-bin=dida.node --main-pkg-path ../../",
+    "build": "zig build-lib ./dida_node_runtime.zig -femit-bin=dida.node --main-pkg-path ../../ -dynamic -lc -isystem $NIX_NODEJS/include/node",
     "codegen": "zig run ./dida_node_codegen.zig --main-pkg-path ../../ > ./generated.js && cat ./example.js >> generated.js",
     "run": "node generated.js",
     "all": "npm run-script build && npm run-script codegen && npm run-script run"
