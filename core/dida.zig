@@ -567,6 +567,10 @@ pub const GraphBuilder = struct {
         return node;
     }
 
+    pub fn connectLoop(self: *GraphBuilder, later_node: Node, earlier_node: Node) void {
+        self.node_specs.items[earlier_node.id].TimestampIncrement.input = later_node;
+    }
+
     pub fn finishAndClear(self: *GraphBuilder) !Graph {
         const num_nodes = self.node_specs.items.len;
         const num_subgraphs = self.subgraph_parents.items.len + 1;
@@ -700,7 +704,7 @@ pub const Graph = struct {
 
 pub const Shard = struct {
     allocator: *Allocator,
-    graph: Graph,
+    graph: *const Graph,
     node_states: []NodeState,
     // Frontier for node *output*
     // Invariant: all changes emitted from a node are greater than or equal to its frontier: node_frontiers[node.id].frontier.causalOrder(change.timestamp) != .lt
@@ -720,7 +724,7 @@ pub const Shard = struct {
         timestamp: Timestamp,
     };
 
-    pub fn init(allocator: *Allocator, graph: Graph) !Shard {
+    pub fn init(allocator: *Allocator, graph: *const Graph) !Shard {
         const num_nodes = graph.node_specs.len;
 
         var node_states = try allocator.alloc(NodeState, num_nodes);
@@ -1134,7 +1138,7 @@ pub const Shard = struct {
         }
     }
 
-    pub fn hasWork(self: Shard) bool {
+    pub fn hasWork(self: *const Shard) bool {
         return (self.unprocessed_change_batches.items.len > 0) or
             (self.unprocessed_frontier_updates.count() > 0);
     }

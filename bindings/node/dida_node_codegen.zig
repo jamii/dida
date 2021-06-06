@@ -54,15 +54,38 @@ fn generate_constructor(writer: anytype, already_generated: *dida.common.DeepHas
     const info = @typeInfo(JsType);
     switch (JsType) {
         dida.GraphBuilder, dida.Shard => {
-            try std.fmt.format(
-                writer,
-                \\function {}() {{
-                \\    this.external = dida.{}_init();
-                \\}}
-                \\
-            ,
-                .{ @typeName(JsType), @typeName(JsType) },
-            );
+            inline for (info.Struct.decls) |decl_info| {
+                if (decl_info.is_pub and decl_info.data == .Fn) {
+                    if (std.mem.eql(u8, decl_info.name, "init")) {
+                        const fn_decl_info = decl_info.data.Fn;
+                        const fn_info = @typeInfo(fn_decl_info.fn_type).Fn;
+                        // First arg is allocator
+                        const args = fn_info.args[1..];
+
+                        // TODO fn_decl_info.arg_names.len is empty
+                        //      See https://github.com/ziglang/zig/issues/8259
+                        var arg_names: [args.len][]const u8 = undefined;
+                        for (arg_names) |*arg_name, i| {
+                            arg_name.* = try dida.common.format(allocator, "arg{}", .{i});
+                        }
+
+                        try std.fmt.format(
+                            writer,
+                            \\function {}({}) {{
+                            \\    this.external = dida.{}_init({});
+                            \\}}
+                            \\
+                        ,
+                            .{
+                                @typeName(JsType),
+                                try std.mem.join(allocator, ", ", &arg_names),
+                                @typeName(JsType),
+                                try std.mem.join(allocator, ", ", &arg_names),
+                            },
+                        );
+                    }
+                }
+            }
             inline for (info.Struct.decls) |decl_info| {
                 if (decl_info.is_pub and decl_info.data == .Fn) {
                     // TODO not sure why this condition needs to be separated out to satisfy compiler

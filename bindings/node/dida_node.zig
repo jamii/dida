@@ -16,7 +16,16 @@ export fn napi_register_module_v1(env: c.napi_env, exports: c.napi_value) c.napi
     napiExportFn(env, exports, napiWrapFn(GraphBuilder_init), "GraphBuilder_init");
     napiExportFn(env, exports, napiWrapFn(dida.GraphBuilder.addSubgraph), "GraphBuilder_addSubgraph");
     napiExportFn(env, exports, napiWrapFn(dida.GraphBuilder.addNode), "GraphBuilder_addNode");
+    napiExportFn(env, exports, napiWrapFn(dida.GraphBuilder.connectLoop), "GraphBuilder_connectLoop");
     napiExportFn(env, exports, napiWrapFn(dida.GraphBuilder.finishAndClear), "GraphBuilder_finishAndClear");
+
+    napiExportFn(env, exports, napiWrapFn(Shard_init), "Shard_init");
+    napiExportFn(env, exports, napiWrapFn(dida.Shard.pushInput), "Shard_pushInput");
+    napiExportFn(env, exports, napiWrapFn(dida.Shard.flushInput), "Shard_flushInput");
+    napiExportFn(env, exports, napiWrapFn(dida.Shard.advanceInput), "Shard_advanceInput");
+    napiExportFn(env, exports, napiWrapFn(dida.Shard.hasWork), "Shard_hasWork");
+    napiExportFn(env, exports, napiWrapFn(dida.Shard.doWork), "Shard_doWork");
+    napiExportFn(env, exports, napiWrapFn(dida.Shard.popOutput), "Shard_popOutput");
 
     return exports;
 }
@@ -25,27 +34,43 @@ fn GraphBuilder_init() !dida.GraphBuilder {
     return dida.GraphBuilder.init(allocator);
 }
 
+fn Shard_init(graph: *const dida.Graph) !dida.Shard {
+    return dida.Shard.init(allocator, graph);
+}
+
 const SerdeStrategy = enum {
     External,
     Value,
 };
 fn serdeStrategy(comptime T: type) SerdeStrategy {
     return switch (T) {
-        *dida.GraphBuilder,
         dida.GraphBuilder,
-        *dida.Graph,
+        *dida.GraphBuilder,
         dida.Graph,
+        *dida.Graph,
+        *const dida.Graph,
+        dida.Shard,
+        *dida.Shard,
+        *const dida.Shard,
         => .External,
 
         void,
+        bool,
         usize,
+        isize,
+        []const usize,
         dida.Timestamp,
+        dida.Frontier,
         f64,
         []const u8,
         dida.Value,
         std.meta.TagType(dida.Value),
         []const dida.Value,
         dida.Row,
+        dida.Change,
+        []dida.Change,
+        dida.ChangeBatch,
+        ?dida.ChangeBatch,
         dida.Subgraph,
         dida.Node,
         ?dida.Node,
@@ -101,7 +126,11 @@ fn napiWrapFn(comptime zig_fn: anytype) c.napi_callback {
                     .Value => napiGetValue(env, napi_arg, zig_arg_type),
                 };
             }
-            const result = @call(.{}, zig_fn, zig_args) catch |err| dida.common.panic("{}", .{err});
+            const result_or_err = @call(.{}, zig_fn, zig_args);
+            const result = if (@typeInfo(@TypeOf(result_or_err)) == .ErrorUnion)
+                result_or_err catch |err| dida.common.panic("{}", .{err})
+            else
+                result_or_err;
             switch (comptime serdeStrategy(@TypeOf(result))) {
                 .External => {
                     const result_ptr = allocator.create(@TypeOf(result)) catch |err| dida.common.panic("{}", .{err});
@@ -162,8 +191,16 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
         return napiCall(c.napi_create_string_utf8, .{ env, @ptrCast([*]const u8, value), value.len }, c.napi_value);
     }
 
+    if (@TypeOf(value) == dida.Frontier) {
+        // TODO
+        return napiCall(c.napi_get_undefined, .{env}, c.napi_value);
+    }
+
     const info = @typeInfo(@TypeOf(value));
     switch (info) {
+        .Bool => {
+            return napiCall(c.napi_get_boolean, .{ env, value }, c.napi_value);
+        },
         .Int => {
             const cast_value = switch (@TypeOf(value)) {
                 usize => @intCast(isize, value),
@@ -246,6 +283,15 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
                 else => @compileError("Dont know how to create value of type " ++ @typeName(@TypeOf(value))),
             }
         },
+        .Optional => {
+            return if (value) |payload|
+                napiCreateValue(env, payload)
+            else
+                napiCall(c.napi_get_undefined, .{env}, c.napi_value);
+        },
+        .Void => {
+            return napiCall(c.napi_get_undefined, .{env}, c.napi_value);
+        },
         else => @compileError("Dont know how to create value of type " ++ @typeName(@TypeOf(value))),
     }
 }
@@ -270,6 +316,7 @@ const NapiMapper = struct {
 };
 
 fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type) ReturnType {
+    //dida.common.dump(.{ @typeName(ReturnType), napiCall(c.napi_typeof, .{ env, value }, c.napi_valuetype) });
     if (comptime serdeStrategy(ReturnType) != .Value)
         @compileError("Used napiGetValue on a type that is expected to require napiGetExternal: " ++ @typeName(ReturnType));
 
@@ -359,29 +406,36 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
             }
             dida.common.panic("Type {} does not contain a tag named \"{}\"", .{ @typeName(ReturnType), tag_name });
         },
+        .Array => |array_info| {
+            const napi_len = napiCall(c.napi_get_array_length, .{ env, value }, u32);
+            dida.common.assert(napi_len == array_info.len, "Expected array of length {}, got length {}", .{ array_info.len, napi_len });
+            var result: ReturnType = undefined;
+            for (result) |*elem, i| {
+                const napi_elem = napiCall(c.napi_get_element, .{ env, value, @intCast(u32, i) }, c.napi_value);
+                elem.* = napiGetValue(env, napi_elem, array_info.child);
+            }
+            return result;
+        },
+        .Pointer => |pointer_info| {
+            switch (pointer_info.size) {
+                .Slice => {
+                    const len = napiCall(c.napi_get_array_length, .{ env, value }, u32);
+                    const result = allocator.alloc(pointer_info.child, len) catch |err| dida.common.panic("{}", .{err});
+                    for (result) |*elem, i| {
+                        const napi_elem = napiCall(c.napi_get_element, .{ env, value, @intCast(u32, i) }, c.napi_value);
+                        elem.* = napiGetValue(env, napi_elem, pointer_info.child);
+                    }
+                    return result;
+                },
+                else => @compileError("Dont know how to get value for type " ++ @typeName(ReturnType)),
+            }
+        },
         .Optional => |optional_info| {
             const napi_type = napiCall(c.napi_typeof, .{ env, value }, c.napi_valuetype);
             return switch (napi_type) {
                 .napi_undefined, .napi_null => null,
                 else => napiGetValue(env, value, optional_info.child),
             };
-        },
-        .Array => |array_info| {
-            dida.common.TODO();
-        },
-        .Pointer => |pointer_info| {
-            switch (pointer_info.size) {
-                .Slice => {
-                    const len = napiCall(c.napi_get_array_length, .{ env, value }, u32);
-                    const slice = allocator.alloc(pointer_info.child, len) catch |err| dida.common.panic("{}", .{err});
-                    for (slice) |*elem, i| {
-                        const napi_elem = napiCall(c.napi_get_element, .{ env, value, @intCast(u32, i) }, c.napi_value);
-                        elem.* = napiGetValue(env, napi_elem, pointer_info.child);
-                    }
-                    return slice;
-                },
-                else => @compileError("Dont know how to get value for type " ++ @typeName(ReturnType)),
-            }
         },
         .Void => {
             return {};
