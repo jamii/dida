@@ -7,6 +7,7 @@ const reach_future = graph_builder.addNode(subgraph_1, new NodeSpec.TimestampInc
 const reach_index = graph_builder.addNode(subgraph_1, new NodeSpec.Index(reach_future));
 const distinct_reach_index = graph_builder.addNode(subgraph_1, new NodeSpec.Distinct(reach_index));
 const swapped_edges = graph_builder.addNode(subgraph_1, new NodeSpec.Map(edges_1, input => [input[1], input[0]]));
+console.log(swapped_edges);
 //const swapped_edges_index = graph_builder.addNode(subgraph_1, .{ .Index = .{ .input = swapped_edges } });
 //const joined = graph_builder.addNode(subgraph_1, .{
     //.Join = .{

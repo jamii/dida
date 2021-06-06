@@ -370,7 +370,11 @@ pub const NodeSpec = union(enum) {
 
     pub const MapSpec = struct {
         input: Node,
-        map_fn: fn (row: Row) error{OutOfMemory}!Row,
+        mapper: *Mapper,
+
+        pub const Mapper = struct {
+            map_fn: fn (self: *Mapper, row: Row) error{OutOfMemory}!Row,
+        };
     };
 
     pub const IndexSpec = struct {
@@ -826,7 +830,7 @@ pub const Shard = struct {
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 for (change_batch.changes) |change| {
                     var output_change = change; // copy
-                    output_change.row = try map.map_fn(change.row);
+                    output_change.row = try map.mapper.map_fn(map.mapper, change.row);
                     try output_change_batch_builder.changes.append(output_change);
                 }
                 if (try output_change_batch_builder.finishAndClear()) |output_change_batch| {
