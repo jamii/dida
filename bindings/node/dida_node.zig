@@ -234,8 +234,9 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
                     max_len = dida.common.max(max_len, field_info.name.len);
                 }
             }
-            var buffer: [max_len]u8 = undefined;
-            const buffer_size = napiCall(c.napi_get_value_string_utf8, .{ env, value, &buffer, max_len }, usize);
+            // max_len+1 to make space for null byte :(
+            var buffer: [max_len + 1]u8 = undefined;
+            const buffer_size = napiCall(c.napi_get_value_string_utf8, .{ env, value, &buffer, max_len + 1 }, usize);
             const tag_name = buffer[0..buffer_size];
             inline for (enum_info.fields) |field_info| {
                 if (std.mem.eql(u8, tag_name, field_info.name)) {
