@@ -1,5 +1,5 @@
 const std = @import("std");
-const dida = @import("../lib/dida.zig");
+const dida = @import("../core/dida.zig");
 
 var gpa = std.heap.GeneralPurposeAllocator(.{
     .safety = true,
@@ -23,17 +23,20 @@ pub fn main() !void {
     const reach_future = try graph_builder.addNode(subgraph_1, .{ .TimestampIncrement = .{ .input = null } });
     const reach_index = try graph_builder.addNode(subgraph_1, .{ .Index = .{ .input = reach_future } });
     const distinct_reach_index = try graph_builder.addNode(subgraph_1, .{ .Distinct = .{ .input = reach_index } });
+    var swapped_edges_mapper = dida.NodeSpec.MapSpec.Mapper{
+        .map_fn = (struct {
+            fn swap(_: *dida.NodeSpec.MapSpec.Mapper, input: dida.Row) error{OutOfMemory}!dida.Row {
+                var output_values = try allocator.alloc(dida.Value, 2);
+                output_values[0] = input.values[1];
+                output_values[1] = input.values[0];
+                return dida.Row{ .values = output_values };
+            }
+        }).swap,
+    };
     const swapped_edges = try graph_builder.addNode(subgraph_1, .{
         .Map = .{
             .input = edges_1,
-            .function = (struct {
-                fn swap(input: dida.Row) error{OutOfMemory}!dida.Row {
-                    var output_values = try allocator.alloc(dida.Value, 2);
-                    output_values[0] = input.values[1];
-                    output_values[1] = input.values[0];
-                    return dida.Row{ .values = output_values };
-                }
-            }).swap,
+            .mapper = &swapped_edges_mapper,
         },
     });
     const swapped_edges_index = try graph_builder.addNode(subgraph_1, .{ .Index = .{ .input = swapped_edges } });
@@ -46,17 +49,20 @@ pub fn main() !void {
             .key_columns = 1,
         },
     });
+    var without_middle_mapper = dida.NodeSpec.MapSpec.Mapper{
+        .map_fn = (struct {
+            fn drop_middle(_: *dida.NodeSpec.MapSpec.Mapper, input: dida.Row) error{OutOfMemory}!dida.Row {
+                var output_values = try allocator.alloc(dida.Value, 2);
+                output_values[0] = input.values[3];
+                output_values[1] = input.values[1];
+                return dida.Row{ .values = output_values };
+            }
+        }).drop_middle,
+    };
     const without_middle = try graph_builder.addNode(subgraph_1, .{
         .Map = .{
             .input = joined,
-            .function = (struct {
-                fn drop_middle(input: dida.Row) error{OutOfMemory}!dida.Row {
-                    var output_values = try allocator.alloc(dida.Value, 2);
-                    output_values[0] = input.values[3];
-                    output_values[1] = input.values[1];
-                    return dida.Row{ .values = output_values };
-                }
-            }).drop_middle,
+            .mapper = &without_middle_mapper,
         },
     });
     const reach = try graph_builder.addNode(subgraph_1, .{ .Union = .{ .inputs = .{ edges_1, without_middle } } });
@@ -66,7 +72,7 @@ pub fn main() !void {
 
     const graph = try graph_builder.finishAndClear();
 
-    var shard = try dida.Shard.init(allocator, graph);
+    var shard = try dida.Shard.init(allocator, &graph);
     const timestamp0 = dida.Timestamp{ .coords = &[_]u64{0} };
     const timestamp1 = dida.Timestamp{ .coords = &[_]u64{1} };
     const timestamp2 = dida.Timestamp{ .coords = &[_]u64{2} };
