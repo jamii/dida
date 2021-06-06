@@ -1,11 +1,7 @@
 var graph_builder = new GraphBuilder();
-console.log(graph_builder);
 const subgraph_0 = new Subgraph(0);
-console.log(subgraph_0);
 const subgraph_1 = graph_builder.addSubgraph(subgraph_0);
-console.log(subgraph_1);
 const edges = graph_builder.addNode(subgraph_0, new NodeSpec.Input());
-console.log(edges);
 const edges_1 = graph_builder.addNode(subgraph_1, new NodeSpec.TimestampPush(edges));
 
 console.log(edges_1);

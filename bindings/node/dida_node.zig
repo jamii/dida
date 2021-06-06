@@ -13,41 +13,27 @@ var arena = std.heap.ArenaAllocator.init(&gpa.allocator);
 const allocator = &arena.allocator;
 
 export fn napi_register_module_v1(env: c.napi_env, exports: c.napi_value) c.napi_value {
-    napiExportFn(env, exports, GraphBuilder_init, "GraphBuilder_init");
-    napiExportFn(env, exports, GraphBuilder_addSubgraph, "GraphBuilder_addSubgraph");
-    napiExportFn(env, exports, GraphBuilder_addNode, "GraphBuilder_addNode");
+    napiExportFn(env, exports, napiWrapFn(GraphBuilder_init), "GraphBuilder_init");
+    napiExportFn(env, exports, napiWrapFn(dida.GraphBuilder.addSubgraph), "GraphBuilder_addSubgraph");
+    napiExportFn(env, exports, napiWrapFn(dida.GraphBuilder.addNode), "GraphBuilder_addNode");
+    //napiExportFn(env, exports, GraphBuilder_finishAndClear, "GraphBuilder_finishAndClear");
 
     return exports;
 }
 
-fn GraphBuilder_init(env: c.napi_env, info: c.napi_callback_info) callconv(.C) c.napi_value {
-    const args_and_this = napiGetCbInfo(env, info, 0);
-
-    const graph_builder = allocator.create(dida.GraphBuilder) catch |err| dida.common.panic("{}", .{err});
-    graph_builder.* = dida.GraphBuilder.init(allocator);
-
-    return napiCreateExternal(env, graph_builder);
+fn GraphBuilder_init() !dida.GraphBuilder {
+    return dida.GraphBuilder.init(allocator);
 }
 
-fn GraphBuilder_addSubgraph(env: c.napi_env, info: c.napi_callback_info) callconv(.C) c.napi_value {
-    const args_and_this = napiGetCbInfo(env, info, 2);
-    const graph_builder = napiGetExternal(env, args_and_this.args[0], dida.GraphBuilder);
-    const parent = napiGetValue(env, args_and_this.args[1], dida.Subgraph);
-
-    const subgraph = graph_builder.addSubgraph(parent) catch |err| dida.common.panic("{}", .{err});
-
-    return napiCreateValue(env, subgraph);
-}
-
-fn GraphBuilder_addNode(env: c.napi_env, info: c.napi_callback_info) callconv(.C) c.napi_value {
-    const args_and_this = napiGetCbInfo(env, info, 3);
-    const graph_builder = napiGetExternal(env, args_and_this.args[0], dida.GraphBuilder);
-    const subgraph = napiGetValue(env, args_and_this.args[1], dida.Subgraph);
-    const node_spec = napiGetValue(env, args_and_this.args[2], dida.NodeSpec);
-
-    const node = graph_builder.addNode(subgraph, node_spec) catch |err| dida.common.panic("{}", .{err});
-
-    return napiCreateValue(env, node);
+const SerdeStrategy = enum {
+    External,
+    Value,
+};
+fn serdeStrategy(comptime T: type) SerdeStrategy {
+    return switch (T) {
+        *dida.GraphBuilder => .External,
+        else => .Value,
+    };
 }
 
 // --- helpers ---
@@ -67,6 +53,35 @@ fn napiCall(comptime napi_fn: anytype, args: anytype, comptime ReturnType: type)
 fn napiExportFn(env: c.napi_env, exports: c.napi_value, export_fn: anytype, export_fn_name: [:0]const u8) void {
     const napi_fn = napiCall(c.napi_create_function, .{ env, export_fn_name, export_fn_name.len, export_fn, null }, c.napi_value);
     napiCall(c.napi_set_named_property, .{ env, exports, export_fn_name, napi_fn }, void);
+}
+
+fn napiWrapFn(comptime zig_fn: anytype) c.napi_callback {
+    return struct {
+        fn wrappedMethod(env: c.napi_env, info: c.napi_callback_info) callconv(.C) c.napi_value {
+            var zig_args: std.meta.ArgsTuple(@TypeOf(zig_fn)) = undefined;
+            const napi_args = napiGetCbInfo(env, info, zig_args.len).args;
+            comptime var i: usize = 0;
+            inline while (i < zig_args.len) : (i += 1) {
+                const napi_arg = napi_args[i];
+                const zig_arg_type = @TypeOf(zig_args[i]);
+                zig_args[i] = switch (comptime serdeStrategy(zig_arg_type)) {
+                    .External => napiGetExternal(env, napi_arg, @typeInfo(zig_arg_type).Pointer.child),
+                    .Value => napiGetValue(env, napi_arg, zig_arg_type),
+                };
+            }
+            const result = @call(.{}, zig_fn, zig_args) catch |err| dida.common.panic("{}", .{err});
+            switch (comptime serdeStrategy(*@TypeOf(result))) {
+                .External => {
+                    const result_ptr = allocator.create(@TypeOf(result)) catch |err| dida.common.panic("{}", .{err});
+                    result_ptr.* = result;
+                    return napiCreateExternal(env, result_ptr);
+                },
+                .Value => {
+                    return napiCreateValue(env, result);
+                },
+            }
+        }
+    }.wrappedMethod;
 }
 
 fn napiGetCbInfo(env: c.napi_env, info: c.napi_callback_info, comptime expected_num_args: usize) struct { args: [expected_num_args]c.napi_value, this: c.napi_value } {
@@ -126,7 +141,7 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
             }
             return result;
         },
-        else => @compileError("Dont know how to create value of type " ++ @typeName(ReturnType)),
+        else => @compileError("Dont know how to create value of type " ++ @typeName(@TypeOf(value))),
     }
 }
 
