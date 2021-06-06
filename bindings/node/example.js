@@ -3,25 +3,10 @@ const subgraph_0 = new Subgraph(0);
 const subgraph_1 = graph_builder.addSubgraph(subgraph_0);
 const edges = graph_builder.addNode(subgraph_0, new NodeSpec.Input());
 const edges_1 = graph_builder.addNode(subgraph_1, new NodeSpec.TimestampPush(edges));
-
-console.log(edges_1);
-
-//const reach_future = graph_builder.addNode(subgraph_1, .{ .TimestampIncrement = .{ .input = null } });
-//const reach_index = graph_builder.addNode(subgraph_1, .{ .Index = .{ .input = reach_future } });
-//const distinct_reach_index = graph_builder.addNode(subgraph_1, .{ .Distinct = .{ .input = reach_index } });
-//const swapped_edges = graph_builder.addNode(subgraph_1, .{
-    //.Map = .{
-        //.input = edges_1,
-        //.function = (struct {
-            //fn swap(input: dida.Row) error{OutOfMemory}!dida.Row {
-                //var output_values = allocator.alloc(dida.Value, 2);
-                //output_values[0] = input.values[1];
-                //output_values[1] = input.values[0];
-                //return dida.Row{ .values = output_values };
-            //}
-        //}).swap,
-    //},
-//});
+const reach_future = graph_builder.addNode(subgraph_1, new NodeSpec.TimestampIncrement(null));
+const reach_index = graph_builder.addNode(subgraph_1, new NodeSpec.Index(reach_future));
+const distinct_reach_index = graph_builder.addNode(subgraph_1, new NodeSpec.Distinct(reach_index));
+const swapped_edges = graph_builder.addNode(subgraph_1, new NodeSpec.Map(edges_1, input => [input[1], input[0]]));
 //const swapped_edges_index = graph_builder.addNode(subgraph_1, .{ .Index = .{ .input = swapped_edges } });
 //const joined = graph_builder.addNode(subgraph_1, .{
     //.Join = .{
