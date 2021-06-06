@@ -20,18 +20,15 @@ const out = graph_builder.addNode(subgraph_0, new NodeSpec.Output(reach_out));
 const graph = graph_builder.finishAndClear();
 
 var shard = new Shard(graph);
-const timestamp0 = new Timestamp([0]);
-const timestamp1 = new Timestamp([1]);
-const timestamp2 = new Timestamp([2]);
 
-shard.pushInput(edges, new Change(["a", "b"], timestamp0, 1));
-shard.pushInput(edges, new Change(["b", "c"], timestamp0, 1));
-shard.pushInput(edges, new Change(["b", "d"], timestamp0, 1));
-shard.pushInput(edges, new Change(["c", "a"], timestamp0, 1));
-shard.pushInput(edges, new Change(["b", "c"], timestamp1, -1));
+shard.pushInput(edges, new Change(["a", "b"], [0], 1));
+shard.pushInput(edges, new Change(["b", "c"], [0], 1));
+shard.pushInput(edges, new Change(["b", "d"], [0], 1));
+shard.pushInput(edges, new Change(["c", "a"], [0], 1));
+shard.pushInput(edges, new Change(["b", "c"], [1], -1));
 shard.flushInput(edges);
 
-shard.advanceInput(edges, timestamp1);
+shard.advanceInput(edges, [1]);
 while (shard.hasWork()) {
     shard.doWork();
     while (true) {
@@ -43,7 +40,7 @@ while (shard.hasWork()) {
 
 console.log("Advancing!");
 
-shard.advanceInput(edges, timestamp2);
+shard.advanceInput(edges, [2]);
 while (shard.hasWork()) {
     shard.doWork();
     while (true) {

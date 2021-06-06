@@ -206,6 +206,10 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
         return napiCreateValue(env, value.values);
     }
 
+    if (@TypeOf(value) == dida.Timestamp) {
+        return napiCreateValue(env, value.coords);
+    }
+
     if (@TypeOf(value) == dida.Frontier) {
         const len = value.timestamps.count();
         const napi_array = napiCall(c.napi_create_array_with_length, .{ env, @intCast(u32, len) }, c.napi_value);
@@ -361,6 +365,10 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
 
     if (ReturnType == dida.Row) {
         return dida.Row{ .values = napiGetValue(env, value, []const dida.Value) };
+    }
+
+    if (ReturnType == dida.Timestamp) {
+        return dida.Timestamp{ .coords = napiGetValue(env, value, []const usize) };
     }
 
     if (ReturnType == *dida.NodeSpec.MapSpec.Mapper) {
