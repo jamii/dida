@@ -343,8 +343,7 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
         const len = napiCall(c.napi_get_value_string_utf8, .{ env, value, null, 0 }, usize);
         var string = allocator.alloc(u8, len) catch |err| dida.common.panic("{}", .{err});
         _ = napiCall(c.napi_get_value_string_utf8, .{ env, value, @ptrCast([*:0]u8, string), len + 1 }, usize);
-        // TODO will this be a problem when we want to free it?
-        return string[0..len];
+        return string;
     }
 
     if (ReturnType == dida.Value) {

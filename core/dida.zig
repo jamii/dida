@@ -1144,7 +1144,6 @@ pub const Shard = struct {
     }
 
     pub fn doWork(self: *Shard) !void {
-        // Must always handle change batches before frontier advances, otherwise we might see changes arrive that are older than the current frontier
         if (try self.popChangeBatch()) |change_batch_at_node_input| {
             try self.processChangeBatch(change_batch_at_node_input.change_batch, change_batch_at_node_input.node_input);
         } else if (self.unprocessed_frontier_updates.count() > 0) {

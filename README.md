@@ -85,6 +85,7 @@ Compared to DD, dida aims to:
     * [ ] Exceptions
     * [ ] Memory management
     * [ ] Panic handler
+    * [ ] Packaging
 * [ ] Sugar
   * [ ] Zig
   * [ ] Wasm
