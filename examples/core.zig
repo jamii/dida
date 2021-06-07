@@ -66,7 +66,7 @@ pub fn main() !void {
         },
     });
     const reach = try graph_builder.addNode(subgraph_1, .{ .Union = .{ .inputs = .{ edges_1, without_middle } } });
-    graph_builder.node_specs.items[reach_future.id].TimestampIncrement.input = reach;
+    graph_builder.connectLoop(reach, reach_future);
     const reach_out = try graph_builder.addNode(subgraph_0, .{ .TimestampPop = .{ .input = distinct_reach_index } });
     const out = try graph_builder.addNode(subgraph_0, .{ .Output = .{ .input = reach_out } });
 
