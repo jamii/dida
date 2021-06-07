@@ -6,6 +6,10 @@ pub fn main() !void {
     inline for (types_with_js_constructors) |T| {
         try generateConstructor(writer, T);
     }
+    try writer.writeAll("\n\n");
+    inline for (types_with_js_constructors) |T| {
+        try std.fmt.format(writer, "exports.{} = {};\n", .{ @typeName(T), @typeName(T) });
+    }
 }
 
 fn generateConstructor(writer: anytype, comptime Type: type) !void {

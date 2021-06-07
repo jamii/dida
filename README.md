@@ -80,7 +80,7 @@ Compared to DD, dida aims to:
 * [ ] Bindings
   * [ ] Wasm
   * [ ] Node.js
-    * [ ] Basic sketch
+    * [x] Basic sketch
     * [ ] Type tags
     * [ ] Exceptions
     * [ ] Memory management

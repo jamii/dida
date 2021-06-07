@@ -1,1 +1,3 @@
-`npm run-script build`
+```
+nix-shell --run 'npm run-script build'
+```

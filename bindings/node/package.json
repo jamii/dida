@@ -4,10 +4,9 @@
   "description": "",
   "main": "test.js",
   "scripts": {
-    "build": "zig build-lib ./dida_node_runtime.zig -femit-bin=dida.node --main-pkg-path ../../ -dynamic -lc -isystem $NIX_NODEJS/include/node",
-    "codegen": "zig run ./dida_node_codegen.zig --main-pkg-path ../../ > ./generated.js && cat ./example.js >> generated.js",
-    "run": "node generated.js",
-    "all": "npm run-script build && npm run-script codegen && npm run-script run"
+    "runtime": "zig build-lib ./dida_node_runtime.zig -femit-bin=dida.node --main-pkg-path ../../ -dynamic -lc -isystem $NIX_NODEJS/include/node",
+    "codegen": "zig run ./dida_node_codegen.zig --main-pkg-path ../../ > ./dida.js",
+    "build": "npm run-script runtime && npm run-script codegen"
   },
   "author": "Jamie Brandon <jamie@scattered-thoughts.net>",
   "license": "UNLICENSED"
