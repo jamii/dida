@@ -115,7 +115,7 @@ pub const Frontier = struct {
     pub fn causalOrder(self: Frontier, timestamp: Timestamp) std.math.Order {
         var iter = self.timestamps.iterator();
         while (iter.next()) |entry| {
-            const order = entry.key.causalOrder(timestamp);
+            const order = entry.key_ptr.causalOrder(timestamp);
             switch (order) {
                 .lt => return .lt,
                 .eq => return .eq,
@@ -132,20 +132,20 @@ pub const Frontier = struct {
         assert(changes_into.items.len == 0, "Need to start with an empty changes_into buffer so can use it to remove timestamps", .{});
         var iter = self.timestamps.iterator();
         while (iter.next()) |entry| {
-            switch (timestamp.causalOrder(entry.key)) {
+            switch (timestamp.causalOrder(entry.key_ptr.*)) {
                 .eq, if (direction == .Advance) .lt else .gt => {
                     assert(changes_into.items.len == 0, "Frontier timestamps invariant was broken", .{});
                     return;
                 },
                 if (direction == .Advance) .gt else .lt => {
-                    try changes_into.append(.{ .timestamp = entry.key, .diff = -1 });
+                    try changes_into.append(.{ .timestamp = entry.key_ptr.*, .diff = -1 });
                 },
                 .none => {},
             }
         }
         // If we got this far, timestamp is being added to the frontier and might also be replacing some other timestamps that are currently on the frontier
         for (changes_into.items) |change| {
-            self.timestamps.removeAssertDiscard(change.timestamp);
+            _ = self.timestamps.remove(change.timestamp);
         }
         try changes_into.append(.{ .timestamp = timestamp, .diff = 1 });
         try self.timestamps.put(timestamp, {});
@@ -178,12 +178,12 @@ pub const SupportedFrontier = struct {
 
     pub fn update(self: *SupportedFrontier, timestamp: Timestamp, diff: isize, changes_into: *ArrayList(FrontierChange)) !void {
         const support_entry = try self.support.getOrPutValue(timestamp, 0);
-        support_entry.value = @intCast(usize, @intCast(isize, support_entry.value) + diff);
+        support_entry.value_ptr.* = @intCast(usize, @intCast(isize, support_entry.value_ptr.*) + diff);
 
-        if (support_entry.value == 0) {
+        if (support_entry.value_ptr.* == 0) {
             // Timestamp was just removed, might have been in frontier
-            self.support.removeAssertDiscard(timestamp);
-            if (self.frontier.timestamps.remove(timestamp)) |_| {
+            _ = self.support.remove(timestamp);
+            if (self.frontier.timestamps.remove(timestamp)) {
                 // Remove this timestamp
                 try changes_into.append(.{ .timestamp = timestamp, .diff = -1 });
 
@@ -191,8 +191,8 @@ pub const SupportedFrontier = struct {
                 var candidates = ArrayList(Timestamp).init(self.allocator);
                 var iter = self.support.iterator();
                 while (iter.next()) |entry| {
-                    if (timestamp.causalOrder(entry.key) == .lt)
-                        try candidates.append(entry.key);
+                    if (timestamp.causalOrder(entry.key_ptr.*) == .lt)
+                        try candidates.append(entry.key_ptr.*);
                 }
 
                 // Add in lexical order any candidates that are not past the current frontier (or past any earlier candidates)
@@ -210,7 +210,7 @@ pub const SupportedFrontier = struct {
             }
         }
 
-        if (support_entry.value == diff) {
+        if (support_entry.value_ptr.* == diff) {
             // Timestamp was just added, might be in frontier
             if (self.frontier.causalOrder(timestamp) != .lt) {
                 // Add to frontier
@@ -221,11 +221,11 @@ pub const SupportedFrontier = struct {
                 var to_remove = ArrayList(Timestamp).init(self.allocator);
                 var iter = self.frontier.timestamps.iterator();
                 while (iter.next()) |frontier_entry| {
-                    if (frontier_entry.key.causalOrder(timestamp) == .gt)
-                        try to_remove.append(frontier_entry.key);
+                    if (frontier_entry.key_ptr.causalOrder(timestamp) == .gt)
+                        try to_remove.append(frontier_entry.key_ptr.*);
                 }
                 for (to_remove.items) |other_timestamp| {
-                    self.frontier.timestamps.removeAssertDiscard(other_timestamp);
+                    _ = self.frontier.timestamps.remove(other_timestamp);
                     try changes_into.append(.{ .timestamp = other_timestamp, .diff = -1 });
                 }
             }
@@ -281,7 +281,7 @@ pub const ChangeBatchBuilder = struct {
                 }
             }
         }
-        self.changes.shrink(prev_i + 1);
+        self.changes.shrinkAndFree(prev_i + 1);
         if (self.changes.items.len == 0) return null;
 
         var lower_bound = Frontier.initEmpty(self.allocator);
@@ -342,8 +342,8 @@ pub const Bag = struct {
 
     pub fn update(self: *Bag, row: Row, diff: isize) !void {
         const entry = try self.row_counts.getOrPutValue(row, 0);
-        entry.value += diff;
-        if (entry.value == 0) self.row_counts.removeAssertDiscard(row);
+        entry.value_ptr.* += diff;
+        _ = if (entry.value_ptr.* == 0) self.row_counts.remove(row);
     }
 };
 
@@ -483,7 +483,7 @@ pub const NodeState = union(enum) {
                 var iter = self.pending_timestamps.iterator();
                 while (iter.next()) |entry| {
                     try writer.writeByteNTimes(' ', indent + 8);
-                    try meta.dumpInto(writer, indent + 12, entry.key);
+                    try meta.dumpInto(writer, indent + 12, entry.key_ptr.*);
                     try writer.writeAll(",\n");
                 }
             }
@@ -807,9 +807,9 @@ pub const Shard = struct {
             var iter = change_batch.lower_bound.timestamps.iterator();
             while (iter.next()) |entry| {
                 assert(
-                    output_frontier.frontier.causalOrder(entry.key) != .gt,
+                    output_frontier.frontier.causalOrder(entry.key_ptr.*) != .gt,
                     "Emitted a change at a timestamp that is behind the output frontier. Node {}, timestamp {}.",
-                    .{ from_node, entry.key },
+                    .{ from_node, entry.key_ptr.* },
                 );
             }
         }
@@ -821,7 +821,7 @@ pub const Shard = struct {
             });
             var iter = change_batch.lower_bound.timestamps.iterator();
             while (iter.next()) |entry| {
-                try self.queueFrontierUpdate(to_node_input, entry.key, 1);
+                try self.queueFrontierUpdate(to_node_input, entry.key_ptr.*, 1);
             }
         }
     }
@@ -830,7 +830,7 @@ pub const Shard = struct {
         if (self.unprocessed_change_batches.popOrNull()) |change_batch_at_node_input| {
             var iter = change_batch_at_node_input.change_batch.lower_bound.timestamps.iterator();
             while (iter.next()) |entry| {
-                try self.queueFrontierUpdate(change_batch_at_node_input.node_input, entry.key, -1);
+                try self.queueFrontierUpdate(change_batch_at_node_input.node_input, entry.key_ptr.*, -1);
             }
             return change_batch_at_node_input;
         } else {
@@ -951,7 +951,7 @@ pub const Shard = struct {
                         const timestamp = try Timestamp.leastUpperBound(
                             self.allocator,
                             change.timestamp,
-                            entry.key,
+                            entry.key_ptr.*,
                         );
                         try buffer.append(timestamp);
                     }
@@ -972,8 +972,8 @@ pub const Shard = struct {
             .subgraphs = self.graph.node_subgraphs[node_input.node.id],
             .timestamp = timestamp,
         }, 0);
-        entry.value += diff;
-        if (entry.value == 0) self.unprocessed_frontier_updates.removeAssertDiscard(entry.key);
+        entry.value_ptr.* += diff;
+        _ = if (entry.value_ptr.* == 0) self.unprocessed_frontier_updates.remove(entry.key_ptr.*);
     }
 
     fn applyFrontierUpdate(self: *Shard, node: Node, timestamp: Timestamp, diff: isize) !enum { Updated, NotUpdated } {
@@ -1021,13 +1021,13 @@ pub const Shard = struct {
             var iter = self.unprocessed_frontier_updates.iterator();
             var min_entry = iter.next().?;
             while (iter.next()) |entry| {
-                if (orderPointstamps(entry.key, min_entry.key) == .lt)
+                if (orderPointstamps(entry.key_ptr.*, min_entry.key_ptr.*) == .lt)
                     min_entry = entry;
             }
-            const node = min_entry.key.node_input.node;
-            const input_timestamp = min_entry.key.timestamp;
-            const diff = min_entry.value;
-            self.unprocessed_frontier_updates.removeAssertDiscard(min_entry.key);
+            const node = min_entry.key_ptr.node_input.node;
+            const input_timestamp = min_entry.key_ptr.timestamp;
+            const diff = min_entry.value_ptr.*;
+            _ = self.unprocessed_frontier_updates.remove(min_entry.key_ptr.*);
 
             // An input frontier for this node, so we may need to take some action on it later
             try updated_nodes.put(node, {});
@@ -1050,7 +1050,7 @@ pub const Shard = struct {
         // TODO Probably should pop these one at a time though to avoid doWork being unbounded
         var updated_nodes_iter = updated_nodes.iterator();
         while (updated_nodes_iter.next()) |updated_nodes_entry| {
-            const node = updated_nodes_entry.key;
+            const node = updated_nodes_entry.key_ptr.*;
             const node_spec = self.graph.node_specs[node.id];
             const node_state = &self.node_states[node.id];
 
@@ -1087,8 +1087,8 @@ pub const Shard = struct {
                 {
                     var iter = node_state.Distinct.pending_timestamps.iterator();
                     while (iter.next()) |entry| {
-                        if (input_frontier.frontier.causalOrder(entry.key) == .gt)
-                            try timestamps_to_emit.append(entry.key);
+                        if (input_frontier.frontier.causalOrder(entry.key_ptr.*) == .gt)
+                            try timestamps_to_emit.append(entry.key_ptr.*);
                     }
                 }
 
@@ -1112,10 +1112,10 @@ pub const Shard = struct {
                     {
                         var iter = new_bag.row_counts.iterator();
                         while (iter.next()) |new_entry| {
-                            const diff = 1 - (old_bag.row_counts.get(new_entry.key) orelse 0);
+                            const diff = 1 - (old_bag.row_counts.get(new_entry.key_ptr.*) orelse 0);
                             if (diff != 0)
                                 try change_batch_builder.changes.append(.{
-                                    .row = new_entry.key,
+                                    .row = new_entry.key_ptr.*,
                                     .diff = diff,
                                     .timestamp = timestamp,
                                 });
@@ -1125,10 +1125,10 @@ pub const Shard = struct {
                     {
                         var iter = old_bag.row_counts.iterator();
                         while (iter.next()) |old_entry| {
-                            if (!new_bag.row_counts.contains(old_entry.key)) {
-                                const diff = -old_entry.value;
+                            if (!new_bag.row_counts.contains(old_entry.key_ptr.*)) {
+                                const diff = -old_entry.value_ptr.*;
                                 try change_batch_builder.changes.append(.{
-                                    .row = old_entry.key,
+                                    .row = old_entry.key_ptr.*,
                                     .diff = diff,
                                     .timestamp = timestamp,
                                 });
@@ -1145,7 +1145,7 @@ pub const Shard = struct {
 
                 // Remove emitted timestamps from pending timestamps and from support
                 for (timestamps_to_emit.items) |timestamp| {
-                    node_state.Distinct.pending_timestamps.removeAssertDiscard(timestamp);
+                    _ = node_state.Distinct.pending_timestamps.remove(timestamp);
                     _ = try self.applyFrontierUpdate(node, timestamp, -1);
                 }
             }
@@ -1192,8 +1192,8 @@ pub const Shard = struct {
                 var iter = self.node_frontiers[node_id].support.iterator();
                 while (iter.next()) |entry| {
                     try writer.writeByteNTimes(' ', indent + 12);
-                    try meta.dumpInto(writer, indent + 12, entry.key);
-                    try std.fmt.format(writer, ": {},\n", .{entry.value});
+                    try meta.dumpInto(writer, indent + 12, entry.key_ptr.*);
+                    try std.fmt.format(writer, ": {},\n", .{entry.value_ptr.*});
                 }
             }
             try writer.writeByteNTimes(' ', indent + 8);
@@ -1205,7 +1205,7 @@ pub const Shard = struct {
                 var iter = self.node_frontiers[node_id].frontier.timestamps.iterator();
                 while (iter.next()) |entry| {
                     try writer.writeByteNTimes(' ', indent + 12);
-                    try meta.dumpInto(writer, indent + 12, entry.key);
+                    try meta.dumpInto(writer, indent + 12, entry.key_ptr.*);
                     try writer.writeAll(",\n");
                 }
             }

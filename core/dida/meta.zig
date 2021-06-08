@@ -154,7 +154,7 @@ pub fn deepHashInto(hasher: anytype, key: anytype) void {
     }
     switch (ti) {
         .Int => @call(.{ .modifier = .always_inline }, hasher.update, .{std.mem.asBytes(&key)}),
-        .Float => |info| deepHashInto(hasher, @bitCast(std.meta.IntType(.unsigned, info.bits), key)),
+        .Float => |info| deepHashInto(hasher, @bitCast(std.meta.Int(.unsigned, info.bits), key)),
         .Bool => deepHashInto(hasher, @boolToInt(key)),
         .Enum => deepHashInto(hasher, @enumToInt(key)),
         .Pointer => |pti| {
@@ -197,6 +197,18 @@ pub fn deepHashInto(hasher: anytype, key: anytype) void {
     }
 }
 
+pub fn DeepHashContext(comptime K: type) type {
+    return struct {
+        const Self = @This();
+        pub fn hash(self: Self, pseudo_key: K) u64 {
+            return deepHash(pseudo_key);
+        }
+        pub fn eql(self: Self, pseudo_key: K, key: K) bool {
+            return deepEqual(pseudo_key, key);
+        }
+    };
+}
+
 pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
     const T = @TypeOf(thing);
     const ti = @typeInfo(T);
@@ -223,7 +235,7 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
                     if (pti.child == u8) {
                         try std.fmt.format(writer, "\"{s}\"", .{thing});
                     } else {
-                        try std.fmt.format(writer, "[]{}[\n", .{@typeName(pti.child)});
+                        try std.fmt.format(writer, "[]{s}[\n", .{@typeName(pti.child)});
                         for (thing) |elem| {
                             try writer.writeByteNTimes(' ', indent + 4);
                             try dumpInto(writer, indent + 4, elem);
@@ -243,7 +255,7 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
             if (ati.child == u8) {
                 try std.fmt.format(writer, "\"{s}\"", .{thing});
             } else {
-                try std.fmt.format(writer, "[{}]{}[\n", .{ ati.len, @typeName(ati.child) });
+                try std.fmt.format(writer, "[{}]{s}[\n", .{ ati.len, @typeName(ati.child) });
                 for (thing) |elem| {
                     try writer.writeByteNTimes(' ', indent + 4);
                     try dumpInto(writer, indent + 4, elem);
@@ -258,7 +270,7 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
             try writer.writeAll("{\n");
             inline for (sti.fields) |field| {
                 try writer.writeByteNTimes(' ', indent + 4);
-                try std.fmt.format(writer, ".{} = ", .{field.name});
+                try std.fmt.format(writer, ".{s} = ", .{field.name});
                 try dumpInto(writer, indent + 4, @field(thing, field.name));
                 try writer.writeAll(",\n");
             }
@@ -272,7 +284,7 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
                 inline for (@typeInfo(tag_type).Enum.fields) |fti| {
                     if (@enumToInt(std.meta.activeTag(thing)) == fti.value) {
                         try writer.writeByteNTimes(' ', indent + 4);
-                        try std.fmt.format(writer, ".{} = ", .{fti.name});
+                        try std.fmt.format(writer, ".{s} = ", .{fti.name});
                         try dumpInto(writer, indent + 4, @field(thing, fti.name));
                         try writer.writeAll("\n");
                         try writer.writeByteNTimes(' ', indent);
@@ -286,7 +298,7 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
         },
         else => {
             // bail
-            try std.fmt.format(writer, "{}", .{thing});
+            try std.fmt.format(writer, "{any}", .{thing});
         },
     }
 }

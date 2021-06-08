@@ -161,7 +161,7 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
         var iter = value.timestamps.iterator();
         var i: usize = 0;
         while (iter.next()) |entry| {
-            const napi_timestamp = napiCreateValue(env, entry.key);
+            const napi_timestamp = napiCreateValue(env, entry.key_ptr.*);
             napiCall(c.napi_set_element, .{ env, napi_array, @intCast(u32, i), napi_timestamp }, void);
             i += 1;
         }
@@ -242,7 +242,7 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
                     return @intToEnum(ReturnType, field_info.value);
                 }
             }
-            dida.common.panic("Type {} does not contain a tag named \"{}\"", .{ @typeName(ReturnType), tag_name });
+            dida.common.panic("Type {s} does not contain a tag named \"{s}\"", .{ @typeName(ReturnType), tag_name });
         },
         .Pointer => |pointer_info| {
             switch (pointer_info.size) {
@@ -394,7 +394,7 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
                     return @intToEnum(ReturnType, field_info.value);
                 }
             }
-            dida.common.panic("Type {} does not contain a tag named \"{}\"", .{ @typeName(ReturnType), tag_name });
+            dida.common.panic("Type {s} does not contain a tag named \"{s}\"", .{ @typeName(ReturnType), tag_name });
         },
         .Array => |array_info| {
             const napi_len = napiCall(c.napi_get_array_length, .{ env, value }, u32);

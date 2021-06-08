@@ -23,15 +23,7 @@ pub fn TODO() noreturn {
 }
 
 pub fn DeepHashMap(comptime K: type, comptime V: type) type {
-    return std.HashMap(K, V, struct {
-        fn hash(key: K) u64 {
-            return dida.meta.deepHash(key);
-        }
-    }.hash, struct {
-        fn equal(a: K, b: K) bool {
-            return dida.meta.deepEqual(a, b);
-        }
-    }.equal, std.hash_map.DefaultMaxLoadPercentage);
+    return std.HashMap(K, V, dida.meta.DeepHashContext(K), std.hash_map.DefaultMaxLoadPercentage);
 }
 
 pub fn DeepHashSet(comptime K: type) type {
@@ -48,8 +40,8 @@ pub fn dump(thing: anytype) void {
 
 pub fn format(allocator: *Allocator, comptime fmt: []const u8, args: anytype) ![]const u8 {
     var buf = ArrayList(u8).init(allocator);
-    var out = buf.outStream();
-    try std.fmt.format(out, fmt, args);
+    var writer = buf.writer();
+    try std.fmt.format(writer, fmt, args);
     return buf.items;
 }
 

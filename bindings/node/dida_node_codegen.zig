@@ -8,7 +8,7 @@ pub fn main() !void {
     }
     try writer.writeAll("\n\n");
     inline for (types_with_js_constructors) |T| {
-        try std.fmt.format(writer, "exports.{} = {};\n", .{ @typeName(T), @typeName(T) });
+        try std.fmt.format(writer, "exports.{s} = {s};\n", .{ @typeName(T), @typeName(T) });
     }
 }
 
@@ -34,8 +34,8 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                     if (comptime std.mem.eql(u8, decl_info.name, "init")) {
                         try std.fmt.format(
                             writer,
-                            \\function {}({}) {{
-                            \\    this.external = dida.{}_init({}).external;
+                            \\function {s}({s}) {{
+                            \\    this.external = dida.{s}_init({s}).external;
                             \\}}
                             \\
                         ,
@@ -49,8 +49,8 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                     } else {
                         try std.fmt.format(
                             writer,
-                            \\{}.prototype.{} = function {}({}) {{
-                            \\    const result = dida.{}_{}(this, {});
+                            \\{s}.prototype.{s} = function {s}({s}) {{
+                            \\    const result = dida.{s}_{s}(this, {s});
                             \\    return result;
                             \\}}
                             \\
@@ -73,20 +73,20 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
         else => {
             switch (info) {
                 .Struct => |struct_info| {
-                    try std.fmt.format(writer, "function {}(", .{@typeName(Type)});
+                    try std.fmt.format(writer, "function {s}(", .{@typeName(Type)});
                     inline for (struct_info.fields) |field_info| {
-                        try std.fmt.format(writer, "{}, ", .{field_info.name});
+                        try std.fmt.format(writer, "{s}, ", .{field_info.name});
                     }
                     try writer.writeAll(") {\n");
                     inline for (struct_info.fields) |field_info| {
-                        try std.fmt.format(writer, "    this.{} = {};\n", .{ field_info.name, field_info.name });
+                        try std.fmt.format(writer, "    this.{s} = {s};\n", .{ field_info.name, field_info.name });
                     }
                     try writer.writeAll("}\n\n");
                 },
                 .Union => |union_info| {
                     if (union_info.tag_type) |tag_type| {
                         // TODO name payload args instead of using `arguments[i]`
-                        try std.fmt.format(writer, "const {} = {{\n", .{@typeName(Type)});
+                        try std.fmt.format(writer, "const {s} = {{\n", .{@typeName(Type)});
                         inline for (union_info.fields) |field_info| {
                             const payload = switch (field_info.field_type) {
                                 []const u8, f64 => "arguments[0]",
@@ -95,7 +95,7 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                                     const num_args = @typeInfo(field_info.field_type).Struct.fields.len;
                                     var args: [num_args][]const u8 = undefined;
                                     for (args) |*arg, arg_ix| arg.* = try dida.common.format(allocator, "arguments[{}]", .{arg_ix});
-                                    break :payload try dida.common.format(allocator, "new {}({})", .{
+                                    break :payload try dida.common.format(allocator, "new {s}({s})", .{
                                         @typeName(field_info.field_type),
                                         std.mem.join(allocator, ", ", &args),
                                     });
@@ -103,9 +103,9 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                             };
                             try std.fmt.format(
                                 writer,
-                                \\    {}: function () {{
-                                \\        this.tag = "{}";
-                                \\        this.payload = {};
+                                \\    {s}: function () {{
+                                \\        this.tag = "{s}";
+                                \\        this.payload = {s};
                                 \\    }},
                                 \\
                             ,
