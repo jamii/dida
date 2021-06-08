@@ -6,34 +6,34 @@ const c = @cImport({
 
 export fn napi_register_module_v1(env: c.napi_env, exports: c.napi_value) c.napi_value {
     napiExportFn(env, exports, napiWrapFn(GraphBuilder_init), "GraphBuilder_init");
-    napiExportFn(env, exports, napiWrapFn(dida.GraphBuilder.addSubgraph), "GraphBuilder_addSubgraph");
-    napiExportFn(env, exports, napiWrapFn(dida.GraphBuilder.addNode), "GraphBuilder_addNode");
-    napiExportFn(env, exports, napiWrapFn(dida.GraphBuilder.connectLoop), "GraphBuilder_connectLoop");
-    napiExportFn(env, exports, napiWrapFn(dida.GraphBuilder.finishAndClear), "GraphBuilder_finishAndClear");
+    napiExportFn(env, exports, napiWrapFn(dida.core.GraphBuilder.addSubgraph), "GraphBuilder_addSubgraph");
+    napiExportFn(env, exports, napiWrapFn(dida.core.GraphBuilder.addNode), "GraphBuilder_addNode");
+    napiExportFn(env, exports, napiWrapFn(dida.core.GraphBuilder.connectLoop), "GraphBuilder_connectLoop");
+    napiExportFn(env, exports, napiWrapFn(dida.core.GraphBuilder.finishAndClear), "GraphBuilder_finishAndClear");
 
     napiExportFn(env, exports, napiWrapFn(Graph_init), "Graph_init");
 
     napiExportFn(env, exports, napiWrapFn(Shard_init), "Shard_init");
-    napiExportFn(env, exports, napiWrapFn(dida.Shard.pushInput), "Shard_pushInput");
-    napiExportFn(env, exports, napiWrapFn(dida.Shard.flushInput), "Shard_flushInput");
-    napiExportFn(env, exports, napiWrapFn(dida.Shard.advanceInput), "Shard_advanceInput");
-    napiExportFn(env, exports, napiWrapFn(dida.Shard.hasWork), "Shard_hasWork");
-    napiExportFn(env, exports, napiWrapFn(dida.Shard.doWork), "Shard_doWork");
-    napiExportFn(env, exports, napiWrapFn(dida.Shard.popOutput), "Shard_popOutput");
+    napiExportFn(env, exports, napiWrapFn(dida.core.Shard.pushInput), "Shard_pushInput");
+    napiExportFn(env, exports, napiWrapFn(dida.core.Shard.flushInput), "Shard_flushInput");
+    napiExportFn(env, exports, napiWrapFn(dida.core.Shard.advanceInput), "Shard_advanceInput");
+    napiExportFn(env, exports, napiWrapFn(dida.core.Shard.hasWork), "Shard_hasWork");
+    napiExportFn(env, exports, napiWrapFn(dida.core.Shard.doWork), "Shard_doWork");
+    napiExportFn(env, exports, napiWrapFn(dida.core.Shard.popOutput), "Shard_popOutput");
 
     return exports;
 }
 
-fn GraphBuilder_init() !dida.GraphBuilder {
-    return dida.GraphBuilder.init(allocator);
+fn GraphBuilder_init() !dida.core.GraphBuilder {
+    return dida.core.GraphBuilder.init(allocator);
 }
 
-fn Graph_init(node_specs: []const dida.NodeSpec, node_immediate_subgraphs: []const dida.Subgraph, subgraph_parents: []const dida.Subgraph) !dida.Graph {
-    return dida.Graph.init(allocator, node_specs, node_immediate_subgraphs, subgraph_parents);
+fn Graph_init(node_specs: []const dida.core.NodeSpec, node_immediate_subgraphs: []const dida.core.Subgraph, subgraph_parents: []const dida.core.Subgraph) !dida.core.Graph {
+    return dida.core.Graph.init(allocator, node_specs, node_immediate_subgraphs, subgraph_parents);
 }
 
-fn Shard_init(graph: *const dida.Graph) !dida.Shard {
-    return dida.Shard.init(allocator, graph);
+fn Shard_init(graph: *const dida.core.Graph) !dida.core.Shard {
+    return dida.core.Shard.init(allocator, graph);
 }
 
 // --- helpers ---
@@ -140,22 +140,22 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
         return napiCall(c.napi_create_string_utf8, .{ env, @ptrCast([*]const u8, value), value.len }, c.napi_value);
     }
 
-    if (@TypeOf(value) == dida.Value) {
+    if (@TypeOf(value) == dida.core.Value) {
         return switch (value) {
             .String => |string| napiCreateValue(env, string),
             .Number => |number| napiCreateValue(env, number),
         };
     }
 
-    if (@TypeOf(value) == dida.Row) {
+    if (@TypeOf(value) == dida.core.Row) {
         return napiCreateValue(env, value.values);
     }
 
-    if (@TypeOf(value) == dida.Timestamp) {
+    if (@TypeOf(value) == dida.core.Timestamp) {
         return napiCreateValue(env, value.coords);
     }
 
-    if (@TypeOf(value) == dida.Frontier) {
+    if (@TypeOf(value) == dida.core.Frontier) {
         const len = value.timestamps.count();
         const napi_array = napiCall(c.napi_create_array_with_length, .{ env, @intCast(u32, len) }, c.napi_value);
         var iter = value.timestamps.iterator();
@@ -274,9 +274,9 @@ const NapiMapper = struct {
     // TODO is it safe to hold on to this?
     env: c.napi_env,
     napi_fn_ref: c.napi_ref,
-    mapper: dida.NodeSpec.MapSpec.Mapper,
+    mapper: dida.core.NodeSpec.MapSpec.Mapper,
 
-    fn map(self: *dida.NodeSpec.MapSpec.Mapper, row: dida.Row) error{OutOfMemory}!dida.Row {
+    fn map(self: *dida.core.NodeSpec.MapSpec.Mapper, row: dida.core.Row) error{OutOfMemory}!dida.core.Row {
         const parent = @fieldParentPtr(NapiMapper, "mapper", self);
         const napi_fn = napiCall(c.napi_get_reference_value, .{ parent.env, parent.napi_fn_ref }, c.napi_value);
         const napi_input_row = napiCreateValue(parent.env, row);
@@ -284,7 +284,7 @@ const NapiMapper = struct {
         dida.common.assert(!napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions before mapper cal", .{});
         const napi_output_row = napiCall(c.napi_call_function, .{ parent.env, napi_undefined, napi_fn, 1, &napi_input_row }, c.napi_value);
         dida.common.assert(!napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions after mapper call", .{});
-        const output_row = napiGetValue(parent.env, napi_output_row, dida.Row);
+        const output_row = napiGetValue(parent.env, napi_output_row, dida.core.Row);
         return output_row;
     }
 };
@@ -301,24 +301,24 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
         return string;
     }
 
-    if (ReturnType == dida.Value) {
+    if (ReturnType == dida.core.Value) {
         const napi_type = napiCall(c.napi_typeof, .{ env, value }, c.napi_valuetype);
         return switch (napi_type) {
-            .napi_string => dida.Value{ .String = napiGetValue(env, value, []const u8) },
-            .napi_number => dida.Value{ .Number = napiGetValue(env, value, f64) },
-            else => dida.common.panic("Don't know how to get a dida.Value from {}", .{napi_type}),
+            .napi_string => dida.core.Value{ .String = napiGetValue(env, value, []const u8) },
+            .napi_number => dida.core.Value{ .Number = napiGetValue(env, value, f64) },
+            else => dida.common.panic("Don't know how to get a dida.core.Value from {}", .{napi_type}),
         };
     }
 
-    if (ReturnType == dida.Row) {
-        return dida.Row{ .values = napiGetValue(env, value, []const dida.Value) };
+    if (ReturnType == dida.core.Row) {
+        return dida.core.Row{ .values = napiGetValue(env, value, []const dida.core.Value) };
     }
 
-    if (ReturnType == dida.Timestamp) {
-        return dida.Timestamp{ .coords = napiGetValue(env, value, []const usize) };
+    if (ReturnType == dida.core.Timestamp) {
+        return dida.core.Timestamp{ .coords = napiGetValue(env, value, []const usize) };
     }
 
-    if (ReturnType == *dida.NodeSpec.MapSpec.Mapper) {
+    if (ReturnType == *dida.core.NodeSpec.MapSpec.Mapper) {
         // TODO we're just leaking this for now
         var napi_mapper = allocator.create(NapiMapper) catch |err| dida.common.panic("{}", .{err});
         napi_mapper.* = NapiMapper{

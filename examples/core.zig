@@ -1,5 +1,5 @@
 const std = @import("std");
-const dida = @import("../core/dida.zig");
+const dida = @import("../lib/dida.zig");
 
 var gpa = std.heap.GeneralPurposeAllocator(.{
     .safety = true,
@@ -14,8 +14,8 @@ pub fn main() !void {
         _ = gpa.detectLeaks();
     }
 
-    var graph_builder = dida.GraphBuilder.init(allocator);
-    const subgraph_0 = dida.Subgraph{ .id = 0 };
+    var graph_builder = dida.core.GraphBuilder.init(allocator);
+    const subgraph_0 = dida.core.Subgraph{ .id = 0 };
     const subgraph_1 = try graph_builder.addSubgraph(subgraph_0);
 
     const edges = try graph_builder.addNode(subgraph_0, .Input);
@@ -23,13 +23,13 @@ pub fn main() !void {
     const reach_future = try graph_builder.addNode(subgraph_1, .{ .TimestampIncrement = .{ .input = null } });
     const reach_index = try graph_builder.addNode(subgraph_1, .{ .Index = .{ .input = reach_future } });
     const distinct_reach_index = try graph_builder.addNode(subgraph_1, .{ .Distinct = .{ .input = reach_index } });
-    var swapped_edges_mapper = dida.NodeSpec.MapSpec.Mapper{
+    var swapped_edges_mapper = dida.core.NodeSpec.MapSpec.Mapper{
         .map_fn = (struct {
-            fn swap(_: *dida.NodeSpec.MapSpec.Mapper, input: dida.Row) error{OutOfMemory}!dida.Row {
-                var output_values = try allocator.alloc(dida.Value, 2);
+            fn swap(_: *dida.core.NodeSpec.MapSpec.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
+                var output_values = try allocator.alloc(dida.core.Value, 2);
                 output_values[0] = input.values[1];
                 output_values[1] = input.values[0];
-                return dida.Row{ .values = output_values };
+                return dida.core.Row{ .values = output_values };
             }
         }).swap,
     };
@@ -49,13 +49,13 @@ pub fn main() !void {
             .key_columns = 1,
         },
     });
-    var without_middle_mapper = dida.NodeSpec.MapSpec.Mapper{
+    var without_middle_mapper = dida.core.NodeSpec.MapSpec.Mapper{
         .map_fn = (struct {
-            fn drop_middle(_: *dida.NodeSpec.MapSpec.Mapper, input: dida.Row) error{OutOfMemory}!dida.Row {
-                var output_values = try allocator.alloc(dida.Value, 2);
+            fn drop_middle(_: *dida.core.NodeSpec.MapSpec.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
+                var output_values = try allocator.alloc(dida.core.Value, 2);
                 output_values[0] = input.values[3];
                 output_values[1] = input.values[1];
-                return dida.Row{ .values = output_values };
+                return dida.core.Row{ .values = output_values };
             }
         }).drop_middle,
     };
@@ -72,15 +72,15 @@ pub fn main() !void {
 
     const graph = try graph_builder.finishAndClear();
 
-    var shard = try dida.Shard.init(allocator, &graph);
-    const timestamp0 = dida.Timestamp{ .coords = &[_]u64{0} };
-    const timestamp1 = dida.Timestamp{ .coords = &[_]u64{1} };
-    const timestamp2 = dida.Timestamp{ .coords = &[_]u64{2} };
+    var shard = try dida.core.Shard.init(allocator, &graph);
+    const timestamp0 = dida.core.Timestamp{ .coords = &[_]u64{0} };
+    const timestamp1 = dida.core.Timestamp{ .coords = &[_]u64{1} };
+    const timestamp2 = dida.core.Timestamp{ .coords = &[_]u64{2} };
 
-    const ab = dida.Row{ .values = &[_]dida.Value{ .{ .String = "a" }, .{ .String = "b" } } };
-    const bc = dida.Row{ .values = &[_]dida.Value{ .{ .String = "b" }, .{ .String = "c" } } };
-    const cd = dida.Row{ .values = &[_]dida.Value{ .{ .String = "b" }, .{ .String = "d" } } };
-    const ca = dida.Row{ .values = &[_]dida.Value{ .{ .String = "c" }, .{ .String = "a" } } };
+    const ab = dida.core.Row{ .values = &[_]dida.core.Value{ .{ .String = "a" }, .{ .String = "b" } } };
+    const bc = dida.core.Row{ .values = &[_]dida.core.Value{ .{ .String = "b" }, .{ .String = "c" } } };
+    const cd = dida.core.Row{ .values = &[_]dida.core.Value{ .{ .String = "b" }, .{ .String = "d" } } };
+    const ca = dida.core.Row{ .values = &[_]dida.core.Value{ .{ .String = "c" }, .{ .String = "a" } } };
     try shard.pushInput(edges, .{ .row = ab, .diff = 1, .timestamp = timestamp0 });
     try shard.pushInput(edges, .{ .row = bc, .diff = 1, .timestamp = timestamp0 });
     try shard.pushInput(edges, .{ .row = cd, .diff = 1, .timestamp = timestamp0 });

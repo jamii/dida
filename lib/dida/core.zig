@@ -1,8 +1,6 @@
-pub const meta = @import("dida/meta.zig");
-pub const common = @import("dida/common.zig");
-usingnamespace common;
+usingnamespace @import("./common.zig");
 
-// TODO Its possible to remove from HashMap without invalidating interator which would simplify some of the code below. But might not always be true.
+// TODO Its currently possible to remove from HashMap without invalidating interator which would simplify some of the code below. But might not be true forever.
 
 // Field names are weird to be consistent with std.math.Order
 pub const PartialOrder = enum {
@@ -264,7 +262,7 @@ pub const ChangeBatchBuilder = struct {
 
         std.sort.sort(Change, self.changes.items, {}, struct {
             fn lessThan(_: void, a: Change, b: Change) bool {
-                return meta.deepOrder(a, b) == .lt;
+                return dida.meta.deepOrder(a, b) == .lt;
             }
         }.lessThan);
 
@@ -272,7 +270,7 @@ pub const ChangeBatchBuilder = struct {
         var prev_i: usize = 0;
         for (self.changes.items[1..]) |change, i| {
             const prev_change = &self.changes.items[prev_i];
-            if (meta.deepEqual(prev_change.row, change.row) and meta.deepEqual(prev_change.timestamp, change.timestamp)) {
+            if (dida.meta.deepEqual(prev_change.row, change.row) and dida.meta.deepEqual(prev_change.timestamp, change.timestamp)) {
                 prev_change.diff += change.diff;
             } else {
                 if (prev_change.diff != 0) {
@@ -474,7 +472,7 @@ pub const NodeState = union(enum) {
 
             try writer.writeByteNTimes(' ', indent + 4);
             try writer.writeAll("index:");
-            try meta.dumpInto(writer, indent + 8, self.index);
+            try dida.meta.dumpInto(writer, indent + 8, self.index);
             try writer.writeAll(",\n");
 
             try writer.writeByteNTimes(' ', indent + 4);
@@ -483,7 +481,7 @@ pub const NodeState = union(enum) {
                 var iter = self.pending_timestamps.iterator();
                 while (iter.next()) |entry| {
                     try writer.writeByteNTimes(' ', indent + 8);
-                    try meta.dumpInto(writer, indent + 12, entry.key_ptr.*);
+                    try dida.meta.dumpInto(writer, indent + 12, entry.key_ptr.*);
                     try writer.writeAll(",\n");
                 }
             }
@@ -876,7 +874,7 @@ pub const Shard = struct {
                     for (index.change_batches.items) |other_change_batch| {
                         for (other_change_batch.changes) |other_change| {
                             const other_key = other_change.row.values[0..join.key_columns];
-                            if (meta.deepEqual(this_key, other_key)) {
+                            if (dida.meta.deepEqual(this_key, other_key)) {
                                 const values = switch (node_input.input_ix) {
                                     0 => &[2][]const Value{ change.row.values, other_change.row.values },
                                     1 => &[2][]const Value{ other_change.row.values, change.row.values },
@@ -996,7 +994,7 @@ pub const Shard = struct {
         while (i < min_len) : (i += 1) {
             // If `this` and `that` are in different subgraphs then there is no way for a change to travel from a later node to an earlier node without incrementing the timestamp coord at `i-1`.
             if (this.subgraphs[i].id != that.subgraphs[i].id)
-                return meta.deepOrder(this.node_input, that.node_input);
+                return dida.meta.deepOrder(this.node_input, that.node_input);
 
             // If `this` and `that` are in the same subgraph but one has a higher timestamp coord at `i` than the other then there is no way the higher timestamp could be decremented to produce the lower timestamp.
             const timestamp_order = std.math.order(this.timestamp.coords[i], that.timestamp.coords[i]);
@@ -1004,7 +1002,7 @@ pub const Shard = struct {
         }
         // If we get this far, either `this` and `that` are in the same subgraph or one is in a subgraph that is nested inside the other.
         // Either way there is no way for a change to travel from a later node to an earlier node without incrementing the timestamp coord at `min_len-1`.
-        return meta.deepOrder(this.node_input, that.node_input);
+        return dida.meta.deepOrder(this.node_input, that.node_input);
     }
 
     fn processFrontierUpdates(self: *Shard) !void {
@@ -1178,12 +1176,12 @@ pub const Shard = struct {
 
             try writer.writeByteNTimes(' ', indent + 8);
             try writer.writeAll("spec: ");
-            try meta.dumpInto(writer, indent + 8, node_spec);
+            try dida.meta.dumpInto(writer, indent + 8, node_spec);
             try writer.writeAll(",\n");
 
             try writer.writeByteNTimes(' ', indent + 8);
             try writer.writeAll("state: ");
-            try meta.dumpInto(writer, indent + 8, self.node_states[node_id]);
+            try dida.meta.dumpInto(writer, indent + 8, self.node_states[node_id]);
             try writer.writeAll(",\n");
 
             try writer.writeByteNTimes(' ', indent + 8);
@@ -1192,7 +1190,7 @@ pub const Shard = struct {
                 var iter = self.node_frontiers[node_id].support.iterator();
                 while (iter.next()) |entry| {
                     try writer.writeByteNTimes(' ', indent + 12);
-                    try meta.dumpInto(writer, indent + 12, entry.key_ptr.*);
+                    try dida.meta.dumpInto(writer, indent + 12, entry.key_ptr.*);
                     try std.fmt.format(writer, ": {},\n", .{entry.value_ptr.*});
                 }
             }
@@ -1205,7 +1203,7 @@ pub const Shard = struct {
                 var iter = self.node_frontiers[node_id].frontier.timestamps.iterator();
                 while (iter.next()) |entry| {
                     try writer.writeByteNTimes(' ', indent + 12);
-                    try meta.dumpInto(writer, indent + 12, entry.key_ptr.*);
+                    try dida.meta.dumpInto(writer, indent + 12, entry.key_ptr.*);
                     try writer.writeAll(",\n");
                 }
             }
@@ -1218,7 +1216,7 @@ pub const Shard = struct {
                 for (self.unprocessed_change_batches.items) |change_batch_at_node_input| {
                     if (change_batch_at_node_input.node_input.node.id == node_id) {
                         try writer.writeByteNTimes(' ', indent + 12);
-                        try meta.dumpInto(writer, indent + 12, change_batch_at_node_input.change_batch);
+                        try dida.meta.dumpInto(writer, indent + 12, change_batch_at_node_input.change_batch);
                         try writer.writeAll(",\n");
                     }
                 }
