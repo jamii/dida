@@ -529,6 +529,7 @@ pub const NodeState = union(enum) {
         return switch (self.*) {
             .Index => |*state| &state.index,
             .Distinct => |*state| &state.index,
+            // TODO should be able to follow TimestampPush upwards to an index and wrap it
             else => null,
         };
     }
