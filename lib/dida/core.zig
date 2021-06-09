@@ -425,7 +425,12 @@ pub const NodeSpec = union(enum) {
     }
 
     pub fn hasIndex(self: NodeSpec) bool {
-        return switch (self) {
+        return tagHasIndex(self);
+    }
+
+    // TODO this is a weird way to organize this code
+    pub fn tagHasIndex(tag: std.meta.TagType(NodeSpec)) bool {
+        return switch (tag) {
             .Index, .Distinct => true,
             else => false,
         };

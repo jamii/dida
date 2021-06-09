@@ -88,6 +88,9 @@ Compared to DD, dida aims to:
     * [ ] Packaging
 * [ ] Sugar
   * [ ] Zig
+    * [x] Basic sketch
+    * [ ] Automatically add Push/Pop nodes as needed
+    * [ ] Add index wrappers for indexes behind Push/Pop
   * [ ] Wasm
   * [ ] Node.js
 * [ ] Debuggers / visualization

@@ -1,4 +1,4 @@
-// TODO this is just speculative atm
+// TODO this whole file is just speculative atm
 
 const std = @import("std");
 const dida = @import("../core/dida.zig");
@@ -17,15 +17,16 @@ pub fn main() !void {
     }
 
     const sugar = dida.sugar.Sugar.init(allocator);
-    const edges = sugar.input();
-    const fixpoint = sugar.fixpoint(.{ .reach = edges });
-    const reach = fixpoint.reach
+    const main = sugar.main();
+
+    const edges = main.input();
+    const reach = main.loop().loopNode();
+    reach.fixpoint(reach
         .index()
         .distinct()
         .join(edges.project(.{ 1, 0 }).index(), 1)
-        .project(.{ 3, 1 });
-    fixpoint.finish(.{ .reach = reach });
-    const out = fixpoint.reach.output();
+        .project(.{ 3, 1 }));
+    const out = reach.output();
 
     sugar.build();
 
