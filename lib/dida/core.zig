@@ -1001,10 +1001,10 @@ pub const Shard = struct {
             const diff = min_entry.value_ptr.*;
             _ = self.unprocessed_frontier_updates.remove(min_entry.key_ptr.*);
 
-            // An input frontier for this node, so we may need to take some action on it later
+            // An input frontier for this node changed, so we may need to take some action on it later
             try updated_nodes.put(node, {});
 
-            // Work out how node changes the timestamp
+            // Work out how this node changes the timestamp
             const output_timestamp = switch (self.graph.node_specs[node.id]) {
                 .TimestampPush => try input_timestamp.pushCoord(self.allocator),
                 .TimestampIncrement => try input_timestamp.incrementCoord(self.allocator),

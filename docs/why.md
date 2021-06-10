@@ -238,18 +238,19 @@ Secondly, keeping frontiers up to date is harder given that the graph may now co
 (1,0) => 1
 ```
 
-The inputs to the frontier calculation are:
+The frontier tracks "what are the earliest timestamps that might appear on changes emitted from this node". So to calculate the frontier at a given node, we need to know:
 
-* The frontiers at input nodes which at set and advanced by the outside world. 
-* Changes that are waiting at some node to be processed.
+* The frontiers of the nodes immediately upstream, because they might send changes that this node needs to handle.
+* The timestamps of any changes that are waiting to be processed at this node.
+* If this node is an input node, we also need the user to explicitly tell us what new inputs they might send in the future by setting the input frontier.
 
-All the frontiers can be computed from these inputs by a graph with the same shape as the original graph but where each operation is replaced with it's frontier equivalent. Most nodes produce outputs with the same timestamps as their inputs, so equivalent frontier operation is the identity operation. Nodes like `union` can output timestamps from either of their inputs, so the equivalent frontier operation is `min`. And so on.
+Given this information it's easy to calculate the frontier at this node by considering what effect this node has on timestamps. Most nodes don't change timestamps at all, so the output frontier will be the same as the upstream frontier. Nodes like `union` have multiple upstreams so they have to take the minimum of their upstream frontiers. The 'timestamp_increment' node adds 1 to the last coordinate of it's upstream's timestamps, so it must also add 1 to the last coordinate of it's upstream frontier. And so on.
 
-As the input frontiers are advanced and as changes flow around the graph, these produce changes to the frontier inputs. Recomputing all the frontiers from scratch every time we process a change would be too slow. So we have an incremental maintenance problem that involves iterative computations on multisets. We know how to solve this problem! Just add timestamps and frontiers... uh oh.
+As the input frontiers are advanced and as changes flow around the graph, the frontiers will also change. Recomputing all the frontiers from scratch every time we process a change would be too slow. So we have an incremental maintenance problem that involves iterative computations on multisets. We know how to solve this problem! Just add timestamps and frontiers... uh oh.
 
 This has to bottom out somewhere. We need to find a different solution to the frontier computation than the one that produced it in the first place.
 
-What could go wrong if we just applied changes in some random order?
+Suppose we just kept a list of changes to frontiers and applied them one by one to downstream frontiers. What could go wrong?
 
 We can get into trouble when the graph of changes in a loop becomes self-supporting. Suppose we have a situation like:
 
@@ -268,10 +269,10 @@ node C frontier:
 (0, 0) => 1
 ```
 
-If we advance the input it will produce these changes:
+If we advance the input node A it will produce these changes:
 
 ```
-pending changes
+pending changes:
 ((0, 0), -1) at A
 ((1, 0), +1) at A
 ```
@@ -289,7 +290,7 @@ node C frontier:
 (1, 0) => 1
 ```
 
-But here is what can happen if we do this naively. First we process `((0,0), -1) at A`. This queues a change for B.
+But here is what can happen if we do this naively. First we process `((0,0), -1) at A`. This changes the frontier at A, producing a change that needs to be applied downstream at B.
 
 ```
 pending changes:
@@ -305,7 +306,7 @@ node C frontier:
 (0, 0) => 1
 ```
 
-Suppose we process `((0, 0), -1) at B` at B next. B can see that the frontier from A is now empty, and the frontier from C contains `(0, 1) => 1` (after passing through the timestamp_increment). So the frontier at B should update to `(0, 1) => 1`.
+Suppose we process `((0, 0), -1) at B` at B next. B can see that the frontier from A is now empty, and the frontier from C contains `(0, 0) => 1`. So the frontier at B should update to `(0, 1) => 1` to reflect the fact that message with timestamp `(0,0)` might come from C and pass through the `timestamp_increment`.
 
 ```
 pending changes:
