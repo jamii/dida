@@ -18,24 +18,12 @@ pub fn assert(condition: bool, comptime message: []const u8, args: anytype) void
     if (!condition) panic(message, args);
 }
 
-pub fn TODO() noreturn {
-    panic("TODO", .{});
-}
-
 pub fn DeepHashMap(comptime K: type, comptime V: type) type {
     return std.HashMap(K, V, dida.meta.DeepHashContext(K), std.hash_map.DefaultMaxLoadPercentage);
 }
 
 pub fn DeepHashSet(comptime K: type) type {
     return DeepHashMap(K, void);
-}
-
-pub fn dump(thing: anytype) void {
-    const held = std.debug.getStderrMutex().acquire();
-    defer held.release();
-    const my_stderr = std.io.getStdErr().writer();
-    dida.meta.dumpInto(my_stderr, 0, thing) catch return;
-    my_stderr.writeAll("\n") catch return;
 }
 
 pub fn format(allocator: *Allocator, comptime fmt: []const u8, args: anytype) ![]const u8 {
@@ -54,4 +42,17 @@ pub fn ptrToSlice(comptime T: type, input: *const T) []const T {
 pub fn last(comptime T: type, slice: []const T) T {
     assert(slice.len > 0, "Tried to take last item of a 0-length slice", .{});
     return slice[slice.len - 1];
+}
+
+pub fn TODO() noreturn {
+    panic("TODO", .{});
+}
+
+// This is only for debugging
+pub fn dump(thing: anytype) void {
+    const held = std.debug.getStderrMutex().acquire();
+    defer held.release();
+    const my_stderr = std.io.getStdErr().writer();
+    dida.meta.dumpInto(my_stderr, 0, thing) catch return;
+    my_stderr.writeAll("\n") catch return;
 }

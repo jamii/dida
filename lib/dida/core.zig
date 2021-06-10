@@ -86,16 +86,6 @@ pub const Timestamp = struct {
         }
         return .eq;
     }
-
-    pub fn dumpInto(writer: anytype, indent: u32, self: Timestamp) anyerror!void {
-        try writer.writeAll("T[");
-        for (self.coords) |coord, i| {
-            try std.fmt.format(writer, "{}", .{coord});
-            if (i != self.coords.len - 1)
-                try writer.writeAll(", ");
-        }
-        try writer.writeAll("]");
-    }
 };
 
 pub const Frontier = struct {
@@ -471,28 +461,6 @@ pub const NodeState = union(enum) {
         // * Take the leastUpperBound of the timestamps of every possible subset of changes in the input node.
         // * Filter out timestamps that are before the output frontier of this node.
         pending_timestamps: DeepHashSet(Timestamp),
-
-        pub fn dumpInto(writer: anytype, indent: u32, self: DistinctState) anyerror!void {
-            try writer.writeAll("DistinctState{\n");
-
-            try writer.writeByteNTimes(' ', indent + 4);
-            try writer.writeAll("index:");
-            try dida.meta.dumpInto(writer, indent + 8, self.index);
-            try writer.writeAll(",\n");
-
-            try writer.writeByteNTimes(' ', indent + 4);
-            try writer.writeAll("pending_timestamps: [\n");
-            {
-                var iter = self.pending_timestamps.iterator();
-                while (iter.next()) |entry| {
-                    try writer.writeByteNTimes(' ', indent + 8);
-                    try dida.meta.dumpInto(writer, indent + 12, entry.key_ptr.*);
-                    try writer.writeAll(",\n");
-                }
-            }
-            try writer.writeByteNTimes(' ', indent + 4);
-            try writer.writeAll("],\n");
-        }
     };
 
     pub fn init(allocator: *Allocator, node_spec: NodeSpec) NodeState {
@@ -1171,70 +1139,5 @@ pub const Shard = struct {
 
     pub fn popOutput(self: *Shard, node: Node) ?ChangeBatch {
         return self.node_states[node.id].Output.unpopped_change_batches.popOrNull();
-    }
-
-    fn dumpInto(writer: anytype, indent: u32, self: Shard) anyerror!void {
-        try writer.writeAll("Shard{\n");
-
-        for (self.graph.node_specs) |node_spec, node_id| {
-            try writer.writeByteNTimes(' ', indent + 4);
-            try std.fmt.format(writer, "{}: {{\n", .{node_id});
-
-            try writer.writeByteNTimes(' ', indent + 8);
-            try writer.writeAll("spec: ");
-            try dida.meta.dumpInto(writer, indent + 8, node_spec);
-            try writer.writeAll(",\n");
-
-            try writer.writeByteNTimes(' ', indent + 8);
-            try writer.writeAll("state: ");
-            try dida.meta.dumpInto(writer, indent + 8, self.node_states[node_id]);
-            try writer.writeAll(",\n");
-
-            try writer.writeByteNTimes(' ', indent + 8);
-            try writer.writeAll("support: {\n");
-            {
-                var iter = self.node_frontiers[node_id].support.iterator();
-                while (iter.next()) |entry| {
-                    try writer.writeByteNTimes(' ', indent + 12);
-                    try dida.meta.dumpInto(writer, indent + 12, entry.key_ptr.*);
-                    try std.fmt.format(writer, ": {},\n", .{entry.value_ptr.*});
-                }
-            }
-            try writer.writeByteNTimes(' ', indent + 8);
-            try writer.writeAll("},\n");
-
-            try writer.writeByteNTimes(' ', indent + 8);
-            try writer.writeAll("frontier: {\n");
-            {
-                var iter = self.node_frontiers[node_id].frontier.timestamps.iterator();
-                while (iter.next()) |entry| {
-                    try writer.writeByteNTimes(' ', indent + 12);
-                    try dida.meta.dumpInto(writer, indent + 12, entry.key_ptr.*);
-                    try writer.writeAll(",\n");
-                }
-            }
-            try writer.writeByteNTimes(' ', indent + 8);
-            try writer.writeAll("},\n");
-
-            try writer.writeByteNTimes(' ', indent + 8);
-            try writer.writeAll("unprocessed_change_batches: [\n");
-            {
-                for (self.unprocessed_change_batches.items) |change_batch_at_node_input| {
-                    if (change_batch_at_node_input.node_input.node.id == node_id) {
-                        try writer.writeByteNTimes(' ', indent + 12);
-                        try dida.meta.dumpInto(writer, indent + 12, change_batch_at_node_input.change_batch);
-                        try writer.writeAll(",\n");
-                    }
-                }
-            }
-            try writer.writeByteNTimes(' ', indent + 8);
-            try writer.writeAll("],\n");
-
-            try writer.writeByteNTimes(' ', indent + 4);
-            try writer.writeAll("},\n");
-        }
-
-        try writer.writeByteNTimes(' ', indent);
-        try writer.writeAll("}\n");
     }
 };
