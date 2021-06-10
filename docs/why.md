@@ -127,7 +127,7 @@ assert(
 )
 ```
 
-This means that ncremental operations must now calculate the correct timestamp for their outputs. For most operations the output timestamp is the same as the input timestamp:
+This means that incremental operations must now calculate the correct timestamp for their outputs. For most operations the output timestamp is the same as the input timestamp:
 
 ``` js
 function incremental_sum(changes) {
@@ -185,56 +185,33 @@ TODO this whole section really needs the interactive examples in order to make a
 
 Iterative computations show up all over the place eg recursive CTEs in sql, recursive rules in datalog, graph algorithms like pagerank, dataflow analsis in compilers. Without iterative computation our system would be very limited, not even Turing-complete. But combining interative computations with the ability to delete inputs makes for a fundamentally difficult incremental update problem. This problem has been well studied in the context of datalog and there are no completely satisfying solutions
 
-In dida and differential dataflow, iterative computations are expressed as __fixpoints__, where some computation is repeatedly applied to some collections until they stop changing:
+In dida and differential dataflow, iterative computations are expressed by taking a set of starting collections and repeatedly applying some transformation to them.
 
 ``` js
-function fixpoint(collections, f) {
+function loop(f, collections) {
     while (true) {
-        const new_collections = f(collections);
-        if (collections == new_collections) {
-            return collections;
-        } else {
-            collections = new_collections;
-        }
+        collections = f(collections);
     }
+    return collections;
 }
 ```
 
-Most of the iterative computations we're interested in can be expressed directly as fixpoints, but fixpoints can also be used to emulate traditional imperative loops by including a loop counter as one of the collections and only changing the other collections when the loop counter is below the desired limit.
-        
-``` js
-function loop(collections, f, max_i) {
-    return fixpoint(
-        {
-            i: [(0,)],
-            ...collections,
-        },
-        function (collections) {
-            if (collections.i < max_i) {
-                collections.i[0][0] += 1;
-                return f(collections);
-            } else {
-                return collections;
-            }
-        }
-    );
-}
-```
+As written above, this computation would never terminate. But since we're using incremental operations we only have to calculate the change between each iteration. So as long as the collections only change at a finite number of iterations, the incremental version will terminate.
 
-The first impact of fixpoints is that timestamps become more complicated. Previously, for each intermediate change we only had to track which input changes produced it. Now when we're dealing with a change inside the fixpoint we also have to track which iteration of the fixpoint produced it. We can do this by adding an extra coordinate to the timestamp.
+The first impact of adding loops is that timestamps become more complicated. Previously, for each change produced by a node we only had to track which input changes produced it. Now when we're dealing with a change inside the loop we also have to track of which loop iteration produced it. We can do this by adding an extra coordinate to the timestamp.
 
 ``` js
-// Inserted one copy of "alice" at input time 12 on the 7th interation of the fixpoint
+// Inserted one copy of "alice" at input time 12 on the 7th interation of the loop
 ("alice", (12, 7), +1)
 ```
 
-If we need to nest fixpoints, we just keep adding more coordinates. At the output of each fixpoint we strip off the extra timestamp coordinate so that the rest of the system doesn't see the internal state of the fixpoint.
+If we need to nest loops, we just keep adding more coordinates. At the output nodes of each loop we strip off the extra timestamp coordinate so that the rest of the system doesn't see the internal state of the loop.
 
 Previously we could get the state of a collection as of any point in time T by summing up all the changes which have timestamps <= T. But what does `<=` mean when our timestamps have multiple coordinates? 
 
 There isn't a unique answer to this. We can choose various different orderings for our timestamps and they will produce different incremental operations. But when calculating the change at time T an incremental operation can only make use of changes with timestamps <= T. So we should choose an ordering that gives as much useful information as possible and removes as much useless information at possible.
 
-Suppose we are looking at, say, the 3rd iteration of a fixpoint for input time 7. If the changes between times are small, then the 3rd iteration at input time 7 will probably look a lot like the 3rd iteration at input time 6. And the 3rd iteration of any fixpoint certainly needs to know about what happened in the 2nd iteration. But it probably can't make use of any information about the 4th iteration at time 6. So we should have `(6,3) < (7,3)` and `(7,2) < (7,3)` but not `(6, 4) < (7, 3)`. This suggests that the correct rule is that a timestamp T0 is less than or equal to timestamp T1 when all of the coordinates of T0 are less than or equal to the coordinates of T1. I've been calling this the __causal order__, because it mirrors the possible causality between changes.
+Suppose we are looking at, say, the 3rd iteration of a loop for input time 7. If the changes between times are small, then the 3rd iteration at input time 7 will probably look a lot like the 3rd iteration at input time 6. And the 3rd iteration of any loop certainly needs to know about what happened in the 2nd iteration. But it probably can't make use of any information about the 4th iteration at time 6. So we should have `(6,3) < (7,3)` and `(7,2) < (7,3)` but not `(6,4) < (7,3)`. This suggests that the correct rule is that a timestamp T0 is less than or equal to timestamp T1 when all of the coordinates of T0 are less than or equal to the coordinates of T1. I've been calling this the __causal order__, because it mirrors the possible causality between changes.
 
 Apart from this new definition of `<=`, the rule for incremental operations remains unchanged:
 
@@ -246,7 +223,7 @@ assert(
 )
 ```
 
-This change is enough to make fixpoints just work. Most operations can process changes in any old order and the few that need to wait can rely on frontiers. Frontiers also lets us know when a fixpoint has finished for a given input time - that input time will vanish from the frontier of the fixpoints output nodes once no more changes can be produced.
+This change is enough to make loops just work. Most operations can process changes in any old order and the few that need to wait can rely on frontiers. Frontiers also lets us know when a loop has finished for a given input time - that input time will vanish from the frontier of the loops output nodes once no more changes can be produced.
 
 Frontiers however now become more complicated.
 
@@ -274,7 +251,7 @@ This has to bottom out somewhere. We need to find a different solution to the fr
 
 What could go wrong if we just applied changes in some random order?
 
-We can get into trouble when the graph of changes in a fixpoint becomes self-supporting. Suppose we have a situation like:
+We can get into trouble when the graph of changes in a loop becomes self-supporting. Suppose we have a situation like:
 
 ``` js
 node A = input
@@ -382,7 +359,7 @@ With those constraints in place, we can use the following ordering:
 1 Process changes with earlier timestamps first.
 2 If two changes have the same timestamp, process the change that is earlier in the graph first.
 
-(The presence of multiple fixpoints actually makes the ordering a little more subtle - see [orderPointstamps](https://github.com/jamii/dida/search?q=%22fn+orderPointstamps%22) for the gory details.)
+(The presence of multiple loops actually makes the ordering a little more subtle - see [orderPointstamps](https://github.com/jamii/dida/search?q=%22fn+orderPointstamps%22) for the gory details.)
 
 So long as we process outstanding changes in this order, we can guarantee that our frontier updates algorithm will terminate.
 
