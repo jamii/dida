@@ -1,7 +1,7 @@
 // TODO this whole file is just speculative atm
 
 const std = @import("std");
-const dida = @import("../core/dida.zig");
+const dida = @import("../lib/dida.zig");
 
 var gpa = std.heap.GeneralPurposeAllocator(.{
     .safety = true,
@@ -16,25 +16,27 @@ pub fn main() !void {
         _ = gpa.detectLeaks();
     }
 
-    const sugar = dida.sugar.Sugar.init(allocator);
-    const main = sugar.main();
+    var sugar = dida.sugar.Sugar.init(allocator);
 
-    const edges = main.input();
-    const reach = main.loop().loopNode();
+    const edges = sugar.input();
+    const loop = sugar.loop();
+    const edges_1 = loop.importNode(edges);
+    const reach = loop.loopNode();
     reach.fixpoint(reach
         .index()
-        .distinct()
-        .join(edges.project(.{ 1, 0 }).index(), 1)
-        .project(.{ 3, 1 }));
-    const out = reach.output();
+        .join(edges_1.project(.{ 1, 0 }).index(), 1)
+        .project(.{ 3, 1 })
+        .union_(edges_1)
+        .index().distinct());
+    const out = loop.exportNode(reach).output();
 
     sugar.build();
 
-    try edges.push(.{ .{ "a", "b" }, 1, .{0} });
-    try edges.push(.{ .{ "b", "c" }, 1, .{0} });
-    try edges.push(.{ .{ "b", "d" }, 1, .{0} });
-    try edges.push(.{ .{ "c", "a" }, 1, .{0} });
-    try edges.push(.{ .{ "b", "c" }, -1, .{1} });
+    try edges.push(.{ .{ "a", "b" }, .{0}, 1 });
+    try edges.push(.{ .{ "b", "c" }, .{0}, 1 });
+    try edges.push(.{ .{ "b", "d" }, .{0}, 1 });
+    try edges.push(.{ .{ "c", "a" }, .{0}, 1 });
+    try edges.push(.{ .{ "b", "c" }, .{1}, -1 });
     try edges.flush();
 
     try edges.advance(.{1});
@@ -50,4 +52,6 @@ pub fn main() !void {
     while (out.pop()) |change_batch| {
         dida.common.dump(change_batch);
     }
+
+    //dida.common.dump(sugar);
 }

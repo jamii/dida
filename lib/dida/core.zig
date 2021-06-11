@@ -167,7 +167,7 @@ pub const ChangeBatchBuilder = struct {
 
         // Coalesce changes with identical rows and timestamps
         var prev_i: usize = 0;
-        for (self.changes.items[1..]) |change, i| {
+        for (self.changes.items[1..]) |change| {
             const prev_change = &self.changes.items[prev_i];
             if (dida.meta.deepEqual(prev_change.row, change.row) and dida.meta.deepEqual(prev_change.timestamp, change.timestamp)) {
                 prev_change.diff += change.diff;
@@ -178,7 +178,8 @@ pub const ChangeBatchBuilder = struct {
                 }
             }
         }
-        self.changes.shrinkAndFree(prev_i + 1);
+        if (self.changes.items[prev_i].diff != 0) prev_i += 1;
+        self.changes.shrinkAndFree(prev_i);
         if (self.changes.items.len == 0) return null;
 
         var lower_bound = Frontier.initEmpty(self.allocator);
@@ -1022,9 +1023,11 @@ pub const Shard = struct {
 
     /// Report that the input frontier at `node_input` has changed, so the output frontier might need updating.
     fn queueFrontierUpdate(self: *Shard, node_input: NodeInput, timestamp: Timestamp, diff: isize) !void {
+        const node_spec = self.graph.node_specs[node_input.node.id];
+        const input_node = node_spec.getInputs()[node_input.input_ix]
         var entry = try self.unprocessed_frontier_updates.getOrPutValue(.{
             .node_input = node_input,
-            .subgraphs = self.graph.node_subgraphs[node_input.node.id],
+            .subgraphs = self.graph.node_subgraphs[input_node.id],
             .timestamp = timestamp,
         }, 0);
         entry.value_ptr.* += diff;

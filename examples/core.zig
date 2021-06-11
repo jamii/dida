@@ -82,11 +82,11 @@ pub fn main() !void {
     const bc = dida.core.Row{ .values = &[_]dida.core.Value{ .{ .String = "b" }, .{ .String = "c" } } };
     const bd = dida.core.Row{ .values = &[_]dida.core.Value{ .{ .String = "b" }, .{ .String = "d" } } };
     const ca = dida.core.Row{ .values = &[_]dida.core.Value{ .{ .String = "c" }, .{ .String = "a" } } };
-    try shard.pushInput(edges, .{ .row = ab, .diff = 1, .timestamp = timestamp0 });
-    try shard.pushInput(edges, .{ .row = bc, .diff = 1, .timestamp = timestamp0 });
-    try shard.pushInput(edges, .{ .row = bd, .diff = 1, .timestamp = timestamp0 });
-    try shard.pushInput(edges, .{ .row = ca, .diff = 1, .timestamp = timestamp0 });
-    try shard.pushInput(edges, .{ .row = bc, .diff = -1, .timestamp = timestamp1 });
+    try shard.pushInput(edges, .{ .row = ab, .timestamp = timestamp0, .diff = 1 });
+    try shard.pushInput(edges, .{ .row = bc, .timestamp = timestamp0, .diff = 1 });
+    try shard.pushInput(edges, .{ .row = bd, .timestamp = timestamp0, .diff = 1 });
+    try shard.pushInput(edges, .{ .row = ca, .timestamp = timestamp0, .diff = 1 });
+    try shard.pushInput(edges, .{ .row = bc, .timestamp = timestamp1, .diff = -1 });
     try shard.flushInput(edges);
 
     try shard.advanceInput(edges, timestamp1);

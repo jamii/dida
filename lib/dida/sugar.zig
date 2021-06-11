@@ -17,7 +17,7 @@ pub const Sugar = struct {
     pub fn init(allocator: *Allocator) Sugar {
         return .{
             .allocator = allocator,
-            .state = .{ .Building = assert_ok(dida.core.GraphBuilder.init(allocator)) },
+            .state = .{ .Building = dida.core.GraphBuilder.init(allocator) },
         };
     }
 
@@ -29,25 +29,25 @@ pub const Sugar = struct {
         };
     }
 
-    pub fn main(self: *Sugar) Subgraph {
-        const builder = &self.state.Building;
-        const inner = assert_ok(builder.addSubgraph(self.inner));
-        return Subgraph{
-            .sugar = self,
-            .inner = inner,
-        };
-    }
-
     pub fn build(self: *Sugar) void {
-        const graph = assert_ok(self.allocator.create(Graph));
+        const graph = assert_ok(self.allocator.create(dida.core.Graph));
         graph.* = assert_ok(self.state.Building.finishAndReset());
-        self.state = .{ .Running = dida.core.Shard.init(self.allocator, &self.graph) };
+        self.state = .{ .Running = assert_ok(dida.core.Shard.init(self.allocator, graph)) };
     }
 
-    pub fn doAllWork(self: *Sugar) void {
+    pub fn doAllWork(self: *Sugar) !void {
         const shard = &self.state.Running;
         while (shard.hasWork())
             try shard.doWork();
+    }
+
+    pub fn loop(self: *Sugar) Subgraph {
+        const builder = &self.state.Building;
+        const new_inner = assert_ok(builder.addSubgraph(.{ .id = 0 }));
+        return Subgraph{
+            .sugar = self,
+            .inner = new_inner,
+        };
     }
 };
 
@@ -57,7 +57,7 @@ pub const Subgraph = struct {
 
     pub fn loop(self: Subgraph) Subgraph {
         const builder = &self.sugar.state.Building;
-        const new_inner = builder.addSubgraph(self.inner);
+        const new_inner = assert_ok(builder.addSubgraph(self.inner));
         return Subgraph{
             .sugar = self.sugar,
             .inner = new_inner,
@@ -66,29 +66,67 @@ pub const Subgraph = struct {
 
     pub fn loopNode(self: Subgraph) Node(.TimestampIncrement) {
         const builder = &self.sugar.state.Building;
-        const node_inner = assert_ok(builder.addNode(self.inner, .TimestampIncrement{ .input = null }));
+        const node_inner = assert_ok(builder.addNode(
+            self.inner,
+            .{ .TimestampIncrement = .{ .input = null } },
+        ));
         return Node(.TimestampIncrement){
+            .sugar = self.sugar,
+            .inner = node_inner,
+        };
+    }
+
+    // TODO would be nice to automatically add TimestampPush/Pop in node methods as needed instead of needing import/export
+    // TODO would also be nice to cache repeated calls
+
+    pub fn importNode(self: Subgraph, node: anytype) Node(.TimestampPush) {
+        const builder = &self.sugar.state.Building;
+        assert(
+            builder.node_subgraphs.items[node.inner.id].id == builder.subgraph_parents.items[self.inner.id - 1].id,
+            "Can only import from parent subgraph into child subgraph",
+            .{},
+        );
+        const node_inner = assert_ok(builder.addNode(
+            self.inner,
+            .{ .TimestampPush = .{ .input = node.inner } },
+        ));
+        return Node(.TimestampPush){
+            .sugar = self.sugar,
+            .inner = node_inner,
+        };
+    }
+
+    pub fn exportNode(self: Subgraph, node: anytype) Node(.TimestampPop) {
+        const builder = &self.sugar.state.Building;
+        assert(
+            builder.node_subgraphs.items[node.inner.id].id == self.inner.id,
+            "Can only export from child subgraph into parent subgraph",
+            .{},
+        );
+        const node_inner = assert_ok(builder.addNode(
+            builder.subgraph_parents.items[self.inner.id - 1],
+            .{ .TimestampPop = .{ .input = node.inner } },
+        ));
+        return Node(.TimestampPop){
             .sugar = self.sugar,
             .inner = node_inner,
         };
     }
 };
 
-pub fn Node(comptime tag: std.meta.TagType(dida.core.NodeSpec)) type {
+pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
     return struct {
         sugar: *Sugar,
         inner: dida.core.Node,
-        pub const tag = tag;
+        pub const tag = tag_;
 
         const Self = @This();
 
         // TODO would be nicer to generate the decls for these methods so they don't appear in autocomplete (https://github.com/ziglang/zig/issues/6709)
 
-        // TODO automatically add TimestampPush/Pop as needed
-
         pub fn index(self: Self) Node(.Index) {
             const builder = &self.sugar.state.Building;
-            const subgraph = builder.node_subgraphs[self.inner.id];
+            const subgraph = builder.node_subgraphs.items[self.inner.id];
             const new_inner = assert_ok(self.sugar.state.Building.addNode(
                 subgraph,
                 .{ .Index = .{ .input = self.inner } },
@@ -104,7 +142,7 @@ pub fn Node(comptime tag: std.meta.TagType(dida.core.NodeSpec)) type {
                 @compileError("Can only call distinct on nodes which have indexes (Index, Distinct), not " ++ tag);
 
             const builder = &self.sugar.state.Building;
-            const subgraph = builder.node_subgraphs[self.inner.id];
+            const subgraph = builder.node_subgraphs.items[self.inner.id];
             const new_inner = assert_ok(self.sugar.state.Building.addNode(
                 subgraph,
                 .{ .Distinct = .{ .input = self.inner } },
@@ -118,11 +156,11 @@ pub fn Node(comptime tag: std.meta.TagType(dida.core.NodeSpec)) type {
         pub fn join(self: Self, other: anytype, key_columns: usize) Node(.Join) {
             if (!comptime (dida.core.NodeSpec.tagHasIndex(tag)))
                 @compileError("Can only call join on nodes which have indexes (Index, Distinct), not " ++ tag);
-            if (!comptime (dida.core.NodeSpec.tagHasIndex(other.tag)))
-                @compileError("Can only call join on nodes which have indexes (Index, Distinct), not " ++ other.tag);
+            if (!comptime (dida.core.NodeSpec.tagHasIndex(@TypeOf(other).tag)))
+                @compileError("Can only call join on nodes which have indexes (Index, Distinct), not " ++ @TypeOf(other).tag);
 
             const builder = &self.sugar.state.Building;
-            const subgraph = builder.node_subgraphs[self.inner.id];
+            const subgraph = builder.node_subgraphs.items[self.inner.id];
             const new_inner = assert_ok(self.sugar.state.Building.addNode(
                 subgraph,
                 .{ .Join = .{
@@ -136,13 +174,13 @@ pub fn Node(comptime tag: std.meta.TagType(dida.core.NodeSpec)) type {
             };
         }
 
-        pub fn map(self: Self, mapper: dida.core.MapSpec.Mapper) Node(.Map) {
+        pub fn map(self: Self, mapper: *dida.core.NodeSpec.MapSpec.Mapper) Node(.Map) {
             const builder = &self.sugar.state.Building;
-            const subgraph = builder.node_subgraphs[self.inner.id];
+            const subgraph = builder.node_subgraphs.items[self.inner.id];
             const new_inner = assert_ok(self.sugar.state.Building.addNode(
                 subgraph,
                 .{ .Map = .{
-                    .inputs = .{ self.inner, other.inner },
+                    .input = self.inner,
                     .mapper = mapper,
                 } },
             ));
@@ -153,23 +191,43 @@ pub fn Node(comptime tag: std.meta.TagType(dida.core.NodeSpec)) type {
         }
 
         pub fn project(self: Self, columns: anytype) Node(.Map) {
-            return self.projectInner(coerceAnonToSlice(self.allocator, usize, columns));
+            return self.projectInner(coerceAnonToSlice(self.sugar.allocator, usize, columns));
         }
 
         fn projectInner(self: Self, columns: []usize) Node(.Map) {
-            return self.map(ProjectMapper{ .allocator = self.sugar.allocator, .columns = columns, .mapper = .{ .mapFn = ProjectMapper.map } });
+            const project_mapper = assert_ok(self.sugar.allocator.create(ProjectMapper));
+            project_mapper.* = ProjectMapper{
+                .allocator = self.sugar.allocator,
+                .columns = columns,
+                .mapper = .{ .map_fn = ProjectMapper.map },
+            };
+            return self.map(&project_mapper.mapper);
+        }
+
+        // TODO shame this is a reserved name, need to think of a different name
+        pub fn union_(self: Self, other: anytype) Node(.Union) {
+            const builder = &self.sugar.state.Building;
+            const subgraph = builder.node_subgraphs.items[self.inner.id];
+            const new_inner = assert_ok(builder.addNode(
+                subgraph,
+                .{ .Union = .{ .inputs = .{ self.inner, other.inner } } },
+            ));
+            return .{
+                .sugar = self.sugar,
+                .inner = new_inner,
+            };
         }
 
         pub fn fixpoint(self: Self, future: anytype) void {
-            if (!tag == .TimestampIncrement)
-                @compileError("Can only call fixpoint on TimestampIncrement nodes, not {}", .{tag});
+            if (tag != .TimestampIncrement)
+                @compileError("Can only call fixpoint on TimestampIncrement nodes, not " ++ tag);
             const builder = &self.sugar.state.Building;
             builder.connectLoop(future.inner, self.inner);
         }
 
         pub fn output(self: Self) Node(.Output) {
             const builder = &self.sugar.state.Building;
-            const subgraph = builder.node_subgraphs[self.inner.id];
+            const subgraph = builder.node_subgraphs.items[self.inner.id];
             const new_inner = assert_ok(self.sugar.state.Building.addNode(
                 subgraph,
                 .{ .Output = .{ .input = self.inner } },
@@ -181,55 +239,85 @@ pub fn Node(comptime tag: std.meta.TagType(dida.core.NodeSpec)) type {
         }
 
         pub fn push(self: Self, change: anytype) !void {
-            try self.pushInner(coerceAnonToChange(change));
+            try self.pushInner(coerceAnonTo(self.sugar.allocator, dida.core.Change, change));
         }
 
         fn pushInner(self: Self, change: dida.core.Change) !void {
-            if (!tag == .Input)
-                @compileError("Can only call push on Input nodes, not {}", .{tag});
+            if (tag != .Input)
+                @compileError("Can only call push on Input nodes, not " ++ tag);
             const shard = &self.sugar.state.Running;
             try shard.pushInput(self.inner, change);
         }
 
         pub fn flush(self: Self) !void {
-            if (!tag == .Input)
-                @compileError("Can only call push on Input nodes, not {}", .{tag});
+            if (tag != .Input)
+                @compileError("Can only call push on Input nodes, not " ++ tag);
             const shard = &self.sugar.state.Running;
             try shard.flushInput(self.inner);
         }
 
         pub fn advance(self: Self, timestamp: anytype) !void {
-            try self.advanceInner(coerceAnonToTimestamp(timestamp));
+            try self.advanceInner(coerceAnonTo(self.sugar.allocator, dida.core.Timestamp, timestamp));
         }
 
         pub fn advanceInner(self: Self, timestamp: dida.core.Timestamp) !void {
-            if (!tag == .Input)
-                @compileError("Can only call push on Input nodes, not {}", .{tag});
+            if (tag != .Input)
+                @compileError("Can only call push on Input nodes, not " ++ tag);
             const shard = &self.sugar.state.Running;
             try shard.advanceInput(self.inner, timestamp);
         }
 
-        pub fn pop(self: Self) !dida.core.ChangeBatch {
-            if (!tag == .Output)
-                @compileError("Can only call push on Input nodes, not {}", .{tag});
+        pub fn pop(self: Self) ?dida.core.ChangeBatch {
+            if (tag != .Output)
+                @compileError("Can only call push on Input nodes, not " ++ tag);
             const shard = &self.sugar.state.Running;
             return shard.popOutput(self.inner);
         }
     };
 }
 
-fn coerceAnonToSlice(allocator: *Allocator, comptime Elem: type, columns: anytype) []Elem {
-    const slice = assert_ok(allocator.alloc(Elem, columns.len));
-    for (slice) |*elem, i| elem.* = columns[i];
+fn coerceAnonToSlice(allocator: *Allocator, comptime Elem: type, anon: anytype) []Elem {
+    const slice = assert_ok(allocator.alloc(Elem, anon.len));
+    comptime var i: usize = 0;
+    inline while (i < anon.len) : (i += 1) {
+        slice[i] = coerceAnonTo(allocator, Elem, anon[i]);
+    }
     return slice;
+}
+
+fn coerceAnonTo(allocator: *Allocator, comptime T: type, anon: anytype) T {
+    switch (T) {
+        dida.core.Timestamp => {
+            return .{ .coords = coerceAnonToSlice(allocator, usize, anon) };
+        },
+        dida.core.Change => {
+            return .{
+                .row = coerceAnonTo(allocator, dida.core.Row, anon[0]),
+                .timestamp = coerceAnonTo(allocator, dida.core.Timestamp, anon[1]),
+                .diff = anon[2],
+            };
+        },
+        dida.core.Row => {
+            return .{ .values = coerceAnonToSlice(allocator, dida.core.Value, anon) };
+        },
+        dida.core.Value => {
+            switch (@typeInfo(@TypeOf(anon))) {
+                .Int => return .{ .Number = anon },
+                .Pointer => return .{ .String = anon },
+                else => @compileError("Don't know how to coerce " ++ @typeName(anon) ++ " to value"),
+            }
+        },
+        usize => return anon,
+        else => @compileError("Don't know how to coerce anon to " ++ @typeName(T)),
+    }
 }
 
 const ProjectMapper = struct {
     allocator: *Allocator,
     columns: []usize,
-    mapper: dida.core.NodeSpec.Map.Mapper,
+    mapper: dida.core.NodeSpec.MapSpec.Mapper,
 
-    fn map(self: *dida.core.NodeSpec.Map.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
+    fn map(self: *dida.core.NodeSpec.MapSpec.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
         const project_mapper = @fieldParentPtr(ProjectMapper, "mapper", self);
         var output_values = assert_ok(project_mapper.allocator.alloc(dida.core.Value, project_mapper.columns.len));
         for (output_values) |*output_value, i| {
