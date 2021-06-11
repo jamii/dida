@@ -1,8 +1,41 @@
+//! The core of dida handles all the actual computation.
+//! It exposes an api that is maximally flexible but also verbose and error-prone.
+//! See ./sugar.zig for a friendlier layer on top of the core.
+
 usingnamespace @import("./common.zig");
 
-// TODO Its currently possible to remove from HashMap without invalidating interator which would simplify some of the code below. But might not be true forever.
+/// The basic unit of data in dida. 
+/// Every operation takes rows as inputs and produces rows as outputs.
+// TODO This will eventually be replaced by raw bytes plus an optional type tag, so that users of dida can use whatever values and serde scheme they want.
+pub const Row = struct {
+    values: []const Value,
+};
+pub const Value = union(enum) {
+    String: []const u8,
+    Number: f64,
+};
 
-// Field names are weird to be consistent with std.math.Order
+/// A [bag](https://en.wikipedia.org/wiki/Multiset) of rows.
+/// The dataflow is a graph of operations, each of which takes one or more bags of rows as inputs and produces a bag of rows as outputs.
+pub const Bag = struct {
+    // TODO This should probably be usize? Can it ever be temporarily negative?
+    rows: DeepHashMap(Row, isize),
+
+    pub fn init(allocator: *Allocator) Bag {
+        return .{
+            .rows = DeepHashMap(Row, isize).init(allocator),
+        };
+    }
+
+    pub fn update(self: *Bag, row: Row, diff: isize) !void {
+        const entry = try self.rows.getOrPutValue(row, 0);
+        entry.value_ptr.* += diff;
+        _ = if (entry.value_ptr.* == 0) self.rows.remove(row);
+    }
+};
+
+/// The result of comparing two elements in a [partially ordered set](https://en.wikipedia.org/wiki/Partially_ordered_set).
+/// (Field names are weird to be consistent with std.math.Order)
 pub const PartialOrder = enum {
     lt,
     eq,
@@ -17,6 +50,11 @@ pub const PartialOrder = enum {
     }
 };
 
+/// > Time is what prevents everything from happening all at once.
+///
+/// Timestamps represent the logical time something happened.
+/// The first coord represents the logical time in the dataflow as a whole.
+/// Each extra coord represent the iteration number within some enclosing loop in the dataflow (outermost loop first, innermost loop last).
 pub const Timestamp = struct {
     coords: []const usize,
 
@@ -45,16 +83,8 @@ pub const Timestamp = struct {
         return Timestamp{ .coords = new_coords };
     }
 
-    pub fn leastUpperBound(allocator: *Allocator, self: Timestamp, other: Timestamp) !Timestamp {
-        assert(self.coords.len == other.coords.len, "Tried to compute leastUpperBound of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
-        var output_coords = try allocator.alloc(usize, self.coords.len);
-        for (self.coords) |self_coord, i| {
-            const other_coord = other.coords[i];
-            output_coords[i] = max(self_coord, other_coord);
-        }
-        return Timestamp{ .coords = output_coords };
-    }
-
+    /// A partial ordering on timestamps such that if a change at timestamp A could ever cause a change at timestamp B, then A <= B.
+    /// This is used to process Changes in an order that is guaranteed to converge, and to define the behavior of Frontiers.
     pub fn causalOrder(self: Timestamp, other: Timestamp) PartialOrder {
         assert(self.coords.len == other.coords.len, "Tried to compute causalOrder of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
         var lt: usize = 0;
@@ -74,6 +104,20 @@ pub const Timestamp = struct {
         return .none;
     }
 
+    /// Returns the earliest timestamp that is greater than both the inputs (in the causal ordering).
+    pub fn leastUpperBound(allocator: *Allocator, self: Timestamp, other: Timestamp) !Timestamp {
+        assert(self.coords.len == other.coords.len, "Tried to compute leastUpperBound of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
+        var output_coords = try allocator.alloc(usize, self.coords.len);
+        for (self.coords) |self_coord, i| {
+            const other_coord = other.coords[i];
+            output_coords[i] = max(self_coord, other_coord);
+        }
+        return Timestamp{ .coords = output_coords };
+    }
+
+    /// A total ordering on timestamps that is compatible with the causal order. 
+    /// ie If `a.causalOrder(b) != .none` then `a.causalOrder(b) == a.lexicalOrder(b)`. 
+    /// This is useful if you want to sort Timestamps by causal order - standard sorting algorithms don't always work well on partial orders.
     pub fn lexicalOrder(self: Timestamp, other: Timestamp) std.math.Order {
         assert(self.coords.len == other.coords.len, "Tried to compute lexicalOrder of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
         for (self.coords) |self_coord, i| {
@@ -88,6 +132,70 @@ pub const Timestamp = struct {
     }
 };
 
+/// Represents a change to some bag in the dataflow.
+/// The count of `row` changed by `diff` at `timestamp`.
+pub const Change = struct {
+    row: Row,
+    timestamp: Timestamp,
+    diff: isize,
+};
+
+/// A helper for building a ChangeBatch.
+/// Append to `changes` as you like and call `finishAndReset` to produce a batch.
+pub const ChangeBatchBuilder = struct {
+    allocator: *Allocator,
+    changes: ArrayList(Change),
+
+    pub fn init(allocator: *Allocator) ChangeBatchBuilder {
+        return ChangeBatchBuilder{
+            .allocator = allocator,
+            .changes = ArrayList(Change).init(allocator),
+        };
+    }
+
+    /// Produce a change batch.
+    /// If the batch would have been empty, return null instead.
+    /// Resets `self` so that it can be used again.
+    pub fn finishAndReset(self: *ChangeBatchBuilder) !?ChangeBatch {
+        if (self.changes.items.len == 0) return null;
+
+        std.sort.sort(Change, self.changes.items, {}, struct {
+            fn lessThan(_: void, a: Change, b: Change) bool {
+                return dida.meta.deepOrder(a, b) == .lt;
+            }
+        }.lessThan);
+
+        // Coalesce changes with identical rows and timestamps
+        var prev_i: usize = 0;
+        for (self.changes.items[1..]) |change, i| {
+            const prev_change = &self.changes.items[prev_i];
+            if (dida.meta.deepEqual(prev_change.row, change.row) and dida.meta.deepEqual(prev_change.timestamp, change.timestamp)) {
+                prev_change.diff += change.diff;
+            } else {
+                if (prev_change.diff != 0) {
+                    prev_i += 1;
+                    self.changes.items[prev_i] = change;
+                }
+            }
+        }
+        self.changes.shrinkAndFree(prev_i + 1);
+        if (self.changes.items.len == 0) return null;
+
+        var lower_bound = Frontier.initEmpty(self.allocator);
+        for (self.changes.items) |change| {
+            var changes_into = ArrayList(FrontierChange).init(self.allocator);
+            try lower_bound.move(.Earlier, change.timestamp, &changes_into);
+        }
+
+        return ChangeBatch{
+            .lower_bound = lower_bound,
+            .changes = self.changes.toOwnedSlice(),
+        };
+    }
+};
+
+/// A frontier represents the earliest timestamps in some set of timestamps (by causal order).
+/// It's used to track progress in the dataflow and also to summarize the contents of a change batch.
 pub const Frontier = struct {
     allocator: *Allocator,
     // Invariant: timestamps don't overlap - for any two timestamps t1 and t2 in timestamps `t1.causalOrder(t2) == .none`
@@ -100,7 +208,9 @@ pub const Frontier = struct {
         };
     }
 
-    pub fn causalOrder(self: Frontier, timestamp: Timestamp) std.math.Order {
+    /// Compares `timestamp` to `self.timestamps`.
+    /// Since the timestamps in the `self.timestamps` are always mututally incomparable, at most one of them will be comparable to `timestamp`. 
+    pub fn causalOrder(self: Frontier, timestamp: Timestamp) PartialOrder {
         var iter = self.timestamps.iterator();
         while (iter.next()) |entry| {
             const order = entry.key_ptr.causalOrder(timestamp);
@@ -111,21 +221,25 @@ pub const Frontier = struct {
                 .none => {},
             }
         }
-        return .gt;
+        return .none;
     }
 
-    pub const Direction = enum { Advance, Retreat };
+    pub const Direction = enum { Later, Earlier };
 
+    /// Mutate `self` to a later (or earlier) frontier.
+    /// Remove any timestamps that are earlier (or later) than `timestamp`.
+    /// Reports any changes to the frontier into `changes_into`.
     pub fn move(self: *Frontier, comptime direction: Direction, timestamp: Timestamp, changes_into: *ArrayList(FrontierChange)) !void {
         assert(changes_into.items.len == 0, "Need to start with an empty changes_into buffer so can use it to remove timestamps", .{});
         var iter = self.timestamps.iterator();
         while (iter.next()) |entry| {
             switch (timestamp.causalOrder(entry.key_ptr.*)) {
-                .eq, if (direction == .Advance) .lt else .gt => {
+                .eq, if (direction == .Later) .lt else .gt => {
+                    // Moved in the wrong direction
                     assert(changes_into.items.len == 0, "Frontier timestamps invariant was broken", .{});
                     return;
                 },
-                if (direction == .Advance) .gt else .lt => {
+                if (direction == .Later) .gt else .lt => {
                     try changes_into.append(.{ .timestamp = entry.key_ptr.*, .diff = -1 });
                 },
                 .none => {},
@@ -138,18 +252,10 @@ pub const Frontier = struct {
         try changes_into.append(.{ .timestamp = timestamp, .diff = 1 });
         try self.timestamps.put(timestamp, {});
     }
-
-    pub fn retreat(self: *Frontier, timestamp: Timestamp) !void {
-        var changes_into = ArrayList(FrontierChange).init(self.allocator);
-        try self.move(.Retreat, timestamp, &changes_into);
-    }
 };
 
-pub const FrontierChange = struct {
-    timestamp: Timestamp,
-    diff: isize,
-};
-
+/// Tracks both a bag of timestamps and the frontier of that bag.
+/// This is used to incrementally compute the frontiers of each node in the graph as the dataflow progresses.
 pub const SupportedFrontier = struct {
     allocator: *Allocator,
     support: DeepHashMap(Timestamp, usize),
@@ -164,6 +270,8 @@ pub const SupportedFrontier = struct {
         };
     }
 
+    /// Change the count of `timestamp` by `diff`.
+    /// Reports any changes to the frontier into `changes_into`.
     pub fn update(self: *SupportedFrontier, timestamp: Timestamp, diff: isize, changes_into: *ArrayList(FrontierChange)) !void {
         const support_entry = try self.support.getOrPutValue(timestamp, 0);
         support_entry.value_ptr.* = @intCast(usize, @intCast(isize, support_entry.value_ptr.*) + diff);
@@ -172,7 +280,7 @@ pub const SupportedFrontier = struct {
             // Timestamp was just removed, might have been in frontier
             _ = self.support.remove(timestamp);
             if (self.frontier.timestamps.remove(timestamp)) {
-                // Remove this timestamp
+                // Removed this timestamp from frontier
                 try changes_into.append(.{ .timestamp = timestamp, .diff = -1 });
 
                 // Find timestamps in support that might now be on the frontier
@@ -190,7 +298,7 @@ pub const SupportedFrontier = struct {
                     }
                 }.lessThan);
                 for (candidates.items) |candidate| {
-                    if (self.frontier.causalOrder(candidate) == .gt) {
+                    if (self.frontier.causalOrder(candidate) == .none) {
                         try self.frontier.timestamps.put(candidate, {});
                         try changes_into.append(.{ .timestamp = candidate, .diff = 1 });
                     }
@@ -221,69 +329,13 @@ pub const SupportedFrontier = struct {
     }
 };
 
-pub const Value = union(enum) {
-    String: []const u8,
-    Number: f64,
-};
-
-pub const Row = struct {
-    values: []const Value,
-};
-
-pub const Change = struct {
-    row: Row,
+/// Represents a single change to the set of earliest timestamps in a frontier.
+pub const FrontierChange = struct {
     timestamp: Timestamp,
     diff: isize,
 };
 
-pub const ChangeBatchBuilder = struct {
-    allocator: *Allocator,
-    changes: ArrayList(Change),
-
-    pub fn init(allocator: *Allocator) ChangeBatchBuilder {
-        return ChangeBatchBuilder{
-            .allocator = allocator,
-            .changes = ArrayList(Change).init(allocator),
-        };
-    }
-
-    pub fn finishAndClear(self: *ChangeBatchBuilder) !?ChangeBatch {
-        if (self.changes.items.len == 0) return null;
-
-        std.sort.sort(Change, self.changes.items, {}, struct {
-            fn lessThan(_: void, a: Change, b: Change) bool {
-                return dida.meta.deepOrder(a, b) == .lt;
-            }
-        }.lessThan);
-
-        // Coalesce changes with identical rows and timestamps
-        var prev_i: usize = 0;
-        for (self.changes.items[1..]) |change, i| {
-            const prev_change = &self.changes.items[prev_i];
-            if (dida.meta.deepEqual(prev_change.row, change.row) and dida.meta.deepEqual(prev_change.timestamp, change.timestamp)) {
-                prev_change.diff += change.diff;
-            } else {
-                if (prev_change.diff != 0) {
-                    prev_i += 1;
-                    self.changes.items[prev_i] = change;
-                }
-            }
-        }
-        self.changes.shrinkAndFree(prev_i + 1);
-        if (self.changes.items.len == 0) return null;
-
-        var lower_bound = Frontier.initEmpty(self.allocator);
-        for (self.changes.items) |change| {
-            try lower_bound.retreat(change.timestamp);
-        }
-
-        return ChangeBatch{
-            .lower_bound = lower_bound,
-            .changes = self.changes.toOwnedSlice(),
-        };
-    }
-};
-
+/// A batch of changes, conveniently pre-sorted and de-duplicated.
 pub const ChangeBatch = struct {
     // Invariant: for every change in changes, lower_bound.causalOrder(change).isLessThanOrEqual()
     lower_bound: Frontier,
@@ -293,6 +345,9 @@ pub const ChangeBatch = struct {
     changes: []Change,
 };
 
+/// Represents the state of a bag at a variety of timestamps.
+/// Allows efficiently adding new changes and querying previous changes.
+// TODO Currently dumb. Replace with LSM tree and provide cursors.
 pub const Index = struct {
     allocator: *Allocator,
     change_batches: ArrayList(ChangeBatch),
@@ -304,10 +359,12 @@ pub const Index = struct {
         };
     }
 
+    /// Return the state of a the bag as of `timestamp`.
+    // TODO This is a temporary hack, to be replaced by cursors
     pub fn getBagAsOf(self: *Index, allocator: *Allocator, timestamp: Timestamp) !Bag {
         var bag = Bag.init(allocator);
         for (self.change_batches.items) |change_batch| {
-            if (change_batch.lower_bound.causalOrder(timestamp) != .gt) {
+            if (change_batch.lower_bound.causalOrder(timestamp).isLessThanOrEqual()) {
                 for (change_batch.changes) |change| {
                     if (change.timestamp.causalOrder(timestamp).isLessThanOrEqual()) {
                         try bag.update(change.row, change.diff);
@@ -319,31 +376,18 @@ pub const Index = struct {
     }
 };
 
-pub const Bag = struct {
-    row_counts: DeepHashMap(Row, isize),
-
-    pub fn init(allocator: *Allocator) Bag {
-        return .{
-            .row_counts = DeepHashMap(Row, isize).init(allocator),
-        };
-    }
-
-    pub fn update(self: *Bag, row: Row, diff: isize) !void {
-        const entry = try self.row_counts.getOrPutValue(row, 0);
-        entry.value_ptr.* += diff;
-        _ = if (entry.value_ptr.* == 0) self.row_counts.remove(row);
-    }
-};
-
+/// A node in the dataflow graph.
 pub const Node = struct {
     id: usize,
 };
 
+/// One of the input edges to some node in a dataflow graph.
 pub const NodeInput = struct {
     node: Node,
     input_ix: usize,
 };
 
+/// Specifies how a node should transform inputs bags into an output bag.
 pub const NodeSpec = union(enum) {
     Input,
     Map: MapSpec,
@@ -427,6 +471,7 @@ pub const NodeSpec = union(enum) {
     }
 };
 
+/// The internal state of a node in a running dataflow.
 pub const NodeState = union(enum) {
     Input: InputState,
     Map,
@@ -441,12 +486,14 @@ pub const NodeState = union(enum) {
 
     pub const InputState = struct {
         frontier: Frontier,
+        /// These changes are being buffered. 
+        /// When flushed they will form a change batch.
         unflushed_changes: ChangeBatchBuilder,
     };
 
     pub const IndexState = struct {
         index: Index,
-        // These are waiting for the frontier to advance before they are added to the index
+        /// These changes are waiting for the frontier to move past them, at which point they will be added to the index.
         pending_changes: ArrayList(Change),
     };
 
@@ -456,10 +503,10 @@ pub const NodeState = union(enum) {
 
     pub const DistinctState = struct {
         index: Index,
-        // These are times in the future at which the output might change even if there is no new input.
-        // To calculate:
-        // * Take the leastUpperBound of the timestamps of every possible subset of changes in the input node.
-        // * Filter out timestamps that are before the output frontier of this node.
+        /// These are times in the future at which the output might change even if there is no new input.
+        /// To calculate:
+        /// * Take the leastUpperBound of the timestamps of every possible subset of changes in the input node.
+        /// * Filter out timestamps that are before the output frontier of this node.
         pending_timestamps: DeepHashSet(Timestamp),
     };
 
@@ -498,67 +545,34 @@ pub const NodeState = union(enum) {
     }
 
     pub fn getIndex(self: *NodeState) ?*Index {
-        // TODO unsure if this is correct way to get payload pointer
         return switch (self.*) {
             .Index => |*state| &state.index,
             .Distinct => |*state| &state.index,
-            // TODO should be able to follow TimestampPush upwards to an index and wrap it
+            // TODO should be able to follow TimestampPush/Pop to an index and wrap it
             else => null,
         };
     }
 };
 
+/// A subgraph of the dataflow graph.
+/// Every node in a subgraph has the same number of timestamp coordinates.
+/// Every loop in the graph must be contained entirely by a single subgraph.
+/// Subgraphs must be nested hierarchically - no overlaps.
 pub const Subgraph = struct {
     id: usize,
 };
 
-pub const GraphBuilder = struct {
-    allocator: *Allocator,
-    node_specs: ArrayList(NodeSpec),
-    node_subgraphs: ArrayList(Subgraph),
-    subgraph_parents: ArrayList(Subgraph),
-
-    pub fn init(allocator: *Allocator) GraphBuilder {
-        return GraphBuilder{
-            .allocator = allocator,
-            .node_specs = ArrayList(NodeSpec).init(allocator),
-            .node_subgraphs = ArrayList(Subgraph).init(allocator),
-            .subgraph_parents = ArrayList(Subgraph).init(allocator),
-        };
-    }
-
-    pub fn addSubgraph(self: *GraphBuilder, parent: Subgraph) !Subgraph {
-        try self.subgraph_parents.append(parent);
-        return Subgraph{ .id = self.subgraph_parents.items.len };
-    }
-
-    pub fn addNode(self: *GraphBuilder, subgraph: Subgraph, node_spec: NodeSpec) !Node {
-        const node = Node{ .id = self.node_specs.items.len };
-        try self.node_specs.append(node_spec);
-        try self.node_subgraphs.append(subgraph);
-        return node;
-    }
-
-    pub fn connectLoop(self: *GraphBuilder, later_node: Node, earlier_node: Node) void {
-        self.node_specs.items[earlier_node.id].TimestampIncrement.input = later_node;
-    }
-
-    pub fn finishAndClear(self: *GraphBuilder) !Graph {
-        return Graph.init(
-            self.allocator,
-            self.node_specs.toOwnedSlice(),
-            self.node_subgraphs.toOwnedSlice(),
-            self.subgraph_parents.toOwnedSlice(),
-        );
-    }
-};
-
+/// A description of a dataflow graph.
 pub const Graph = struct {
     allocator: *Allocator,
+    /// For each node, the spec that determines its behavior
     node_specs: []const NodeSpec,
+    /// For each node, the subgraphs that it belongs to (outermost first, innermost last).
     node_subgraphs: []const []const Subgraph,
-    // Indexed by subgraph.id-1, because subgraph 0 has no parent
+    /// For each subgraph, the parent subgraph that it is nested within
+    /// (Indexed by subgraph.id-1, because subgraph 0 has no parent)
     subgraph_parents: []const Subgraph,
+    /// For each ndoe, the nodes that are immediately downstream (ie have this node as an input).
     downstream_node_inputs: []const []const NodeInput,
 
     pub fn init(allocator: *Allocator, node_specs: []const NodeSpec, node_immediate_subgraphs: []const Subgraph, subgraph_parents: []const Subgraph) !Graph {
@@ -611,6 +625,7 @@ pub const Graph = struct {
         return self;
     }
 
+    /// Assert that the graph obeys all the constraints required to make the progress tracking algorithm work.
     pub fn validate(self: Graph) void {
         const num_nodes = self.node_specs.len;
         for (self.subgraph_parents) |parent, subgraph_id_minus_one| {
@@ -688,15 +703,72 @@ pub const Graph = struct {
     }
 };
 
+/// A helper for building a graph.
+/// Call `addSubgraph` and `addNode` to build it up.
+/// Call `connectLoop` to connect backwards edges in loops.
+/// Call `finishAndReset` to produce the graph.
+pub const GraphBuilder = struct {
+    allocator: *Allocator,
+    node_specs: ArrayList(NodeSpec),
+    node_subgraphs: ArrayList(Subgraph),
+    subgraph_parents: ArrayList(Subgraph),
+
+    pub fn init(allocator: *Allocator) GraphBuilder {
+        return GraphBuilder{
+            .allocator = allocator,
+            .node_specs = ArrayList(NodeSpec).init(allocator),
+            .node_subgraphs = ArrayList(Subgraph).init(allocator),
+            .subgraph_parents = ArrayList(Subgraph).init(allocator),
+        };
+    }
+
+    pub fn addSubgraph(self: *GraphBuilder, parent: Subgraph) !Subgraph {
+        try self.subgraph_parents.append(parent);
+        return Subgraph{ .id = self.subgraph_parents.items.len };
+    }
+
+    /// Add a new node to the graph.
+    /// When adding a `TimestampIncrement` node, set its input to null initially and then later use `connectLoop` once the input node has been added.
+    pub fn addNode(self: *GraphBuilder, subgraph: Subgraph, node_spec: NodeSpec) !Node {
+        const node = Node{ .id = self.node_specs.items.len };
+        try self.node_specs.append(node_spec);
+        try self.node_subgraphs.append(subgraph);
+        return node;
+    }
+
+    /// Sets the input of `earlier_node` to `later_node`.
+    /// `earlier_node` must be a `TimestampIncrement` node - the only node that is allowed to have backwards edges.
+    pub fn connectLoop(self: *GraphBuilder, later_node: Node, earlier_node: Node) void {
+        self.node_specs.items[earlier_node.id].TimestampIncrement.input = later_node;
+    }
+
+    /// Produce the final graph.
+    /// Resets `self` so it can be used again.
+    pub fn finishAndReset(self: *GraphBuilder) !Graph {
+        return Graph.init(
+            self.allocator,
+            self.node_specs.toOwnedSlice(),
+            self.node_subgraphs.toOwnedSlice(),
+            self.subgraph_parents.toOwnedSlice(),
+        );
+    }
+};
+
+/// Part of a running dataflow.
+/// In a single-threaded dataflow there will be only one shard.
+/// In a multi-threaded dataflow (TODO) there will be one shard per thread.
 pub const Shard = struct {
     allocator: *Allocator,
     graph: *const Graph,
+    /// For each node, the internal state of that node.
     node_states: []NodeState,
-    // Frontier for node *output*
-    // Invariant: all changes emitted from a node are greater than or equal to its frontier: node_frontiers[node.id].frontier.causalOrder(change.timestamp) != .lt
+    /// For each ndoe, the frontier for the nodes output.
+    /// Invariant: any change emitted from a node has a timestamp that is not earlier than the frontier: node_frontiers[node.id].frontier.causalOrder(change.timestamp).isLessThanOrEqual()
     node_frontiers: []SupportedFrontier,
+    /// An unordered list of change batches that have not yet been processed by some node.
     unprocessed_change_batches: ArrayList(ChangeBatchAtNodeInput),
-    // Updates waiting to be applied to node *input*
+    /// Frontier updates that have not yet been applied to some node's input frontier.
+    /// (The input frontier is never materialized, so when these changes are processed they will be immediately transformed to apply to the ouput frontier).
     unprocessed_frontier_updates: DeepHashMap(Pointstamp, isize),
 
     const ChangeBatchAtNodeInput = struct {
@@ -745,33 +817,41 @@ pub const Shard = struct {
         return self;
     }
 
+    /// Add a new change to an input node.
+    /// These changes will not be processed by `hasWork`/`doWork` until `flushInput` is called.
     pub fn pushInput(self: *Shard, node: Node, change: Change) !void {
         assert(
-            self.node_states[node.id].Input.frontier.causalOrder(change.timestamp) != .gt,
+            self.node_states[node.id].Input.frontier.causalOrder(change.timestamp).isLessThanOrEqual(),
             "May not push inputs that are less than the Input node frontier set by Shard.advanceInput",
             .{},
         );
         try self.node_states[node.id].Input.unflushed_changes.changes.append(change);
     }
 
+    /// Flush all of the changes at an input node into a change batch.
     pub fn flushInput(self: *Shard, node: Node) !void {
         var unflushed_changes = &self.node_states[node.id].Input.unflushed_changes;
-        if (try unflushed_changes.finishAndClear()) |change_batch| {
+        if (try unflushed_changes.finishAndReset()) |change_batch| {
             try self.emitChangeBatch(node, change_batch);
         }
     }
 
+    /// Promise that you will never call `pushInput` on `node` with a change whose timestamp is earlier than `timestamp`.
+    /// Doing this allows operations which need to see all the input at a given timestamp to progress.
+    /// (This also implicitly flushes `node`.)
+    // TODO Is advance the best verb? Would prefer to stay consistent with Earlier/Later used elsewhere.
     pub fn advanceInput(self: *Shard, node: Node, timestamp: Timestamp) !void {
         // Have to flush input so that there aren't any pending changes with timestamps less than the new frontier
         try self.flushInput(node);
 
         var changes = ArrayList(FrontierChange).init(self.allocator);
-        try self.node_states[node.id].Input.frontier.move(.Advance, timestamp, &changes);
+        try self.node_states[node.id].Input.frontier.move(.Later, timestamp, &changes);
         for (changes.items) |change| {
             _ = try self.applyFrontierUpdate(node, change.timestamp, change.diff);
         }
     }
 
+    /// Report that `from_node` produced `change_batch` as an output.
     fn emitChangeBatch(self: *Shard, from_node: Node, change_batch: ChangeBatch) !void {
         // Check this is legal
         {
@@ -779,7 +859,7 @@ pub const Shard = struct {
             var iter = change_batch.lower_bound.timestamps.iterator();
             while (iter.next()) |entry| {
                 assert(
-                    output_frontier.frontier.causalOrder(entry.key_ptr.*) != .gt,
+                    output_frontier.frontier.causalOrder(entry.key_ptr.*).isLessThanOrEqual(),
                     "Emitted a change at a timestamp that is behind the output frontier. Node {}, timestamp {}.",
                     .{ from_node, entry.key_ptr.* },
                 );
@@ -798,22 +878,24 @@ pub const Shard = struct {
         }
     }
 
-    fn popChangeBatch(self: *Shard) !?ChangeBatchAtNodeInput {
-        if (self.unprocessed_change_batches.popOrNull()) |change_batch_at_node_input| {
-            var iter = change_batch_at_node_input.change_batch.lower_bound.timestamps.iterator();
-            while (iter.next()) |entry| {
-                try self.queueFrontierUpdate(change_batch_at_node_input.node_input, entry.key_ptr.*, -1);
-            }
-            return change_batch_at_node_input;
-        } else {
-            return null;
-        }
-    }
-
-    fn processChangeBatch(self: *Shard, change_batch: ChangeBatch, node_input: NodeInput) !void {
+    /// Process one unprocessed change batch from the list.
+    /// This may produce some new change batches at the output for `node_input.node`.
+    fn processChangeBatch(self: *Shard) !void {
+        const change_batch_at_node_input = self.unprocessed_change_batches.popOrNull() orelse return;
+        const change_batch = change_batch_at_node_input.change_batch;
+        const node_input = change_batch_at_node_input.node_input;
         const node = node_input.node;
         const node_spec = self.graph.node_specs[node.id];
         const node_state = &self.node_states[node.id];
+
+        // Remove change_batch from progress tracking
+        {
+            var iter = change_batch.lower_bound.timestamps.iterator();
+            while (iter.next()) |entry| {
+                try self.queueFrontierUpdate(node_input, entry.key_ptr.*, -1);
+            }
+        }
+
         switch (node_spec) {
             .Input => panic("Input nodes should not have work pending on their input", .{}),
             .Map => |map| {
@@ -823,7 +905,7 @@ pub const Shard = struct {
                     output_change.row = try map.mapper.map_fn(map.mapper, change.row);
                     try output_change_batch_builder.changes.append(output_change);
                 }
-                if (try output_change_batch_builder.finishAndClear()) |output_change_batch| {
+                if (try output_change_batch_builder.finishAndReset()) |output_change_batch| {
                     try self.emitChangeBatch(node_input.node, output_change_batch);
                 }
             },
@@ -832,7 +914,7 @@ pub const Shard = struct {
                 // TODO this is a lot of timestamps - is there a cheaper way to maintain the support for the index frontier?
                 for (change_batch.changes) |change| {
                     assert(
-                        self.node_frontiers[node.id].frontier.causalOrder(change.timestamp) != .gt,
+                        self.node_frontiers[node.id].frontier.causalOrder(change.timestamp).isLessThanOrEqual(),
                         "Index received a change that was behind its output frontier. Node {}, timestamp {}.",
                         .{ node, change.timestamp },
                     );
@@ -864,7 +946,7 @@ pub const Shard = struct {
                         }
                     }
                 }
-                if (try output_change_batch_builder.finishAndClear()) |output_change_batch| {
+                if (try output_change_batch_builder.finishAndReset()) |output_change_batch| {
                     try self.emitChangeBatch(node_input.node, output_change_batch);
                 }
             },
@@ -878,7 +960,7 @@ pub const Shard = struct {
                     output_change.timestamp = try change.timestamp.pushCoord(self.allocator);
                     try output_change_batch_builder.changes.append(output_change);
                 }
-                try self.emitChangeBatch(node_input.node, (try output_change_batch_builder.finishAndClear()).?);
+                try self.emitChangeBatch(node_input.node, (try output_change_batch_builder.finishAndReset()).?);
             },
             .TimestampIncrement => {
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
@@ -887,7 +969,7 @@ pub const Shard = struct {
                     output_change.timestamp = try change.timestamp.incrementCoord(self.allocator);
                     try output_change_batch_builder.changes.append(output_change);
                 }
-                try self.emitChangeBatch(node_input.node, (try output_change_batch_builder.finishAndClear()).?);
+                try self.emitChangeBatch(node_input.node, (try output_change_batch_builder.finishAndReset()).?);
             },
             .TimestampPop => {
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
@@ -896,7 +978,7 @@ pub const Shard = struct {
                     output_change.timestamp = try change.timestamp.popCoord(self.allocator);
                     try output_change_batch_builder.changes.append(output_change);
                 }
-                if (try output_change_batch_builder.finishAndClear()) |output_change_batch| {
+                if (try output_change_batch_builder.finishAndReset()) |output_change_batch| {
                     try self.emitChangeBatch(node_input.node, output_change_batch);
                 }
             },
@@ -938,6 +1020,7 @@ pub const Shard = struct {
         }
     }
 
+    /// Report that the input frontier at `node_input` has changed, so the output frontier might need updating.
     fn queueFrontierUpdate(self: *Shard, node_input: NodeInput, timestamp: Timestamp, diff: isize) !void {
         var entry = try self.unprocessed_frontier_updates.getOrPutValue(.{
             .node_input = node_input,
@@ -948,6 +1031,7 @@ pub const Shard = struct {
         _ = if (entry.value_ptr.* == 0) self.unprocessed_frontier_updates.remove(entry.key_ptr.*);
     }
 
+    /// Change the output frontier at `node` and report the change to any downstream nodes. 
     fn applyFrontierUpdate(self: *Shard, node: Node, timestamp: Timestamp, diff: isize) !enum { Updated, NotUpdated } {
         var frontier_changes = ArrayList(FrontierChange).init(self.allocator);
         try self.node_frontiers[node.id].update(timestamp, diff, &frontier_changes);
@@ -959,7 +1043,7 @@ pub const Shard = struct {
         return if (frontier_changes.items.len > 0) .Updated else .NotUpdated;
     }
 
-    // Produces an ordering on Pointstamp that is compatible with causality.
+    // An ordering on Pointstamp that is compatible with causality.
     // IE if the existence of a change at `this` causes a change to later be produced at `that`, then we need to have `orderPointstamps(this, that) == .lt`.
     // The invariants enforced for the graph structure guarantee that this is possible.
     fn orderPointstamps(this: Pointstamp, that: Pointstamp) std.math.Order {
@@ -979,16 +1063,18 @@ pub const Shard = struct {
         return dida.meta.deepOrder(this.node_input, that.node_input);
     }
 
+    /// Process all unprocessed frontier updates. 
     fn processFrontierUpdates(self: *Shard) !void {
         // Nodes whose input frontiers have changed
-        // TODO is it worth tracking the actual change? might catch cases where the total diff is zero
+        // TODO is it worth tracking the actual changes? might catch cases where the total diff is zero
         var updated_nodes = DeepHashSet(Node).init(self.allocator);
 
-        // Propagate frontier updates
-        // NOTE We have to propagate all of these before doing anything else - the intermediate states can be invalid
+        // Process frontier updates
+        // NOTE We have to process all of these before doing anything else - the intermediate states can be invalid
         while (self.unprocessed_frontier_updates.count() > 0) {
 
             // Find min pointstamp
+            // (We have to process pointstamps in causal order to ensure that this algorithm terminates. See [/docs/why.md](/docs/why.md) for more detail.)
             // TODO use a sorted data structure for unprocessed_frontier_updates
             var iter = self.unprocessed_frontier_updates.iterator();
             var min_entry = iter.next().?;
@@ -1016,10 +1102,8 @@ pub const Shard = struct {
             const updated = try self.applyFrontierUpdate(node, output_timestamp, diff);
         }
 
-        // Trigger special actions at nodes whose frontier has changed
-        // NOTE It's ok to buffer updates like this rather than going in pointstamp order, because these changes represent real capabilities, not just implied capabilities
-        //      In fact, if we mixed this in with the processing frontier diffs then they might see an invalid intermediate state for the frontier.
-        // TODO Probably should pop these one at a time though to avoid doWork being unbounded
+        // Trigger special actions at nodes whose frontier has changed.
+        // TODO Probably should pop these one at a time to avoid doWork being unbounded
         var updated_nodes_iter = updated_nodes.iterator();
         while (updated_nodes_iter.next()) |updated_nodes_entry| {
             const node = updated_nodes_entry.key_ptr.*;
@@ -1028,7 +1112,7 @@ pub const Shard = struct {
 
             // Index-specific stuff
             if (node_spec == .Index) {
-                // Might be able to produce an output batch now that the frontier has advanced
+                // Might be able to produce an output batch now that the frontier has moved later
                 var change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 var pending_changes = ArrayList(Change).init(self.allocator);
                 const input_frontier = self.node_frontiers[node_spec.Index.input.id];
@@ -1040,7 +1124,7 @@ pub const Shard = struct {
                     }
                 }
                 node_state.Index.pending_changes = pending_changes;
-                if (try change_batch_builder.finishAndClear()) |change_batch| {
+                if (try change_batch_builder.finishAndReset()) |change_batch| {
                     try node_state.Index.index.change_batches.append(change_batch);
                     try self.emitChangeBatch(node, change_batch);
                     for (change_batch.changes) |change| {
@@ -1082,9 +1166,9 @@ pub const Shard = struct {
                     var new_bag = try input_index.getBagAsOf(self.allocator, timestamp);
                     // Count things that are in new_bag
                     {
-                        var iter = new_bag.row_counts.iterator();
+                        var iter = new_bag.rows.iterator();
                         while (iter.next()) |new_entry| {
-                            const diff = 1 - (old_bag.row_counts.get(new_entry.key_ptr.*) orelse 0);
+                            const diff = 1 - (old_bag.rows.get(new_entry.key_ptr.*) orelse 0);
                             if (diff != 0)
                                 try change_batch_builder.changes.append(.{
                                     .row = new_entry.key_ptr.*,
@@ -1095,9 +1179,9 @@ pub const Shard = struct {
                     }
                     // Count things that are in old_bag and not in new_bag
                     {
-                        var iter = old_bag.row_counts.iterator();
+                        var iter = old_bag.rows.iterator();
                         while (iter.next()) |old_entry| {
-                            if (!new_bag.row_counts.contains(old_entry.key_ptr.*)) {
+                            if (!new_bag.rows.contains(old_entry.key_ptr.*)) {
                                 const diff = -old_entry.value_ptr.*;
                                 try change_batch_builder.changes.append(.{
                                     .row = old_entry.key_ptr.*,
@@ -1110,7 +1194,7 @@ pub const Shard = struct {
                 }
 
                 // Emit changes
-                if (try change_batch_builder.finishAndClear()) |change_batch| {
+                if (try change_batch_builder.finishAndReset()) |change_batch| {
                     try output_index.change_batches.append(change_batch);
                     try self.emitChangeBatch(node, change_batch);
                 }
@@ -1124,20 +1208,26 @@ pub const Shard = struct {
         }
     }
 
+    /// Check whether the shard has any work that it could do.
     pub fn hasWork(self: *const Shard) bool {
         return (self.unprocessed_change_batches.items.len > 0) or
             (self.unprocessed_frontier_updates.count() > 0);
     }
 
+    /// Do some work.
+    // TODO ideally the runtime of this function would be roughly bounded, so that dida can run cooperatively inside other event loops.
     pub fn doWork(self: *Shard) !void {
-        if (try self.popChangeBatch()) |change_batch_at_node_input| {
-            try self.processChangeBatch(change_batch_at_node_input.change_batch, change_batch_at_node_input.node_input);
+        if (self.unprocessed_change_batches.items.len > 0) {
+            try self.processChangeBatch();
         } else if (self.unprocessed_frontier_updates.count() > 0) {
             try self.processFrontierUpdates();
         }
     }
 
+    /// Pop a change batch from an output node.
     pub fn popOutput(self: *Shard, node: Node) ?ChangeBatch {
         return self.node_states[node.id].Output.unpopped_change_batches.popOrNull();
     }
 };
+
+// TODO Its currently possible to remove from HashMap without invalidating iterator which would simplify some of the code in this file. But might not be true forever.

@@ -9,7 +9,7 @@ export fn napi_register_module_v1(env: c.napi_env, exports: c.napi_value) c.napi
     napiExportFn(env, exports, napiWrapFn(dida.core.GraphBuilder.addSubgraph), "GraphBuilder_addSubgraph");
     napiExportFn(env, exports, napiWrapFn(dida.core.GraphBuilder.addNode), "GraphBuilder_addNode");
     napiExportFn(env, exports, napiWrapFn(dida.core.GraphBuilder.connectLoop), "GraphBuilder_connectLoop");
-    napiExportFn(env, exports, napiWrapFn(dida.core.GraphBuilder.finishAndClear), "GraphBuilder_finishAndClear");
+    napiExportFn(env, exports, napiWrapFn(dida.core.GraphBuilder.finishAndReset), "GraphBuilder_finishAndReset");
 
     napiExportFn(env, exports, napiWrapFn(Graph_init), "Graph_init");
 

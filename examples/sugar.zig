@@ -32,7 +32,7 @@ pub fn main() !void {
 
     try edges.push(.{ .{ "a", "b" }, 1, .{0} });
     try edges.push(.{ .{ "b", "c" }, 1, .{0} });
-    try edges.push(.{ .{ "c", "d" }, 1, .{0} });
+    try edges.push(.{ .{ "b", "d" }, 1, .{0} });
     try edges.push(.{ .{ "c", "a" }, 1, .{0} });
     try edges.push(.{ .{ "b", "c" }, -1, .{1} });
     try edges.flush();

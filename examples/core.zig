@@ -70,20 +70,21 @@ pub fn main() !void {
     const reach_out = try graph_builder.addNode(subgraph_0, .{ .TimestampPop = .{ .input = distinct_reach_index } });
     const out = try graph_builder.addNode(subgraph_0, .{ .Output = .{ .input = reach_out } });
 
-    const graph = try graph_builder.finishAndClear();
+    const graph = try graph_builder.finishAndReset();
 
     var shard = try dida.core.Shard.init(allocator, &graph);
+
     const timestamp0 = dida.core.Timestamp{ .coords = &[_]u64{0} };
     const timestamp1 = dida.core.Timestamp{ .coords = &[_]u64{1} };
     const timestamp2 = dida.core.Timestamp{ .coords = &[_]u64{2} };
 
     const ab = dida.core.Row{ .values = &[_]dida.core.Value{ .{ .String = "a" }, .{ .String = "b" } } };
     const bc = dida.core.Row{ .values = &[_]dida.core.Value{ .{ .String = "b" }, .{ .String = "c" } } };
-    const cd = dida.core.Row{ .values = &[_]dida.core.Value{ .{ .String = "b" }, .{ .String = "d" } } };
+    const bd = dida.core.Row{ .values = &[_]dida.core.Value{ .{ .String = "b" }, .{ .String = "d" } } };
     const ca = dida.core.Row{ .values = &[_]dida.core.Value{ .{ .String = "c" }, .{ .String = "a" } } };
     try shard.pushInput(edges, .{ .row = ab, .diff = 1, .timestamp = timestamp0 });
     try shard.pushInput(edges, .{ .row = bc, .diff = 1, .timestamp = timestamp0 });
-    try shard.pushInput(edges, .{ .row = cd, .diff = 1, .timestamp = timestamp0 });
+    try shard.pushInput(edges, .{ .row = bd, .diff = 1, .timestamp = timestamp0 });
     try shard.pushInput(edges, .{ .row = ca, .diff = 1, .timestamp = timestamp0 });
     try shard.pushInput(edges, .{ .row = bc, .diff = -1, .timestamp = timestamp1 });
     try shard.flushInput(edges);

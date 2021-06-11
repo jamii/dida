@@ -18,7 +18,7 @@ graph_builder.connectLoop(reach, reach_future);
 const reach_out = graph_builder.addNode(subgraph_0, new dida.NodeSpec.TimestampPop(distinct_reach_index));
 const out = graph_builder.addNode(subgraph_0, new dida.NodeSpec.Output(reach_out));
 
-const graph = graph_builder.finishAndClear();
+const graph = graph_builder.finishAndReset();
 
 var shard = new dida.Shard(graph);
 
