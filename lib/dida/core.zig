@@ -1024,7 +1024,7 @@ pub const Shard = struct {
     /// Report that the input frontier at `node_input` has changed, so the output frontier might need updating.
     fn queueFrontierUpdate(self: *Shard, node_input: NodeInput, timestamp: Timestamp, diff: isize) !void {
         const node_spec = self.graph.node_specs[node_input.node.id];
-        const input_node = node_spec.getInputs()[node_input.input_ix]
+        const input_node = node_spec.getInputs()[node_input.input_ix];
         var entry = try self.unprocessed_frontier_updates.getOrPutValue(.{
             .node_input = node_input,
             .subgraphs = self.graph.node_subgraphs[input_node.id],

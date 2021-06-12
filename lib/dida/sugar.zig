@@ -122,7 +122,8 @@ pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
 
         const Self = @This();
 
-        // TODO would be nicer to generate the decls for these methods so they don't appear in autocomplete (https://github.com/ziglang/zig/issues/6709)
+        // TODO Would be nicer to generate the decls for these methods so they don't appear in autocomplete.
+        //      Could use https://github.com/ziglang/zig/issues/6709 or copy usingnamespace trick from https://github.com/pedromsilvapt/zitt
 
         pub fn index(self: Self) Node(.Index) {
             const builder = &self.sugar.state.Building;
