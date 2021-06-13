@@ -388,8 +388,28 @@ pub const NodeInput = struct {
     input_ix: usize,
 };
 
+pub const NodeSpecTag = enum {
+    Input,
+    Map,
+    Index,
+    Join,
+    Output,
+    TimestampPush,
+    TimestampIncrement,
+    TimestampPop,
+    Union,
+    Distinct,
+
+    pub fn hasIndex(self: NodeSpecTag) bool {
+        return switch (self) {
+            .Index, .Distinct => true,
+            else => false,
+        };
+    }
+};
+
 /// Specifies how a node should transform inputs bags into an output bag.
-pub const NodeSpec = union(enum) {
+pub const NodeSpec = union(NodeSpecTag) {
     Input,
     Map: MapSpec,
     Index: IndexSpec,
@@ -460,15 +480,8 @@ pub const NodeSpec = union(enum) {
     }
 
     pub fn hasIndex(self: NodeSpec) bool {
-        return tagHasIndex(self);
-    }
-
-    // TODO this is a weird way to organize this code
-    pub fn tagHasIndex(tag: std.meta.TagType(NodeSpec)) bool {
-        return switch (tag) {
-            .Index, .Distinct => true,
-            else => false,
-        };
+        const tag: NodeSpecTag = self;
+        return tag.hasIndex();
     }
 };
 

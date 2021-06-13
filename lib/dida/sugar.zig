@@ -135,7 +135,7 @@ pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
             };
         }
 
-        pub usingnamespace if (comptime dida.core.NodeSpec.tagHasIndex(tag)) struct {
+        pub usingnamespace if (comptime tag.hasIndex()) struct {
             pub fn distinct(self: Self) Node(.Distinct) {
                 const builder = &self.sugar.state.Building;
                 const subgraph = builder.node_subgraphs.items[self.inner.id];
@@ -150,7 +150,7 @@ pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
             }
 
             pub fn join(self: Self, other: anytype, key_columns: usize) Node(.Join) {
-                if (!comptime (dida.core.NodeSpec.tagHasIndex(@TypeOf(other).tag)))
+                if (!comptime (@TypeOf(other).tag.hasIndex()))
                     @compileError("Can only call join on nodes which have indexes (Index, Distinct), not " ++ @TypeOf(other).tag);
 
                 const builder = &self.sugar.state.Building;
