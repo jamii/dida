@@ -122,9 +122,6 @@ pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
 
         const Self = @This();
 
-        // TODO Would be nicer to generate the decls for these methods so they don't appear in autocomplete.
-        //      Could use https://github.com/ziglang/zig/issues/6709 or copy usingnamespace trick from https://github.com/pedromsilvapt/zitt
-
         pub fn index(self: Self) Node(.Index) {
             const builder = &self.sugar.state.Building;
             const subgraph = builder.node_subgraphs.items[self.inner.id];
@@ -138,42 +135,39 @@ pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
             };
         }
 
-        pub fn distinct(self: Self) Node(.Distinct) {
-            if (!comptime dida.core.NodeSpec.tagHasIndex(tag))
-                @compileError("Can only call distinct on nodes which have indexes (Index, Distinct), not " ++ tag);
+        pub usingnamespace if (comptime dida.core.NodeSpec.tagHasIndex(tag)) struct {
+            pub fn distinct(self: Self) Node(.Distinct) {
+                const builder = &self.sugar.state.Building;
+                const subgraph = builder.node_subgraphs.items[self.inner.id];
+                const new_inner = assert_ok(self.sugar.state.Building.addNode(
+                    subgraph,
+                    .{ .Distinct = .{ .input = self.inner } },
+                ));
+                return .{
+                    .sugar = self.sugar,
+                    .inner = new_inner,
+                };
+            }
 
-            const builder = &self.sugar.state.Building;
-            const subgraph = builder.node_subgraphs.items[self.inner.id];
-            const new_inner = assert_ok(self.sugar.state.Building.addNode(
-                subgraph,
-                .{ .Distinct = .{ .input = self.inner } },
-            ));
-            return .{
-                .sugar = self.sugar,
-                .inner = new_inner,
-            };
-        }
+            pub fn join(self: Self, other: anytype, key_columns: usize) Node(.Join) {
+                if (!comptime (dida.core.NodeSpec.tagHasIndex(@TypeOf(other).tag)))
+                    @compileError("Can only call join on nodes which have indexes (Index, Distinct), not " ++ @TypeOf(other).tag);
 
-        pub fn join(self: Self, other: anytype, key_columns: usize) Node(.Join) {
-            if (!comptime (dida.core.NodeSpec.tagHasIndex(tag)))
-                @compileError("Can only call join on nodes which have indexes (Index, Distinct), not " ++ tag);
-            if (!comptime (dida.core.NodeSpec.tagHasIndex(@TypeOf(other).tag)))
-                @compileError("Can only call join on nodes which have indexes (Index, Distinct), not " ++ @TypeOf(other).tag);
-
-            const builder = &self.sugar.state.Building;
-            const subgraph = builder.node_subgraphs.items[self.inner.id];
-            const new_inner = assert_ok(self.sugar.state.Building.addNode(
-                subgraph,
-                .{ .Join = .{
-                    .inputs = .{ self.inner, other.inner },
-                    .key_columns = key_columns,
-                } },
-            ));
-            return .{
-                .sugar = self.sugar,
-                .inner = new_inner,
-            };
-        }
+                const builder = &self.sugar.state.Building;
+                const subgraph = builder.node_subgraphs.items[self.inner.id];
+                const new_inner = assert_ok(self.sugar.state.Building.addNode(
+                    subgraph,
+                    .{ .Join = .{
+                        .inputs = .{ self.inner, other.inner },
+                        .key_columns = key_columns,
+                    } },
+                ));
+                return .{
+                    .sugar = self.sugar,
+                    .inner = new_inner,
+                };
+            }
+        } else struct {};
 
         pub fn map(self: Self, mapper: *dida.core.NodeSpec.MapSpec.Mapper) Node(.Map) {
             const builder = &self.sugar.state.Building;
@@ -219,12 +213,12 @@ pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
             };
         }
 
-        pub fn fixpoint(self: Self, future: anytype) void {
-            if (tag != .TimestampIncrement)
-                @compileError("Can only call fixpoint on TimestampIncrement nodes, not " ++ tag);
-            const builder = &self.sugar.state.Building;
-            builder.connectLoop(future.inner, self.inner);
-        }
+        pub usingnamespace if (tag == .TimestampIncrement) struct {
+            pub fn fixpoint(self: Self, future: anytype) void {
+                const builder = &self.sugar.state.Building;
+                builder.connectLoop(future.inner, self.inner);
+            }
+        } else struct {};
 
         pub fn output(self: Self) Node(.Output) {
             const builder = &self.sugar.state.Building;
@@ -239,41 +233,38 @@ pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
             };
         }
 
-        pub fn push(self: Self, change: anytype) !void {
-            try self.pushInner(coerceAnonTo(self.sugar.allocator, dida.core.Change, change));
-        }
+        pub usingnamespace if (comptime tag == .Input) struct {
+            pub fn push(self: Self, change: anytype) !void {
+                // TODO self.pushInner won't compile here - circular reference?
+                try pushInner(self, coerceAnonTo(self.sugar.allocator, dida.core.Change, change));
+            }
 
-        fn pushInner(self: Self, change: dida.core.Change) !void {
-            if (tag != .Input)
-                @compileError("Can only call push on Input nodes, not " ++ tag);
-            const shard = &self.sugar.state.Running;
-            try shard.pushInput(self.inner, change);
-        }
+            fn pushInner(self: Self, change: dida.core.Change) !void {
+                const shard = &self.sugar.state.Running;
+                try shard.pushInput(self.inner, change);
+            }
 
-        pub fn flush(self: Self) !void {
-            if (tag != .Input)
-                @compileError("Can only call push on Input nodes, not " ++ tag);
-            const shard = &self.sugar.state.Running;
-            try shard.flushInput(self.inner);
-        }
+            pub fn flush(self: Self) !void {
+                const shard = &self.sugar.state.Running;
+                try shard.flushInput(self.inner);
+            }
 
-        pub fn advance(self: Self, timestamp: anytype) !void {
-            try self.advanceInner(coerceAnonTo(self.sugar.allocator, dida.core.Timestamp, timestamp));
-        }
+            pub fn advance(self: Self, timestamp: anytype) !void {
+                try self.advanceInner(coerceAnonTo(self.sugar.allocator, dida.core.Timestamp, timestamp));
+            }
 
-        pub fn advanceInner(self: Self, timestamp: dida.core.Timestamp) !void {
-            if (tag != .Input)
-                @compileError("Can only call push on Input nodes, not " ++ tag);
-            const shard = &self.sugar.state.Running;
-            try shard.advanceInput(self.inner, timestamp);
-        }
+            pub fn advanceInner(self: Self, timestamp: dida.core.Timestamp) !void {
+                const shard = &self.sugar.state.Running;
+                try shard.advanceInput(self.inner, timestamp);
+            }
+        } else struct {};
 
-        pub fn pop(self: Self) ?dida.core.ChangeBatch {
-            if (tag != .Output)
-                @compileError("Can only call push on Input nodes, not " ++ tag);
-            const shard = &self.sugar.state.Running;
-            return shard.popOutput(self.inner);
-        }
+        pub usingnamespace if (tag == .Output) struct {
+            pub fn pop(self: Self) ?dida.core.ChangeBatch {
+                const shard = &self.sugar.state.Running;
+                return shard.popOutput(self.inner);
+            }
+        } else struct {};
     };
 }
 
