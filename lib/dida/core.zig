@@ -478,11 +478,6 @@ pub const NodeSpec = union(NodeSpecTag) {
             .Union => |*spec| &spec.inputs,
         };
     }
-
-    pub fn hasIndex(self: NodeSpec) bool {
-        const tag: NodeSpecTag = self;
-        return tag.hasIndex();
-    }
 };
 
 /// The internal state of a node in a running dataflow.
@@ -667,7 +662,7 @@ pub const Graph = struct {
                 }
                 switch (node_spec) {
                     .Join, .Distinct => assert(
-                        self.node_specs[input_node.id].hasIndex(),
+                        std.meta.activeTag(self.node_specs[input_node.id]).hasIndex(),
                         "Inputs to {} node must contain an index",
                         .{std.meta.activeTag(node_spec)},
                     ),
