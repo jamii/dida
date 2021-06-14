@@ -271,7 +271,7 @@ pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
     };
 }
 
-fn coerceAnonToSlice(allocator: *Allocator, comptime Elem: type, anon: anytype) []Elem {
+pub fn coerceAnonToSlice(allocator: *Allocator, comptime Elem: type, anon: anytype) []Elem {
     const slice = assert_ok(allocator.alloc(Elem, anon.len));
     comptime var i: usize = 0;
     inline while (i < anon.len) : (i += 1) {
@@ -280,7 +280,7 @@ fn coerceAnonToSlice(allocator: *Allocator, comptime Elem: type, anon: anytype) 
     return slice;
 }
 
-fn coerceAnonTo(allocator: *Allocator, comptime T: type, anon: anytype) T {
+pub fn coerceAnonTo(allocator: *Allocator, comptime T: type, anon: anytype) T {
     switch (T) {
         dida.core.Timestamp => {
             return .{ .coords = coerceAnonToSlice(allocator, usize, anon) };
