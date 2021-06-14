@@ -182,7 +182,7 @@ pub const ChangeBatchBuilder = struct {
         self.changes.shrinkAndFree(prev_i);
         if (self.changes.items.len == 0) return null;
 
-        var lower_bound = Frontier.initEmpty(self.allocator);
+        var lower_bound = Frontier.init(self.allocator);
         for (self.changes.items) |change| {
             var changes_into = ArrayList(FrontierChange).init(self.allocator);
             try lower_bound.move(.Earlier, change.timestamp, &changes_into);
@@ -202,7 +202,7 @@ pub const Frontier = struct {
     // Invariant: timestamps don't overlap - for any two timestamps t1 and t2 in timestamps `t1.causalOrder(t2) == .none`
     timestamps: DeepHashSet(Timestamp),
 
-    pub fn initEmpty(allocator: *Allocator) Frontier {
+    pub fn init(allocator: *Allocator) Frontier {
         return Frontier{
             .allocator = allocator,
             .timestamps = DeepHashSet(Timestamp).init(allocator),
@@ -263,11 +263,11 @@ pub const SupportedFrontier = struct {
     // Invariant: frontier contains exactly the least timestamps from support
     frontier: Frontier,
 
-    pub fn initEmpty(allocator: *Allocator) !SupportedFrontier {
+    pub fn init(allocator: *Allocator) !SupportedFrontier {
         return SupportedFrontier{
             .allocator = allocator,
             .support = DeepHashMap(Timestamp, usize).init(allocator),
-            .frontier = Frontier.initEmpty(allocator),
+            .frontier = Frontier.init(allocator),
         };
     }
 
@@ -523,7 +523,7 @@ pub const NodeState = union(enum) {
         return switch (node_spec) {
             .Input => |input_spec| .{
                 .Input = .{
-                    .frontier = Frontier.initEmpty(allocator),
+                    .frontier = Frontier.init(allocator),
                     .unflushed_changes = ChangeBatchBuilder.init(allocator),
                 },
             },
@@ -800,7 +800,7 @@ pub const Shard = struct {
 
         var node_frontiers = try allocator.alloc(SupportedFrontier, num_nodes);
         for (node_frontiers) |*node_frontier, node_id|
-            node_frontier.* = try SupportedFrontier.initEmpty(allocator);
+            node_frontier.* = try SupportedFrontier.init(allocator);
 
         var unprocessed_frontier_updates = DeepHashMap(Pointstamp, isize).init(allocator);
 

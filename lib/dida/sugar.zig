@@ -302,6 +302,12 @@ pub fn coerceAnonTo(allocator: *Allocator, comptime T: type, anon: anytype) T {
                 else => compileError("Don't know how to coerce {} to Value", .{@TypeOf(anon)}),
             }
         },
+        dida.core.FrontierChange => {
+            return .{
+                .timestamp = coerceAnonTo(allocator, dida.core.Timestamp, anon[0]),
+                .diff = anon[1],
+            };
+        },
         usize => return anon,
         else => compileError("Don't know how to coerce anon to {}", .{T}),
     }
