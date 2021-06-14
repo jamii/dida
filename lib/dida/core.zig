@@ -132,69 +132,6 @@ pub const Timestamp = struct {
     }
 };
 
-/// Represents a change to some bag in the dataflow.
-/// The count of `row` changed by `diff` at `timestamp`.
-pub const Change = struct {
-    row: Row,
-    timestamp: Timestamp,
-    diff: isize,
-};
-
-/// A helper for building a ChangeBatch.
-/// Append to `changes` as you like and call `finishAndReset` to produce a batch.
-pub const ChangeBatchBuilder = struct {
-    allocator: *Allocator,
-    changes: ArrayList(Change),
-
-    pub fn init(allocator: *Allocator) ChangeBatchBuilder {
-        return ChangeBatchBuilder{
-            .allocator = allocator,
-            .changes = ArrayList(Change).init(allocator),
-        };
-    }
-
-    /// Produce a change batch.
-    /// If the batch would have been empty, return null instead.
-    /// Resets `self` so that it can be used again.
-    pub fn finishAndReset(self: *ChangeBatchBuilder) !?ChangeBatch {
-        if (self.changes.items.len == 0) return null;
-
-        std.sort.sort(Change, self.changes.items, {}, struct {
-            fn lessThan(_: void, a: Change, b: Change) bool {
-                return dida.meta.deepOrder(a, b) == .lt;
-            }
-        }.lessThan);
-
-        // Coalesce changes with identical rows and timestamps
-        var prev_i: usize = 0;
-        for (self.changes.items[1..]) |change| {
-            const prev_change = &self.changes.items[prev_i];
-            if (dida.meta.deepEqual(prev_change.row, change.row) and dida.meta.deepEqual(prev_change.timestamp, change.timestamp)) {
-                prev_change.diff += change.diff;
-            } else {
-                if (prev_change.diff != 0) {
-                    prev_i += 1;
-                }
-                self.changes.items[prev_i] = change;
-            }
-        }
-        if (self.changes.items[prev_i].diff != 0) prev_i += 1;
-        self.changes.shrinkAndFree(prev_i);
-        if (self.changes.items.len == 0) return null;
-
-        var lower_bound = Frontier.init(self.allocator);
-        for (self.changes.items) |change| {
-            var changes_into = ArrayList(FrontierChange).init(self.allocator);
-            try lower_bound.move(.Earlier, change.timestamp, &changes_into);
-        }
-
-        return ChangeBatch{
-            .lower_bound = lower_bound,
-            .changes = self.changes.toOwnedSlice(),
-        };
-    }
-};
-
 /// A frontier represents the earliest timestamps in some set of timestamps (by causal order).
 /// It's used to track progress in the dataflow and also to summarize the contents of a change batch.
 pub const Frontier = struct {
@@ -336,6 +273,14 @@ pub const FrontierChange = struct {
     diff: isize,
 };
 
+/// Represents a change to some bag in the dataflow.
+/// The count of `row` changed by `diff` at `timestamp`.
+pub const Change = struct {
+    row: Row,
+    timestamp: Timestamp,
+    diff: isize,
+};
+
 /// A batch of changes, conveniently pre-sorted and de-duplicated.
 pub const ChangeBatch = struct {
     // Invariant: for every change in changes, lower_bound.causalOrder(change).isLessThanOrEqual()
@@ -344,6 +289,61 @@ pub const ChangeBatch = struct {
     // Invariant: sorted by row/timestamp
     // Invariant: no two changes with same row/timestamp
     changes: []Change,
+};
+
+/// A helper for building a ChangeBatch.
+/// Append to `changes` as you like and call `finishAndReset` to produce a batch.
+pub const ChangeBatchBuilder = struct {
+    allocator: *Allocator,
+    changes: ArrayList(Change),
+
+    pub fn init(allocator: *Allocator) ChangeBatchBuilder {
+        return ChangeBatchBuilder{
+            .allocator = allocator,
+            .changes = ArrayList(Change).init(allocator),
+        };
+    }
+
+    /// Produce a change batch.
+    /// If the batch would have been empty, return null instead.
+    /// Resets `self` so that it can be used again.
+    pub fn finishAndReset(self: *ChangeBatchBuilder) !?ChangeBatch {
+        if (self.changes.items.len == 0) return null;
+
+        std.sort.sort(Change, self.changes.items, {}, struct {
+            fn lessThan(_: void, a: Change, b: Change) bool {
+                return dida.meta.deepOrder(a, b) == .lt;
+            }
+        }.lessThan);
+
+        // Coalesce changes with identical rows and timestamps
+        var prev_i: usize = 0;
+        for (self.changes.items[1..]) |change| {
+            const prev_change = &self.changes.items[prev_i];
+            if (dida.meta.deepEqual(prev_change.row, change.row) and dida.meta.deepEqual(prev_change.timestamp, change.timestamp)) {
+                prev_change.diff += change.diff;
+            } else {
+                if (prev_change.diff != 0) {
+                    prev_i += 1;
+                }
+                self.changes.items[prev_i] = change;
+            }
+        }
+        if (self.changes.items[prev_i].diff != 0) prev_i += 1;
+        self.changes.shrinkAndFree(prev_i);
+        if (self.changes.items.len == 0) return null;
+
+        var lower_bound = Frontier.init(self.allocator);
+        for (self.changes.items) |change| {
+            var changes_into = ArrayList(FrontierChange).init(self.allocator);
+            try lower_bound.move(.Earlier, change.timestamp, &changes_into);
+        }
+
+        return ChangeBatch{
+            .lower_bound = lower_bound,
+            .changes = self.changes.toOwnedSlice(),
+        };
+    }
 };
 
 /// Represents the state of a bag at a variety of timestamps.
