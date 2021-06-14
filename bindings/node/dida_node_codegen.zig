@@ -8,7 +8,7 @@ pub fn main() !void {
     }
     try writer.writeAll("\n\n");
     inline for (types_with_js_constructors) |T| {
-        try std.fmt.format(writer, "exports.{s} = {s};\n", .{ @typeName(T), @typeName(T) });
+        try std.fmt.format(writer, "exports.{s} = {s};\n", .{ T, T });
     }
 }
 
@@ -40,9 +40,9 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                             \\
                         ,
                             .{
-                                @typeName(Type),
+                                Type,
                                 std.mem.join(allocator, ", ", &arg_names),
-                                @typeName(Type),
+                                Type,
                                 std.mem.join(allocator, ", ", &arg_names),
                             },
                         );
@@ -56,11 +56,11 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                             \\
                         ,
                             .{
-                                @typeName(Type),
+                                Type,
                                 decl_info.name,
                                 decl_info.name,
                                 std.mem.join(allocator, ", ", &arg_names),
-                                @typeName(Type),
+                                Type,
                                 decl_info.name,
                                 std.mem.join(allocator, ", ", &arg_names),
                             },
@@ -73,7 +73,7 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
         else => {
             switch (info) {
                 .Struct => |struct_info| {
-                    try std.fmt.format(writer, "function {s}(", .{@typeName(Type)});
+                    try std.fmt.format(writer, "function {s}(", .{Type});
                     inline for (struct_info.fields) |field_info| {
                         try std.fmt.format(writer, "{s}, ", .{field_info.name});
                     }
@@ -86,7 +86,7 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                 .Union => |union_info| {
                     if (union_info.tag_type) |tag_type| {
                         // TODO name payload args instead of using `arguments[i]`
-                        try std.fmt.format(writer, "const {s} = {{\n", .{@typeName(Type)});
+                        try std.fmt.format(writer, "const {s} = {{\n", .{Type});
                         inline for (union_info.fields) |field_info| {
                             const payload = switch (field_info.field_type) {
                                 []const u8, f64 => "arguments[0]",
@@ -96,7 +96,7 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                                     var args: [num_args][]const u8 = undefined;
                                     for (args) |*arg, arg_ix| arg.* = try dida.common.format(allocator, "arguments[{}]", .{arg_ix});
                                     break :payload try dida.common.format(allocator, "new {s}({s})", .{
-                                        @typeName(field_info.field_type),
+                                        field_info.field_type,
                                         std.mem.join(allocator, ", ", &args),
                                     });
                                 },
@@ -114,10 +114,10 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                         }
                         try writer.writeAll("};\n\n");
                     } else {
-                        @compileError("Can't know how to make constructor for non-tagged union type " ++ @typeName(Type));
+                        compileError("Can't know how to make constructor for non-tagged union type {}", .{Type});
                     }
                 },
-                else => @compileError("Don't know how to make constructor for type " ++ @typeName(Type)),
+                else => compileError("Don't know how to make constructor for type {}", .{Type}),
             }
         },
     }

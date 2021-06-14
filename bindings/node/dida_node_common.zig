@@ -82,7 +82,7 @@ pub fn serdeStrategy(comptime T: type) SerdeStrategy {
         dida.core.NodeSpec.OutputSpec,
         => .Value,
 
-        else => @compileError("No SerdeStrategy for " ++ @typeName(T)),
+        else => compileError("No SerdeStrategy for {}", .{T}),
     };
 }
 

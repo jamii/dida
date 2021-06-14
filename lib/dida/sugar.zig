@@ -150,8 +150,11 @@ pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
             }
 
             pub fn join(self: Self, other: anytype, key_columns: usize) Node(.Join) {
-                if (!comptime (@TypeOf(other).tag.hasIndex()))
-                    @compileError("Can only call join on nodes which have indexes (Index, Distinct), not " ++ @TypeOf(other).tag);
+                comptimeAssert(
+                    comptime @TypeOf(other).tag.hasIndex(),
+                    "Can only call join on nodes which have indexes (Index, Distinct), not {}",
+                    .{@TypeOf(other).tag},
+                );
 
                 const builder = &self.sugar.state.Building;
                 const subgraph = builder.node_subgraphs.items[self.inner.id];
@@ -296,11 +299,11 @@ fn coerceAnonTo(allocator: *Allocator, comptime T: type, anon: anytype) T {
             switch (@typeInfo(@TypeOf(anon))) {
                 .Int => return .{ .Number = anon },
                 .Pointer => return .{ .String = anon },
-                else => @compileError("Don't know how to coerce " ++ @typeName(anon) ++ " to value"),
+                else => compileError("Don't know how to coerce {} to Value", .{@TypeOf(anon)}),
             }
         },
         usize => return anon,
-        else => @compileError("Don't know how to coerce anon to " ++ @typeName(T)),
+        else => compileError("Don't know how to coerce anon to {}", .{T}),
     }
 }
 

@@ -587,7 +587,7 @@ pub const Graph = struct {
     pub fn init(allocator: *Allocator, node_specs: []const NodeSpec, node_immediate_subgraphs: []const Subgraph, subgraph_parents: []const Subgraph) !Graph {
         const num_nodes = node_specs.len;
         const num_subgraphs = subgraph_parents.len + 1; // +1 because subgraph 0 has no parent
-        dida.common.assert(
+        assert(
             node_immediate_subgraphs.len == num_nodes,
             "node_specs and node_immediate_subgraphs should have same length, got {} vs {}",
             .{ node_immediate_subgraphs.len, num_nodes },

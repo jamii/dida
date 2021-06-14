@@ -55,7 +55,7 @@ pub fn deepOrder(a: anytype, b: @TypeOf(a)) std.math.Order {
                     }
                     return .eq;
                 },
-                .Many, .C => @compileError("cannot deepOrder " ++ @typeName(T)),
+                .Many, .C => compileError("Cannot deepOrder {}", .{T}),
             }
         },
         .Optional => {
@@ -111,7 +111,7 @@ pub fn deepOrder(a: anytype, b: @TypeOf(a)) std.math.Order {
                 }
                 unreachable;
             } else {
-                @compileError("cannot deepOrder " ++ @typeName(T));
+                compileError("Cannot deepOrder {}", .{T});
             }
         },
         .Void => return .eq,
@@ -131,7 +131,7 @@ pub fn deepOrder(a: anytype, b: @TypeOf(a)) std.math.Order {
             }
         },
         .ErrorSet => return deepOrder(@errorToInt(a), @errorToInt(b)),
-        else => @compileError("cannot deepOrder " ++ @typeName(T)),
+        else => compileError("Cannot deepOrder {}", .{T}),
     }
 }
 
@@ -165,7 +165,7 @@ pub fn deepHashInto(hasher: anytype, key: anytype) void {
                         deepHashInto(hasher, element);
                     }
                 },
-                .Many, .C => @compileError("cannot deepHash " ++ @typeName(T)),
+                .Many, .C => compileError("Cannot deepHash {}", .{T}),
             }
         },
         .Optional => if (key) |k| deepHashInto(hasher, k),
@@ -190,10 +190,10 @@ pub fn deepHashInto(hasher: anytype, key: anytype) void {
                     }
                 }
                 unreachable;
-            } else @compileError("cannot deepHash " ++ @typeName(T));
+            } else compileError("cannot deepHash {}", .{T});
         },
         .Void => {},
-        else => @compileError("cannot deepHash " ++ @typeName(T)),
+        else => compileError("cannot deepHash {}", .{T}),
     }
 }
 
@@ -324,7 +324,7 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
                             if (pti.child == u8) {
                                 try std.fmt.format(writer, "\"{s}\"", .{thing});
                             } else {
-                                try std.fmt.format(writer, "[]{s}[\n", .{@typeName(pti.child)});
+                                try std.fmt.format(writer, "[]{s}[\n", .{pti.child});
                                 for (thing) |elem| {
                                     try writer.writeByteNTimes(' ', indent + 4);
                                     try dumpInto(writer, indent + 4, elem);
@@ -344,7 +344,7 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
                     if (ati.child == u8) {
                         try std.fmt.format(writer, "\"{s}\"", .{thing});
                     } else {
-                        try std.fmt.format(writer, "[{}]{s}[\n", .{ ati.len, @typeName(ati.child) });
+                        try std.fmt.format(writer, "[{}]{s}[\n", .{ ati.len, ati.child });
                         for (thing) |elem| {
                             try writer.writeByteNTimes(' ', indent + 4);
                             try dumpInto(writer, indent + 4, elem);

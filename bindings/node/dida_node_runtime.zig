@@ -102,19 +102,30 @@ fn napiGetCbInfo(env: c.napi_env, info: c.napi_callback_info, comptime expected_
 
 const usize_bits = @bitSizeOf(usize);
 comptime {
-    if (usize_bits != 64 and usize_bits != 32) {
-        @compileError("Can only handle 32 bit or 64 bit architectures");
-    }
+    dida.common.comptimeAssert(
+        usize_bits == 32 or usize_bits == 64,
+        "Can only handle 32 bit or 64 bit architectures, not {}",
+        .{usize_bits},
+    );
 }
 
 fn napiCreateExternal(env: c.napi_env, value: anytype) c.napi_value {
     const info = @typeInfo(@TypeOf(value));
-    if (comptime serdeStrategy(@TypeOf(value)) != .External)
-        @compileError("Used napiCreateExternal on a type that is expected to require napiCreateValue: " ++ @typeName(@TypeOf(value)));
-    if (!(info == .Pointer and info.Pointer.size == .One))
-        @compileError("napiCreateExternal should be called with *T, got " ++ @typeName(@TypeOf(value)));
-    if (comptime !hasJsConstructor(info.Pointer.child))
-        @compileError("Tried to create an external for a type that doesn't have a matching js constructor: " ++ @typeName(@TypeOf(value)));
+    dida.common.comptimeAssert(
+        comptime (serdeStrategy(@TypeOf(value)) == .External),
+        "Used napiCreateExternal on a type that is expected to require napiCreateValue: {}",
+        .{@TypeOf(value)},
+    );
+    dida.common.comptimeAssert(
+        info == .Pointer and info.Pointer.size == .One,
+        "napiCreateExternal should be called with *T, got {}",
+        .{@TypeOf(value)},
+    );
+    dida.common.comptimeAssert(
+        comptime hasJsConstructor(info.Pointer.child),
+        "Tried to create an external for a type that doesn't have a matching js constructor: {}",
+        .{@TypeOf(value)},
+    );
     const external = napiCall(c.napi_create_external, .{ env, @ptrCast(*c_void, value), null, null }, c.napi_value);
     const result = napiCall(c.napi_create_object, .{env}, c.napi_value);
     napiCall(c.napi_set_named_property, .{ env, result, "external", external }, void);
@@ -122,19 +133,28 @@ fn napiCreateExternal(env: c.napi_env, value: anytype) c.napi_value {
 }
 
 fn napiGetExternal(env: c.napi_env, value: c.napi_value, comptime ReturnType: type) ReturnType {
-    if (comptime serdeStrategy(ReturnType) != .External)
-        @compileError("Used napiGetExternal on a type that is expected to require napiGetValue: " ++ @typeName(ReturnType));
+    dida.common.comptimeAssert(
+        comptime (serdeStrategy(ReturnType) == .External),
+        "Used napiGetExternal on a type that is expected to require napiGetValue: {}",
+        .{ReturnType},
+    );
     const info = @typeInfo(ReturnType);
-    if (!(info == .Pointer and info.Pointer.size == .One))
-        @compileError("napiGetExternal should be called with *T, got " ++ @typeName(ReturnType));
+    dida.common.comptimeAssert(
+        info == .Pointer and info.Pointer.size == .One,
+        "napiGetExternal should be called with *T, got {}",
+        .{ReturnType},
+    );
     const external = napiCall(c.napi_get_named_property, .{ env, value, "external" }, c.napi_value);
     const ptr = napiCall(c.napi_get_value_external, .{ env, external }, ?*c_void);
     return @ptrCast(ReturnType, @alignCast(@alignOf(info.Pointer.child), ptr));
 }
 
 fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
-    if (comptime serdeStrategy(@TypeOf(value)) != .Value)
-        @compileError("Used napiCreateValue on a type that is expected to require napiCreateExternal: " ++ @typeName(@TypeOf(value)));
+    dida.common.comptimeAssert(
+        comptime (serdeStrategy(@TypeOf(value)) == .Value),
+        "Used napiCreateValue on a type that is expected to require napiCreateExternal: {}",
+        .{@TypeOf(value)},
+    );
 
     if (@TypeOf(value) == []const u8) {
         return napiCall(c.napi_create_string_utf8, .{ env, @ptrCast([*]const u8, value), value.len }, c.napi_value);
@@ -180,20 +200,23 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
             };
             const napi_fn = switch (@TypeOf(cast_value)) {
                 isize => if (usize_bits == 64) c.napi_create_int64 else c.napi_create_int32,
-                else => @compileError("Don't know how to create napi value for " ++ @typeName(@TypeOf(cast_value))),
+                else => compileError("Don't know how to create napi value for {}", .{@TypeOf(cast_value)}),
             };
             return napiCall(napi_fn, .{ env, cast_value }, c.napi_value);
         },
         .Float => {
             const napi_fn = switch (@TypeOf(value)) {
                 f64 => c.napi_create_double,
-                else => @compileError("Don't know how to create napi value for " ++ @typeName(@TypeOf(value))),
+                else => compileError("Don't know how to create napi value for {}", .{@TypeOf(value)}),
             };
             return napiCall(napi_fn, .{ env, value }, c.napi_value);
         },
         .Struct => |struct_info| {
-            if (comptime !hasJsConstructor(@TypeOf(value)))
-                @compileError("Tried to create a value for a struct type that doesn't have a matching js constructor: " ++ @typeName(@TypeOf(value)));
+            dida.common.comptimeAssert(
+                comptime hasJsConstructor(@TypeOf(value)),
+                "Tried to create a value for a struct type that doesn't have a matching js constructor: {}",
+                .{@TypeOf(value)},
+            );
             const result = napiCall(c.napi_create_object, .{env}, c.napi_value);
             inline for (struct_info.fields) |field_info| {
                 var field_name: [field_info.name.len:0]u8 = undefined;
@@ -206,8 +229,11 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
         },
         .Union => |union_info| {
             if (union_info.tag_type) |tag_type| {
-                if (comptime !hasJsConstructor(@TypeOf(value)))
-                    @compileError("Tried to create a value for a union type that doesn't have a matching js constructor: " ++ @typeName(@TypeOf(value)));
+                dida.common.comptimeAssert(
+                    comptime hasJsConstructor(@TypeOf(value)),
+                    "Tried to create a value for a union type that doesn't have a matching js constructor: {}",
+                    .{@TypeOf(value)},
+                );
                 const result = napiCall(c.napi_create_object, .{env}, c.napi_value);
                 const tag = std.meta.activeTag(value);
                 const tag_name = @tagName(tag);
@@ -223,7 +249,7 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
                 }
                 unreachable;
             } else {
-                @compileError("Can't create value for untagged union type " ++ @typeName(ReturnType));
+                compileError("Can't create value for untagged union type {}", .{ReturnType});
             }
         },
         .Enum => |enum_info| {
@@ -242,7 +268,7 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
                     return @intToEnum(ReturnType, field_info.value);
                 }
             }
-            dida.common.panic("Type {s} does not contain a tag named \"{s}\"", .{ @typeName(ReturnType), tag_name });
+            dida.common.panic("Type {s} does not contain a tag named \"{s}\"", .{ ReturnType, tag_name });
         },
         .Pointer => |pointer_info| {
             switch (pointer_info.size) {
@@ -254,7 +280,7 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
                     }
                     return napi_array;
                 },
-                else => @compileError("Dont know how to create value of type " ++ @typeName(@TypeOf(value))),
+                else => compileError("Dont know how to create value of type {}", .{@TypeOf(value)}),
             }
         },
         .Optional => {
@@ -266,7 +292,7 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
         .Void => {
             return napiCall(c.napi_get_undefined, .{env}, c.napi_value);
         },
-        else => @compileError("Dont know how to create value of type " ++ @typeName(@TypeOf(value))),
+        else => compileError("Dont know how to create value of type {}", .{@TypeOf(value)}),
     }
 }
 
@@ -290,9 +316,11 @@ const NapiMapper = struct {
 };
 
 fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type) ReturnType {
-    //dida.common.dump(.{ @typeName(ReturnType), napiCall(c.napi_typeof, .{ env, value }, c.napi_valuetype) });
-    if (comptime serdeStrategy(ReturnType) != .Value)
-        @compileError("Used napiGetValue on a type that is expected to require napiGetExternal: " ++ @typeName(ReturnType));
+    dida.common.comptimeAssert(
+        comptime (serdeStrategy(ReturnType) == .Value),
+        "Used napiGetValue on a type that is expected to require napiGetExternal: {}",
+        .{ReturnType},
+    );
 
     if (ReturnType == []const u8) {
         const len = napiCall(c.napi_get_value_string_utf8, .{ env, value, null, 0 }, usize);
@@ -336,7 +364,7 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
         .Int => {
             const napi_fn = switch (ReturnType) {
                 usize, isize => if (usize_bits == 64) c.napi_get_value_int64 else c.napi.get_value_int32,
-                else => @compileError("Don't know how to create napi value for " ++ ReturnType),
+                else => compileError("Don't know how to create napi value for {}", .{ReturnType}),
             };
             const CastType = switch (ReturnType) {
                 usize => isize,
@@ -348,7 +376,7 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
         .Float => {
             const napi_fn = switch (ReturnType) {
                 f64 => c.napi_get_value_double,
-                else => @compileError("Don't know how to create napi value for " ++ ReturnType),
+                else => compileError("Don't know how to create napi value for {}", .{ReturnType}),
             };
             return napiCall(napi_fn, .{ env, value }, ReturnType);
         },
@@ -375,7 +403,7 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
                 }
                 unreachable;
             } else {
-                @compileError("Can't get value for untagged union type " ++ @typeName(ReturnType));
+                compileError("Can't get value for untagged union type {}", .{ReturnType});
             }
         },
         .Enum => |enum_info| {
@@ -394,7 +422,7 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
                     return @intToEnum(ReturnType, field_info.value);
                 }
             }
-            dida.common.panic("Type {s} does not contain a tag named \"{s}\"", .{ @typeName(ReturnType), tag_name });
+            dida.common.panic("Type {s} does not contain a tag named \"{s}\"", .{ ReturnType, tag_name });
         },
         .Array => |array_info| {
             const napi_len = napiCall(c.napi_get_array_length, .{ env, value }, u32);
@@ -417,7 +445,7 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
                     }
                     return result;
                 },
-                else => @compileError("Dont know how to get value for type " ++ @typeName(ReturnType)),
+                else => compileError("Dont know how to get value for type {}", .{ReturnType}),
             }
         },
         .Optional => |optional_info| {
@@ -430,6 +458,6 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
         .Void => {
             return {};
         },
-        else => @compileError("Dont know how to get value for type " ++ @typeName(ReturnType)),
+        else => compileError("Dont know how to get value for type {}", .{ReturnType}),
     }
 }

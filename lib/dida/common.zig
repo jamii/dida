@@ -18,6 +18,14 @@ pub fn assert(condition: bool, comptime message: []const u8, args: anytype) void
     if (!condition) panic(message, args);
 }
 
+pub fn comptimeAssert(comptime condition: bool, comptime message: []const u8, args: anytype) void {
+    if (!condition) compileError(message, args);
+}
+
+pub fn compileError(comptime message: []const u8, args: anytype) void {
+    @compileError(std.fmt.comptimePrint(message, args));
+}
+
 pub fn DeepHashMap(comptime K: type, comptime V: type) type {
     return std.HashMap(K, V, dida.meta.DeepHashContext(K), std.hash_map.DefaultMaxLoadPercentage);
 }
