@@ -1,4 +1,4 @@
-// TODO this whole file is just speculative atm
+// TODO this is just a proof of concept, api might change a lot
 
 usingnamespace @import("./common.zig");
 
