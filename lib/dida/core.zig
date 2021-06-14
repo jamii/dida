@@ -84,7 +84,7 @@ pub const Timestamp = struct {
     }
 
     /// A partial ordering on timestamps such that if a change at timestamp A could ever cause a change at timestamp B, then A <= B.
-    /// This is used to process Changes in an order that is guaranteed to converge, and to define the behavior of Frontiers.
+    /// This is used to process changes in an order that is guaranteed to converge, and to define the behavior of frontiers.
     pub fn causalOrder(self: Timestamp, other: Timestamp) PartialOrder {
         assert(self.coords.len == other.coords.len, "Tried to compute causalOrder of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
         var lt: usize = 0;
