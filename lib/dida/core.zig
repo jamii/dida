@@ -629,14 +629,15 @@ pub const Graph = struct {
             .downstream_node_inputs = frozen_downstream_node_inputs,
         };
 
-        self.validate();
+        try self.validate();
 
         return self;
     }
 
     /// Assert that the graph obeys all the constraints required to make the progress tracking algorithm work.
-    pub fn validate(self: Graph) void {
+    pub fn validate(self: Graph) !void {
         const num_nodes = self.node_specs.len;
+
         for (self.subgraph_parents) |parent, subgraph_id_minus_one| {
             assert(
                 parent.id < subgraph_id_minus_one + 1,
@@ -644,6 +645,7 @@ pub const Graph = struct {
                 .{},
             );
         }
+
         for (self.node_specs) |node_spec, node_id| {
             for (node_spec.getInputs()) |input_node, input_ix| {
                 assert(input_node.id < num_nodes, "All input nodes must exist", .{});
@@ -706,6 +708,37 @@ pub const Graph = struct {
                             .{},
                         );
                     },
+                }
+            }
+        }
+
+        var earliest_subgraph_pops = DeepHashMap(Subgraph, Node).init(self.allocator);
+        var latest_subgraph_pushes = DeepHashMap(Subgraph, Node).init(self.allocator);
+        for (self.node_specs) |node_spec, node_id| {
+            switch (node_spec) {
+                .TimestampPush => |spec| {
+                    const subgraph = last(Subgraph, self.node_subgraphs[node_id]);
+                    const entry = try latest_subgraph_pushes.getOrPutValue(subgraph, .{ .id = node_id });
+                    entry.value_ptr.id = max(entry.value_ptr.id, node_id);
+                },
+                .TimestampPop => |spec| {
+                    const subgraph = last(Subgraph, self.node_subgraphs[spec.input.id]);
+                    const entry = try earliest_subgraph_pops.getOrPutValue(subgraph, .{ .id = node_id });
+                    entry.value_ptr.id = min(entry.value_ptr.id, node_id);
+                },
+                else => {},
+            }
+        }
+        var subgraph_id: usize = 1;
+        while (subgraph_id - 1 < self.subgraph_parents.len) : (subgraph_id += 1) {
+            if (earliest_subgraph_pops.get(.{ .id = subgraph_id })) |earliest| {
+                if (latest_subgraph_pushes.get(.{ .id = subgraph_id })) |latest| {
+                    // TODO This constraint works, but is clunky. Could instead test directly for the case where a path exits and re-enters the subgraph without going backwards.
+                    assert(
+                        earliest.id >= latest.id,
+                        "Every TimestampPush into a subgraph must have an earlier node id than every TimestampPop from that subgraph. Found TimestampPush at {} later than TimestampPop at {}",
+                        .{ latest, earliest },
+                    );
                 }
             }
         }
