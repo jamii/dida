@@ -398,3 +398,144 @@ test "test frontier order" {
         .none,
     );
 }
+
+fn testSupportFrontierUpdate(
+    allocator: *std.mem.Allocator,
+    anon_support: anytype,
+    anon_update: anytype,
+    anon_expected_frontier: anytype,
+    anon_expected_changes: anytype,
+) !void {
+    const support = dida.sugar.coerceAnonToSlice(allocator, dida.core.FrontierChange, anon_support);
+    var frontier = try dida.core.SupportedFrontier.init(allocator);
+    for (support) |change| {
+        var changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
+        try frontier.update(change.timestamp, change.diff, &changes_into);
+    }
+    const update = dida.sugar.coerceAnonTo(allocator, dida.core.FrontierChange, anon_update);
+    const expected_frontier_timestamps = dida.sugar.coerceAnonToSlice(allocator, dida.core.Timestamp, anon_expected_frontier);
+    const expected_changes = dida.sugar.coerceAnonToSlice(allocator, dida.core.FrontierChange, anon_expected_changes);
+    var actual_changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
+    try frontier.update(update.timestamp, update.diff, &actual_changes_into);
+    var actual_frontier_timestamps = std.ArrayList(dida.core.Timestamp).init(allocator);
+    var iter = frontier.frontier.timestamps.iterator();
+    while (iter.next()) |entry| try actual_frontier_timestamps.append(entry.key_ptr.*);
+    std.sort.sort(dida.core.Timestamp, actual_frontier_timestamps.items, {}, struct {
+        fn lessThan(_: void, a: dida.core.Timestamp, b: dida.core.Timestamp) bool {
+            return a.lexicalOrder(b) == .lt;
+        }
+    }.lessThan);
+    std.sort.sort(dida.core.FrontierChange, actual_changes_into.items, {}, struct {
+        fn lessThan(_: void, a: dida.core.FrontierChange, b: dida.core.FrontierChange) bool {
+            return dida.meta.deepOrder(a, b) == .lt;
+        }
+    }.lessThan);
+    try expectDeepEqual(actual_frontier_timestamps.items, expected_frontier_timestamps);
+    try expectDeepEqual(actual_changes_into.items, expected_changes);
+}
+
+test "test support frontier update" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = &arena.allocator;
+    try testSupportFrontierUpdate(
+        a,
+        .{},
+        .{ .{ 0, 0 }, 1 },
+        .{
+            .{ 0, 0 },
+        },
+        .{
+            .{ .{ 0, 0 }, 1 },
+        },
+    );
+    try testSupportFrontierUpdate(
+        a,
+        .{
+            .{ .{ 0, 0 }, 1 },
+        },
+        .{ .{ 0, 0 }, 1 },
+        .{
+            .{ 0, 0 },
+        },
+        .{},
+    );
+    try testSupportFrontierUpdate(
+        a,
+        .{
+            .{ .{ 0, 0 }, 1 },
+        },
+        .{ .{ 0, 0 }, -1 },
+        .{},
+        .{
+            .{ .{ 0, 0 }, -1 },
+        },
+    );
+    try testSupportFrontierUpdate(
+        a,
+        .{
+            .{ .{ 0, 0 }, 2 },
+        },
+        .{ .{ 0, 0 }, -1 },
+        .{
+            .{ 0, 0 },
+        },
+        .{},
+    );
+    try testSupportFrontierUpdate(
+        a,
+        .{
+            .{ .{ 0, 0 }, 1 },
+            .{ .{ 1, 1 }, 1 },
+        },
+        .{ .{ 0, 0 }, -1 },
+        .{
+            .{ 1, 1 },
+        },
+        .{
+            .{ .{ 0, 0 }, -1 },
+            .{ .{ 1, 1 }, 1 },
+        },
+    );
+    try testSupportFrontierUpdate(
+        a,
+        .{
+            .{ .{ 1, 1 }, 1 },
+        },
+        .{ .{ 0, 0 }, 1 },
+        .{
+            .{ 0, 0 },
+        },
+        .{
+            .{ .{ 0, 0 }, 1 },
+            .{ .{ 1, 1 }, -1 },
+        },
+    );
+    try testSupportFrontierUpdate(
+        a,
+        .{
+            .{ .{ 0, 0 }, 1 },
+        },
+        .{ .{ 1, 1 }, 1 },
+        .{
+            .{ 0, 0 },
+        },
+        .{},
+    );
+    try testSupportFrontierUpdate(
+        a,
+        .{
+            .{ .{ 2, 0 }, 1 },
+            .{ .{ 0, 1 }, 1 },
+        },
+        .{ .{ 1, 0 }, 1 },
+        .{
+            .{ 0, 1 },
+            .{ 1, 0 },
+        },
+        .{
+            .{ .{ 1, 0 }, 1 },
+            .{ .{ 2, 0 }, -1 },
+        },
+    );
+}
