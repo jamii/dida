@@ -174,8 +174,8 @@ pub const ChangeBatchBuilder = struct {
             } else {
                 if (prev_change.diff != 0) {
                     prev_i += 1;
-                    self.changes.items[prev_i] = change;
                 }
+                self.changes.items[prev_i] = change;
             }
         }
         if (self.changes.items[prev_i].diff != 0) prev_i += 1;

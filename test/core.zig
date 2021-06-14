@@ -112,7 +112,6 @@ test "change batch builder" {
             .{ .{}, .{}, 1 },
         },
     );
-
     try testChangeBatchBuilder(
         a,
         .{
@@ -122,6 +121,59 @@ test "change batch builder" {
         },
         .{
             .{ .{"b"}, .{}, 1 },
+        },
+    );
+    try testChangeBatchBuilder(
+        a,
+        .{
+            .{ .{"a"}, .{}, 1 },
+            .{ .{"b"}, .{}, 1 },
+            .{ .{"a"}, .{}, -1 },
+            .{ .{"b"}, .{}, -1 },
+        },
+        .{},
+    );
+    try testChangeBatchBuilder(
+        a,
+        .{
+            .{ .{"a"}, .{}, 1 },
+            .{ .{"b"}, .{}, 1 },
+            .{ .{"a"}, .{}, 1 },
+            .{ .{"b"}, .{}, -1 },
+        },
+        .{
+            .{ .{"a"}, .{}, 2 },
+        },
+    );
+    try testChangeBatchBuilder(
+        a,
+        .{
+            .{ .{"a"}, .{}, 1 },
+            .{ .{"a"}, .{}, -1 },
+            .{ .{"a"}, .{}, 1 },
+        },
+        .{
+            .{ .{"a"}, .{}, 1 },
+        },
+    );
+    try testChangeBatchBuilder(
+        a,
+        .{
+            .{ .{"a"}, .{}, 0 },
+            .{ .{"a"}, .{}, 0 },
+            .{ .{"a"}, .{}, 0 },
+        },
+        .{},
+    );
+    try testChangeBatchBuilder(
+        a,
+        .{
+            .{ .{"a"}, .{}, 0 },
+            .{ .{"a"}, .{}, 0 },
+            .{ .{"a"}, .{}, 1 },
+        },
+        .{
+            .{ .{"a"}, .{}, 1 },
         },
     );
 }
