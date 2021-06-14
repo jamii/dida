@@ -79,6 +79,19 @@ Compared to differential dataflow, dida aims to:
     * [ ] Expose as state machine for easy simulation
   * [ ] Memory management
 * [ ] Testing
+  * [x] Unit test timestamp ordering / lub
+  * [x] Unit test batch builder
+  * [x] Unit test frontier move / order
+  * [x] Unit test supported frontier update
+  * [ ] Test index invariants
+  * [ ] Unit test that known failure modes for graphs don't validate
+  * [ ] Test that random graphs either fail to validate or have no paths where `orderPointstamps(start,end) != .lt`
+  * [ ] Test that random progress tracking updates never cause frontiers to go backwards
+  * [ ] Test that random reorderings of updates to progress tracker have same final result
+  * [ ] Test that random reorderings of inputs to dataflows have same final result
+  * [ ] Add debug-mode validation to progress tracker, shard
+    * [ ] Scan data and validate that no pointers are aliased (eg rows, timestamps in different indexes)
+  * [ ] Integration test against problems with known results (eg TPC)
 * [ ] Bindings
   * [ ] Wasm
   * [ ] Node.js

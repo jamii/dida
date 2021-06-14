@@ -434,7 +434,7 @@ fn testSupportFrontierUpdate(
     try expectDeepEqual(actual_changes_into.items, expected_changes);
 }
 
-test "test support frontier update" {
+test "test supported frontier update" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = &arena.allocator;
