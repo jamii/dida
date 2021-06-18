@@ -86,8 +86,8 @@ fn testChangeBatchBuilder(
     anon_input_changes: anytype,
     anon_expected_changes: anytype,
 ) !void {
-    const input_changes = dida.sugar.coerceAnonToSlice(allocator, dida.core.Change, anon_input_changes);
-    const expected_changes = dida.sugar.coerceAnonToSlice(allocator, dida.core.Change, anon_expected_changes);
+    const input_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_input_changes);
+    const expected_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_expected_changes);
     var builder = dida.core.ChangeBatchBuilder.init(allocator);
     for (input_changes) |change| {
         try builder.changes.append(change);
@@ -202,15 +202,15 @@ fn testFrontierMove(
     anon_expected_frontier: anytype,
     anon_expected_changes: anytype,
 ) !void {
-    const frontier_timestamps = dida.sugar.coerceAnonToSlice(allocator, dida.core.Timestamp, anon_frontier);
+    const frontier_timestamps = dida.sugar.coerceAnonTo(allocator, []dida.core.Timestamp, anon_frontier);
     var frontier = dida.core.Frontier.init(allocator);
     for (frontier_timestamps) |frontier_timestamp| {
         var changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
         try frontier.move(.Later, frontier_timestamp, &changes_into);
     }
     const timestamp = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_timestamp);
-    const expected_frontier_timestamps = dida.sugar.coerceAnonToSlice(allocator, dida.core.Timestamp, anon_expected_frontier);
-    const expected_changes = dida.sugar.coerceAnonToSlice(allocator, dida.core.FrontierChange, anon_expected_changes);
+    const expected_frontier_timestamps = dida.sugar.coerceAnonTo(allocator, []dida.core.Timestamp, anon_expected_frontier);
+    const expected_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.FrontierChange, anon_expected_changes);
     var actual_changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
     try frontier.move(direction, timestamp, &actual_changes_into);
     var actual_frontier_timestamps = std.ArrayList(dida.core.Timestamp).init(allocator);
@@ -318,7 +318,7 @@ fn testFrontierOrder(
     anon_timestamp: anytype,
     expected_order: dida.core.PartialOrder,
 ) !void {
-    const frontier_timestamps = dida.sugar.coerceAnonToSlice(allocator, dida.core.Timestamp, anon_frontier);
+    const frontier_timestamps = dida.sugar.coerceAnonTo(allocator, []dida.core.Timestamp, anon_frontier);
     var frontier = dida.core.Frontier.init(allocator);
     for (frontier_timestamps) |frontier_timestamp| {
         var changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
@@ -406,15 +406,15 @@ fn testSupportFrontierUpdate(
     anon_expected_frontier: anytype,
     anon_expected_changes: anytype,
 ) !void {
-    const support = dida.sugar.coerceAnonToSlice(allocator, dida.core.FrontierChange, anon_support);
+    const support = dida.sugar.coerceAnonTo(allocator, []dida.core.FrontierChange, anon_support);
     var frontier = try dida.core.SupportedFrontier.init(allocator);
     for (support) |change| {
         var changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
         try frontier.update(change.timestamp, change.diff, &changes_into);
     }
     const update = dida.sugar.coerceAnonTo(allocator, dida.core.FrontierChange, anon_update);
-    const expected_frontier_timestamps = dida.sugar.coerceAnonToSlice(allocator, dida.core.Timestamp, anon_expected_frontier);
-    const expected_changes = dida.sugar.coerceAnonToSlice(allocator, dida.core.FrontierChange, anon_expected_changes);
+    const expected_frontier_timestamps = dida.sugar.coerceAnonTo(allocator, []dida.core.Timestamp, anon_expected_frontier);
+    const expected_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.FrontierChange, anon_expected_changes);
     var actual_changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
     try frontier.update(update.timestamp, update.diff, &actual_changes_into);
     var actual_frontier_timestamps = std.ArrayList(dida.core.Timestamp).init(allocator);
@@ -540,8 +540,199 @@ test "test supported frontier update" {
     );
 }
 
+pub fn testIndexAdd(
+    allocator: *std.mem.Allocator,
+    anon_change_batches: anytype,
+    anon_expected_changes: anytype,
+) !void {
+    var index = dida.core.Index.init(allocator);
+    const change_batches = dida.sugar.coerceAnonTo(allocator, []dida.core.ChangeBatch, anon_change_batches);
+    const expected_changes = dida.sugar.coerceAnonTo(allocator, [][]dida.core.Change, anon_expected_changes);
+    for (change_batches) |change_batch| {
+        try index.addChangeBatch(change_batch);
+    }
+    const actual_changes = try allocator.alloc([]dida.core.Change, index.change_batches.items.len);
+    for (actual_changes) |*changes, i| changes.* = index.change_batches.items[i].changes;
+    try expectDeepEqual(actual_changes, expected_changes);
+}
+
+test "test index add" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = &arena.allocator;
+    try testIndexAdd(
+        a,
+        .{},
+        .{},
+    );
+    try testIndexAdd(
+        a,
+        .{
+            .{
+                .{ .{"a"}, .{0}, 1 },
+            },
+        },
+        .{
+            .{
+                .{ .{"a"}, .{0}, 1 },
+            },
+        },
+    );
+    try testIndexAdd(
+        a,
+        .{
+            .{
+                .{ .{"a"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"a"}, .{0}, 1 },
+            },
+        },
+        .{
+            .{
+                .{ .{"a"}, .{0}, 2 },
+            },
+        },
+    );
+    try testIndexAdd(
+        a,
+        .{
+            .{
+                .{ .{"a"}, .{0}, 1 },
+                .{ .{"b"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"a"}, .{0}, 1 },
+            },
+        },
+        .{
+            .{
+                .{ .{"a"}, .{0}, 1 },
+                .{ .{"b"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"a"}, .{0}, 1 },
+            },
+        },
+    );
+    try testIndexAdd(
+        a,
+        .{
+            .{
+                .{ .{"a"}, .{0}, 1 },
+                .{ .{"b"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"a"}, .{0}, 1 },
+                .{ .{"b"}, .{0}, -1 },
+            },
+        },
+        .{
+            .{
+                .{ .{"a"}, .{0}, 2 },
+            },
+        },
+    );
+    try testIndexAdd(
+        a,
+        .{
+            .{
+                .{ .{"a"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"b"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"c"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"d"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"e"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"f"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"g"}, .{0}, 1 },
+            },
+        },
+        .{
+            .{
+                .{ .{"a"}, .{0}, 1 },
+                .{ .{"b"}, .{0}, 1 },
+                .{ .{"c"}, .{0}, 1 },
+                .{ .{"d"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"e"}, .{0}, 1 },
+                .{ .{"f"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"g"}, .{0}, 1 },
+            },
+        },
+    );
+    // TODO bulk adds break the leveling
+    try testIndexAdd(
+        a,
+        .{
+            .{
+                .{ .{"a"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"b"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"c"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"d"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"e"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"f"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"g"}, .{0}, 1 },
+            },
+            .{
+                .{ .{"h"}, .{0}, 1 },
+                .{ .{"i"}, .{0}, 1 },
+                .{ .{"j"}, .{0}, 1 },
+                .{ .{"k"}, .{0}, 1 },
+                .{ .{"l"}, .{0}, 1 },
+                .{ .{"m"}, .{0}, 1 },
+                .{ .{"n"}, .{0}, 1 },
+                .{ .{"o"}, .{0}, 1 },
+            },
+        },
+        .{
+            .{
+                .{ .{"a"}, .{0}, 1 },
+                .{ .{"b"}, .{0}, 1 },
+                .{ .{"c"}, .{0}, 1 },
+                .{ .{"d"}, .{0}, 1 },
+                .{ .{"e"}, .{0}, 1 },
+                .{ .{"f"}, .{0}, 1 },
+                .{ .{"g"}, .{0}, 1 },
+                .{ .{"h"}, .{0}, 1 },
+                .{ .{"i"}, .{0}, 1 },
+                .{ .{"j"}, .{0}, 1 },
+                .{ .{"k"}, .{0}, 1 },
+                .{ .{"l"}, .{0}, 1 },
+                .{ .{"m"}, .{0}, 1 },
+                .{ .{"n"}, .{0}, 1 },
+                .{ .{"o"}, .{0}, 1 },
+            },
+        },
+    );
+}
+
 // TODO:
-//   Index
 //   ProgressTracker
 //   Graph (make validate return error?)
 //   whole dataflows

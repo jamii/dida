@@ -189,7 +189,7 @@ pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
         }
 
         pub fn project(self: Self, columns: anytype) Node(.Map) {
-            return self.projectInner(coerceAnonToSlice(self.sugar.allocator, usize, columns));
+            return self.projectInner(coerceAnonTo(self.sugar.allocator, []usize, columns));
         }
 
         fn projectInner(self: Self, columns: []usize) Node(.Map) {
@@ -271,45 +271,55 @@ pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
     };
 }
 
-pub fn coerceAnonToSlice(allocator: *Allocator, comptime Elem: type, anon: anytype) []Elem {
-    const slice = assert_ok(allocator.alloc(Elem, anon.len));
-    comptime var i: usize = 0;
-    inline while (i < anon.len) : (i += 1) {
-        slice[i] = coerceAnonTo(allocator, Elem, anon[i]);
-    }
-    return slice;
-}
-
 pub fn coerceAnonTo(allocator: *Allocator, comptime T: type, anon: anytype) T {
-    switch (T) {
-        dida.core.Timestamp => {
-            return .{ .coords = coerceAnonToSlice(allocator, usize, anon) };
-        },
-        dida.core.Change => {
-            return .{
-                .row = coerceAnonTo(allocator, dida.core.Row, anon[0]),
-                .timestamp = coerceAnonTo(allocator, dida.core.Timestamp, anon[1]),
-                .diff = anon[2],
-            };
-        },
-        dida.core.Row => {
-            return .{ .values = coerceAnonToSlice(allocator, dida.core.Value, anon) };
-        },
-        dida.core.Value => {
-            switch (@typeInfo(@TypeOf(anon))) {
-                .Int => return .{ .Number = anon },
-                .Pointer => return .{ .String = anon },
-                else => compileError("Don't know how to coerce {} to Value", .{@TypeOf(anon)}),
-            }
-        },
-        dida.core.FrontierChange => {
-            return .{
-                .timestamp = coerceAnonTo(allocator, dida.core.Timestamp, anon[0]),
-                .diff = anon[1],
-            };
-        },
-        usize => return anon,
-        else => compileError("Don't know how to coerce anon to {}", .{T}),
+    const ti = @typeInfo(T);
+    if (ti == .Pointer and ti.Pointer.size == .Slice) {
+        const slice = assert_ok(allocator.alloc(ti.Pointer.child, anon.len));
+        comptime var i: usize = 0;
+        inline while (i < anon.len) : (i += 1) {
+            slice[i] = coerceAnonTo(allocator, ti.Pointer.child, anon[i]);
+        }
+        return slice;
+    } else {
+        switch (T) {
+            dida.core.Timestamp => {
+                return .{ .coords = coerceAnonTo(allocator, []usize, anon) };
+            },
+            dida.core.Change => {
+                return .{
+                    .row = coerceAnonTo(allocator, dida.core.Row, anon[0]),
+                    .timestamp = coerceAnonTo(allocator, dida.core.Timestamp, anon[1]),
+                    .diff = anon[2],
+                };
+            },
+            ?dida.core.ChangeBatch => {
+                const changes = coerceAnonTo(allocator, []dida.core.Change, anon);
+                var builder = dida.core.ChangeBatchBuilder.init(allocator);
+                assert_ok(builder.changes.appendSlice(changes));
+                return assert_ok(builder.finishAndReset());
+            },
+            dida.core.ChangeBatch => {
+                return coerceAnonTo(allocator, ?dida.core.ChangeBatch, anon).?;
+            },
+            dida.core.Row => {
+                return .{ .values = coerceAnonTo(allocator, []dida.core.Value, anon) };
+            },
+            dida.core.Value => {
+                switch (@typeInfo(@TypeOf(anon))) {
+                    .Int => return .{ .Number = anon },
+                    .Pointer => return .{ .String = anon },
+                    else => compileError("Don't know how to coerce {} to Value", .{@TypeOf(anon)}),
+                }
+            },
+            dida.core.FrontierChange => {
+                return .{
+                    .timestamp = coerceAnonTo(allocator, dida.core.Timestamp, anon[0]),
+                    .diff = anon[1],
+                };
+            },
+            usize => return anon,
+            else => compileError("Don't know how to coerce anon to {}", .{T}),
+        }
     }
 }
 

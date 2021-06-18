@@ -348,9 +348,9 @@ pub const ChangeBatchBuilder = struct {
 
 /// Represents the state of a bag at a variety of timestamps.
 /// Allows efficiently adding new changes and querying previous changes.
-// TODO Currently dumb. Replace with LSM tree and provide cursors.
 pub const Index = struct {
     allocator: *Allocator,
+    /// Invariant: each batch is at most half the size of it's left neighbour
     change_batches: ArrayList(ChangeBatch),
 
     pub fn init(allocator: *Allocator) Index {
@@ -358,6 +358,24 @@ pub const Index = struct {
             .allocator = allocator,
             .change_batches = ArrayList(ChangeBatch).init(allocator),
         };
+    }
+
+    // TODO merge incrementally to avoid latency spikes
+    pub fn addChangeBatch(self: *Index, change_batch: ChangeBatch) !void {
+        try self.change_batches.append(change_batch);
+        while (true) {
+            const len = self.change_batches.items.len;
+            if (len <= 1 or @divFloor(self.change_batches.items[len - 2].changes.len, 2) >= self.change_batches.items[len - 1].changes.len) break;
+            const batch_a = self.change_batches.pop();
+            const batch_b = self.change_batches.pop();
+            var builder = ChangeBatchBuilder.init(self.allocator);
+            try builder.changes.ensureTotalCapacity(batch_a.changes.len + batch_b.changes.len);
+            try builder.changes.appendSlice(batch_a.changes);
+            try builder.changes.appendSlice(batch_b.changes);
+            if (try builder.finishAndReset()) |batch_ab| {
+                try self.change_batches.append(batch_ab);
+            }
+        }
     }
 
     /// Return the state of a the bag as of `timestamp`.
@@ -1169,7 +1187,7 @@ pub const Shard = struct {
                 }
                 node_state.Index.pending_changes = pending_changes;
                 if (try change_batch_builder.finishAndReset()) |change_batch| {
-                    try node_state.Index.index.change_batches.append(change_batch);
+                    try node_state.Index.index.addChangeBatch(change_batch);
                     try self.emitChangeBatch(node, change_batch);
                     for (change_batch.changes) |change| {
                         _ = try self.applyFrontierUpdate(node, change.timestamp, -1);
@@ -1239,7 +1257,7 @@ pub const Shard = struct {
 
                 // Emit changes
                 if (try change_batch_builder.finishAndReset()) |change_batch| {
-                    try output_index.change_batches.append(change_batch);
+                    try output_index.addChangeBatch(change_batch);
                     try self.emitChangeBatch(node, change_batch);
                 }
 
