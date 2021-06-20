@@ -290,22 +290,29 @@ pub const ChangeBatch = struct {
     // Invariant: no two changes with same row/timestamp
     changes: []Change,
 
-    pub fn seekCurrentRowEnd(self: ChangeBatch, from: usize) usize {
+    pub fn seekCurrentRowEnd(self: ChangeBatch, from: usize, key_columns: usize) usize {
         var ix = from;
         const row = self.changes[ix].row;
         ix += 1;
-        while (ix < self.changes.len and dida.meta.deepEqual(row, self.changes[ix].row)) ix += 1;
+        while (ix < self.changes.len and
+            dida.meta.deepEqual(
+            row.values[0..key_columns],
+            self.changes[ix].row.values[0..key_columns],
+        )) ix += 1;
         return ix;
     }
 
-    pub fn seekRowStart(self: ChangeBatch, from: usize, row: Row) usize {
+    pub fn seekRowStart(self: ChangeBatch, from: usize, row: Row, key_columns: usize) usize {
         assert(
             from < self.changes.len,
             "Can't seek to row from a start point that is at or beyond the end of the batch",
             .{},
         );
         assert(
-            dida.meta.deepOrder(self.changes[from].row, row) == .lt,
+            dida.meta.deepOrder(
+                self.changes[from].row.values[0..key_columns],
+                row.values[0..key_columns],
+            ) == .lt,
             "Can't seek to row from a start point that is already at or beyond that row",
             .{},
         );
@@ -317,31 +324,55 @@ pub const ChangeBatch = struct {
                 skip = self.changes.len - ix;
                 break;
             }
-            if (dida.meta.deepOrder(self.changes[next].row, row) != .lt)
+            if (dida.meta.deepOrder(
+                self.changes[next].row.values[0..key_columns],
+                row.values[0..key_columns],
+            ) != .lt)
                 break;
             ix = next;
             skip *= 2;
         }
         // now ix is < row and ix+skip is >= row
-        assert(dida.meta.deepOrder(self.changes[ix].row, row) == .lt, "", .{});
-        assert(ix + skip >= self.changes.len or dida.meta.deepOrder(self.changes[ix + skip].row, row) != .lt, "", .{});
+        assert(
+            dida.meta.deepOrder(
+                self.changes[ix].row.values[0..key_columns],
+                row.values[0..key_columns],
+            ) == .lt,
+            "",
+            .{},
+        );
+        assert(
+            ix + skip >= self.changes.len or
+                dida.meta.deepOrder(
+                self.changes[ix + skip].row.values[0..key_columns],
+                row.values[0..key_columns],
+            ) != .lt,
+            "",
+            .{},
+        );
         while (skip > 1) {
             skip = @divTrunc(skip, 2);
             const next = ix + skip;
-            if (dida.meta.deepOrder(self.changes[next].row, row) == .lt)
+            if (dida.meta.deepOrder(
+                self.changes[next].row.values[0..key_columns],
+                row.values[0..key_columns],
+            ) == .lt)
                 ix = next;
         }
         return ix + skip;
     }
 
-    pub fn mergeJoin(self: ChangeBatch, other: ChangeBatch, into_builder: *ChangeBatchBuilder) !void {
+    pub fn mergeJoin(self: ChangeBatch, other: ChangeBatch, key_columns: usize, into_builder: *ChangeBatchBuilder) !void {
         var ix_self: usize = 0;
         var ix_other: usize = 0;
         while (ix_self < self.changes.len and ix_other < other.changes.len) {
-            switch (dida.meta.deepOrder(self.changes[ix_self].row, other.changes[ix_other].row)) {
+            switch (dida.meta.deepOrder(
+                self.changes[ix_self].row.values[0..key_columns],
+                other.changes[ix_other].row.values[0..key_columns],
+            )) {
                 .eq => {
-                    const ix_self_end = self.seekCurrentRowEnd(ix_self);
-                    const ix_other_end = other.seekCurrentRowEnd(ix_other);
+                    const ix_self_end = self.seekCurrentRowEnd(ix_self, key_columns);
+                    const ix_other_end = other.seekCurrentRowEnd(ix_other, key_columns);
                     const ix_other_start = ix_other;
                     while (ix_self < ix_self_end) : (ix_self += 1) {
                         ix_other = ix_other_start;
@@ -349,7 +380,12 @@ pub const ChangeBatch = struct {
                             const change_self = self.changes[ix_self];
                             const change_other = other.changes[ix_other];
                             try into_builder.changes.append(.{
-                                .row = change_self.row,
+                                .row = .{
+                                    .values = try std.mem.concat(into_builder.allocator, Value, &[_][]const Value{
+                                        change_self.row.values,
+                                        change_other.row.values[key_columns..],
+                                    }),
+                                },
                                 .timestamp = try Timestamp.leastUpperBound(into_builder.allocator, change_self.timestamp, change_other.timestamp),
                                 .diff = change_self.diff * change_other.diff,
                             });
@@ -358,10 +394,10 @@ pub const ChangeBatch = struct {
                     // now ix_self and ix_other are both at next row
                 },
                 .lt => {
-                    ix_self = self.seekRowStart(ix_self, other.changes[ix_other].row);
+                    ix_self = self.seekRowStart(ix_self, other.changes[ix_other].row, key_columns);
                 },
                 .gt => {
-                    ix_other = other.seekRowStart(ix_other, self.changes[ix_self].row);
+                    ix_other = other.seekRowStart(ix_other, self.changes[ix_self].row, key_columns);
                 },
             }
         }
@@ -456,10 +492,10 @@ pub const Index = struct {
     }
 
     // TODO would it be better to merge against a cursor, to avoid touching change_batch multiple times?
-    pub fn mergeJoin(self: *Index, change_batch: ChangeBatch, into_builder: *ChangeBatchBuilder) !void {
+    pub fn mergeJoin(self: *Index, change_batch: ChangeBatch, key_columns: usize, into_builder: *ChangeBatchBuilder) !void {
         const change_batch_a = change_batch;
         for (self.change_batches.items) |self_change_batch| {
-            try self_change_batch.mergeJoin(change_batch, into_builder);
+            try self_change_batch.mergeJoin(change_batch, key_columns, into_builder);
         }
     }
 

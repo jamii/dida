@@ -736,6 +736,7 @@ fn testChangeBatchSeekCurrentRowEnd(
     allocator: *std.mem.Allocator,
     anon_changes: anytype,
     ix: usize,
+    key_columns: usize,
     expected_ix: usize,
 ) !void {
     const changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_changes);
@@ -746,7 +747,7 @@ fn testChangeBatchSeekCurrentRowEnd(
     }
     const change_batch = (try builder.finishAndReset()).?;
 
-    const actual_ix = change_batch.seekCurrentRowEnd(ix);
+    const actual_ix = change_batch.seekCurrentRowEnd(ix, key_columns);
     try std.testing.expectEqual(expected_ix, actual_ix);
 }
 
@@ -755,17 +756,17 @@ test "test change batch seek current row end" {
     defer arena.deinit();
     const a = &arena.allocator;
     const changes = .{
-        .{ .{"a"}, .{0}, 1 },
-        .{ .{"a"}, .{1}, 1 },
-        .{ .{"a"}, .{2}, 1 },
-        .{ .{"b"}, .{0}, 1 },
-        .{ .{"c"}, .{0}, 1 },
+        .{ .{ "a", "x" }, .{0}, 1 },
+        .{ .{ "a", "y" }, .{1}, 1 },
+        .{ .{ "a", "z" }, .{2}, 1 },
+        .{ .{ "c", "c" }, .{0}, 1 },
+        .{ .{ "e", "e" }, .{0}, 1 },
     };
-    try testChangeBatchSeekCurrentRowEnd(a, changes, 0, 3);
-    try testChangeBatchSeekCurrentRowEnd(a, changes, 1, 3);
-    try testChangeBatchSeekCurrentRowEnd(a, changes, 2, 3);
-    try testChangeBatchSeekCurrentRowEnd(a, changes, 3, 4);
-    try testChangeBatchSeekCurrentRowEnd(a, changes, 4, 5);
+    try testChangeBatchSeekCurrentRowEnd(a, changes, 0, 1, 3);
+    try testChangeBatchSeekCurrentRowEnd(a, changes, 1, 1, 3);
+    try testChangeBatchSeekCurrentRowEnd(a, changes, 2, 1, 3);
+    try testChangeBatchSeekCurrentRowEnd(a, changes, 3, 1, 4);
+    try testChangeBatchSeekCurrentRowEnd(a, changes, 4, 1, 5);
 }
 
 fn testChangeBatchSeekRowStart(
@@ -773,6 +774,7 @@ fn testChangeBatchSeekRowStart(
     anon_changes: anytype,
     ix: usize,
     anon_row: anytype,
+    key_columns: usize,
     expected_ix: usize,
 ) !void {
     const changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_changes);
@@ -784,7 +786,7 @@ fn testChangeBatchSeekRowStart(
     }
     const change_batch = (try builder.finishAndReset()).?;
 
-    const actual_ix = change_batch.seekRowStart(ix, row);
+    const actual_ix = change_batch.seekRowStart(ix, row, key_columns);
     try std.testing.expectEqual(expected_ix, actual_ix);
 }
 
@@ -793,41 +795,42 @@ test "test change batch seek current row end" {
     defer arena.deinit();
     const a = &arena.allocator;
     const changes = .{
-        .{ .{"a"}, .{0}, 1 },
-        .{ .{"a"}, .{1}, 1 },
-        .{ .{"a"}, .{2}, 1 },
-        .{ .{"c"}, .{0}, 1 },
-        .{ .{"e"}, .{0}, 1 },
+        .{ .{ "a", "x" }, .{0}, 1 },
+        .{ .{ "a", "y" }, .{1}, 1 },
+        .{ .{ "a", "z" }, .{2}, 1 },
+        .{ .{ "c", "c" }, .{0}, 1 },
+        .{ .{ "e", "e" }, .{0}, 1 },
     };
 
-    try testChangeBatchSeekRowStart(a, changes, 0, .{"b"}, 3);
-    try testChangeBatchSeekRowStart(a, changes, 1, .{"b"}, 3);
-    try testChangeBatchSeekRowStart(a, changes, 2, .{"b"}, 3);
+    try testChangeBatchSeekRowStart(a, changes, 0, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowStart(a, changes, 1, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowStart(a, changes, 2, .{"b"}, 1, 3);
 
-    try testChangeBatchSeekRowStart(a, changes, 0, .{"c"}, 3);
-    try testChangeBatchSeekRowStart(a, changes, 1, .{"c"}, 3);
-    try testChangeBatchSeekRowStart(a, changes, 2, .{"c"}, 3);
+    try testChangeBatchSeekRowStart(a, changes, 0, .{"c"}, 1, 3);
+    try testChangeBatchSeekRowStart(a, changes, 1, .{"c"}, 1, 3);
+    try testChangeBatchSeekRowStart(a, changes, 2, .{"c"}, 1, 3);
 
-    try testChangeBatchSeekRowStart(a, changes, 0, .{"d"}, 4);
-    try testChangeBatchSeekRowStart(a, changes, 1, .{"d"}, 4);
-    try testChangeBatchSeekRowStart(a, changes, 2, .{"d"}, 4);
-    try testChangeBatchSeekRowStart(a, changes, 3, .{"d"}, 4);
+    try testChangeBatchSeekRowStart(a, changes, 0, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 1, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 2, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 3, .{"d"}, 1, 4);
 
-    try testChangeBatchSeekRowStart(a, changes, 0, .{"e"}, 4);
-    try testChangeBatchSeekRowStart(a, changes, 1, .{"e"}, 4);
-    try testChangeBatchSeekRowStart(a, changes, 2, .{"e"}, 4);
-    try testChangeBatchSeekRowStart(a, changes, 3, .{"e"}, 4);
+    try testChangeBatchSeekRowStart(a, changes, 0, .{"e"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 1, .{"e"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 2, .{"e"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 3, .{"e"}, 1, 4);
 
-    try testChangeBatchSeekRowStart(a, changes, 0, .{"f"}, 5);
-    try testChangeBatchSeekRowStart(a, changes, 1, .{"f"}, 5);
-    try testChangeBatchSeekRowStart(a, changes, 2, .{"f"}, 5);
-    try testChangeBatchSeekRowStart(a, changes, 3, .{"f"}, 5);
+    try testChangeBatchSeekRowStart(a, changes, 0, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowStart(a, changes, 1, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowStart(a, changes, 2, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowStart(a, changes, 3, .{"f"}, 1, 5);
 }
 
 fn testChangeBatchJoin(
     allocator: *std.mem.Allocator,
     anon_left_changes: anytype,
     anon_right_changes: anytype,
+    key_columns: usize,
     anon_expected_changes: anytype,
 ) !void {
     const left_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_left_changes);
@@ -847,7 +850,7 @@ fn testChangeBatchJoin(
     const right_change_batch = (try right_builder.finishAndReset()).?;
 
     var output_builder = dida.core.ChangeBatchBuilder.init(allocator);
-    try left_change_batch.mergeJoin(right_change_batch, &output_builder);
+    try left_change_batch.mergeJoin(right_change_batch, key_columns, &output_builder);
     if (try output_builder.finishAndReset()) |output_change_batch| {
         try expectDeepEqual(expected_changes, output_change_batch.changes);
     } else {
@@ -868,6 +871,7 @@ test "test change batch join" {
         .{
             .{ .{"a"}, .{ 1, 0 }, 3 },
         },
+        1,
         .{
             .{ .{"a"}, .{ 1, 1 }, 6 },
         },
@@ -880,6 +884,7 @@ test "test change batch join" {
         .{
             .{ .{"b"}, .{ 1, 0 }, 3 },
         },
+        1,
         .{},
     );
     try testChangeBatchJoin(
@@ -892,6 +897,7 @@ test "test change batch join" {
             .{ .{"a"}, .{ 1, 0 }, 3 },
             .{ .{"a"}, .{ 2, 0 }, 7 },
         },
+        1,
         .{
             .{ .{"a"}, .{ 1, 1 }, 6 },
             .{ .{"a"}, .{ 1, 2 }, 15 },
@@ -909,30 +915,75 @@ test "test change batch join" {
             .{ .{"a"}, .{ 1, 0 }, 3 },
             .{ .{"b"}, .{ 2, 0 }, 7 },
         },
+        1,
         .{
             .{ .{"a"}, .{ 1, 1 }, 6 },
             .{ .{"b"}, .{ 2, 2 }, 35 },
         },
     );
-    const changes = .{
-        .{ .{"a"}, .{0}, 1 },
-        .{ .{"a"}, .{1}, 1 },
-        .{ .{"a"}, .{2}, 1 },
-        .{ .{"c"}, .{0}, 1 },
-        .{ .{"e"}, .{0}, 1 },
-    };
-    try testChangeBatchJoin(
-        a,
-        changes,
-        changes,
-        .{
+    {
+        const changes = .{
             .{ .{"a"}, .{0}, 1 },
-            .{ .{"a"}, .{1}, 3 },
-            .{ .{"a"}, .{2}, 5 },
+            .{ .{"a"}, .{1}, 1 },
+            .{ .{"a"}, .{2}, 1 },
             .{ .{"c"}, .{0}, 1 },
             .{ .{"e"}, .{0}, 1 },
-        },
-    );
+        };
+        try testChangeBatchJoin(
+            a,
+            changes,
+            changes,
+            1,
+            .{
+                .{ .{"a"}, .{0}, 1 },
+                .{ .{"a"}, .{1}, 3 },
+                .{ .{"a"}, .{2}, 5 },
+                .{ .{"c"}, .{0}, 1 },
+                .{ .{"e"}, .{0}, 1 },
+            },
+        );
+    }
+    {
+        const changes = .{
+            .{ .{ "a", "x" }, .{0}, 1 },
+            .{ .{ "a", "y" }, .{1}, 1 },
+            .{ .{ "a", "z" }, .{2}, 1 },
+            .{ .{ "c", "c" }, .{0}, 1 },
+            .{ .{ "e", "e" }, .{0}, 1 },
+        };
+        try testChangeBatchJoin(
+            a,
+            changes,
+            changes,
+            1,
+            .{
+                .{ .{ "a", "x", "x" }, .{0}, 1 },
+                .{ .{ "a", "x", "y" }, .{1}, 1 },
+                .{ .{ "a", "x", "z" }, .{2}, 1 },
+                .{ .{ "a", "y", "x" }, .{1}, 1 },
+                .{ .{ "a", "y", "y" }, .{1}, 1 },
+                .{ .{ "a", "y", "z" }, .{2}, 1 },
+                .{ .{ "a", "z", "x" }, .{2}, 1 },
+                .{ .{ "a", "z", "y" }, .{2}, 1 },
+                .{ .{ "a", "z", "z" }, .{2}, 1 },
+                .{ .{ "c", "c", "c" }, .{0}, 1 },
+                .{ .{ "e", "e", "e" }, .{0}, 1 },
+            },
+        );
+        try testChangeBatchJoin(
+            a,
+            changes,
+            changes,
+            2,
+            .{
+                .{ .{ "a", "x" }, .{0}, 1 },
+                .{ .{ "a", "y" }, .{1}, 1 },
+                .{ .{ "a", "z" }, .{2}, 1 },
+                .{ .{ "c", "c" }, .{0}, 1 },
+                .{ .{ "e", "e" }, .{0}, 1 },
+            },
+        );
+    }
 }
 
 // TODO:
