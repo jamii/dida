@@ -289,6 +289,83 @@ pub const ChangeBatch = struct {
     // Invariant: sorted by row/timestamp
     // Invariant: no two changes with same row/timestamp
     changes: []Change,
+
+    pub fn seekCurrentRowEnd(self: ChangeBatch, from: usize) usize {
+        var ix = from;
+        const row = self.changes[ix].row;
+        ix += 1;
+        while (ix < self.changes.len and dida.meta.deepEqual(row, self.changes[ix].row)) ix += 1;
+        return ix;
+    }
+
+    pub fn seekRowStart(self: ChangeBatch, from: usize, row: Row) usize {
+        assert(
+            from < self.changes.len,
+            "Can't seek to row from a start point that is at or beyond the end of the batch",
+            .{},
+        );
+        assert(
+            dida.meta.deepOrder(self.changes[from].row, row) == .lt,
+            "Can't seek to row from a start point that is already at or beyond that row",
+            .{},
+        );
+        var ix = from;
+        var skip: usize = 1;
+        while (true) {
+            const next = ix + skip;
+            if (next >= self.changes.len) {
+                skip = self.changes.len - ix;
+                break;
+            }
+            if (dida.meta.deepOrder(self.changes[next].row, row) != .lt)
+                break;
+            ix = next;
+            skip *= 2;
+        }
+        // now ix is < row and ix+skip is >= row
+        assert(dida.meta.deepOrder(self.changes[ix].row, row) == .lt, "", .{});
+        assert(ix + skip >= self.changes.len or dida.meta.deepOrder(self.changes[ix + skip].row, row) != .lt, "", .{});
+        while (skip > 1) {
+            skip = @divTrunc(skip, 2);
+            const next = ix + skip;
+            if (dida.meta.deepOrder(self.changes[next].row, row) == .lt)
+                ix = next;
+        }
+        return ix + skip;
+    }
+
+    pub fn mergeJoin(self: ChangeBatch, other: ChangeBatch, into_builder: *ChangeBatchBuilder) !void {
+        var ix_self: usize = 0;
+        var ix_other: usize = 0;
+        while (ix_self < self.changes.len and ix_other < other.changes.len) {
+            switch (dida.meta.deepOrder(self.changes[ix_self].row, other.changes[ix_other].row)) {
+                .eq => {
+                    const ix_self_end = self.seekCurrentRowEnd(ix_self);
+                    const ix_other_end = other.seekCurrentRowEnd(ix_other);
+                    const ix_other_start = ix_other;
+                    while (ix_self < ix_self_end) : (ix_self += 1) {
+                        ix_other = ix_other_start;
+                        while (ix_other < ix_other_end) : (ix_other += 1) {
+                            const change_self = self.changes[ix_self];
+                            const change_other = other.changes[ix_other];
+                            try into_builder.changes.append(.{
+                                .row = change_self.row,
+                                .timestamp = try Timestamp.leastUpperBound(into_builder.allocator, change_self.timestamp, change_other.timestamp),
+                                .diff = change_self.diff * change_other.diff,
+                            });
+                        }
+                    }
+                    // now ix_self and ix_other are both at next row
+                },
+                .lt => {
+                    ix_self = self.seekRowStart(ix_self, other.changes[ix_other].row);
+                },
+                .gt => {
+                    ix_other = other.seekRowStart(ix_other, self.changes[ix_self].row);
+                },
+            }
+        }
+    }
 };
 
 /// A helper for building a ChangeBatch.
@@ -378,7 +455,15 @@ pub const Index = struct {
         }
     }
 
-    /// Return the state of a the bag as of `timestamp`.
+    // TODO would it be better to merge against a cursor, to avoid touching change_batch multiple times?
+    pub fn mergeJoin(self: *Index, change_batch: ChangeBatch, into_builder: *ChangeBatchBuilder) !void {
+        const change_batch_a = change_batch;
+        for (self.change_batches.items) |self_change_batch| {
+            try self_change_batch.mergeJoin(change_batch, into_builder);
+        }
+    }
+
+    /// Return the state of the bag as of `timestamp`.
     // TODO This is a temporary hack, to be replaced by cursors
     pub fn getBagAsOf(self: *Index, allocator: *Allocator, timestamp: Timestamp) !Bag {
         var bag = Bag.init(allocator);
