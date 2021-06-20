@@ -25,7 +25,7 @@ pub fn main() !void {
     reach.fixpoint(reach
         .index()
         .join(edges_1.project(.{ 1, 0 }).index(), 1)
-        .project(.{ 3, 1 })
+        .project(.{ 2, 1 })
         .union_(edges_1)
         .index().distinct());
     const out = loop.exportNode(reach).output();

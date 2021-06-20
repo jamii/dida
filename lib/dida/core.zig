@@ -492,10 +492,19 @@ pub const Index = struct {
     }
 
     // TODO would it be better to merge against a cursor, to avoid touching change_batch multiple times?
-    pub fn mergeJoin(self: *Index, change_batch: ChangeBatch, key_columns: usize, into_builder: *ChangeBatchBuilder) !void {
+    pub fn mergeJoin(
+        self: *Index,
+        change_batch: ChangeBatch,
+        key_columns: usize,
+        merge_direction: enum { LeftThenRight, RightThenLeft },
+        into_builder: *ChangeBatchBuilder,
+    ) !void {
         const change_batch_a = change_batch;
         for (self.change_batches.items) |self_change_batch| {
-            try self_change_batch.mergeJoin(change_batch, key_columns, into_builder);
+            switch (merge_direction) {
+                .LeftThenRight => try self_change_batch.mergeJoin(change_batch, key_columns, into_builder),
+                .RightThenLeft => try change_batch.mergeJoin(self_change_batch, key_columns, into_builder),
+            }
         }
     }
 
@@ -1106,27 +1115,16 @@ pub const Shard = struct {
             .Join => |join| {
                 const index = self.node_states[join.inputs[1 - node_input.input_ix].id].getIndex().?;
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
-                for (change_batch.changes) |change| {
-                    const this_key = change.row.values[0..join.key_columns];
-                    for (index.change_batches.items) |other_change_batch| {
-                        for (other_change_batch.changes) |other_change| {
-                            const other_key = other_change.row.values[0..join.key_columns];
-                            if (dida.meta.deepEqual(this_key, other_key)) {
-                                const values = switch (node_input.input_ix) {
-                                    0 => &[2][]const Value{ change.row.values, other_change.row.values },
-                                    1 => &[2][]const Value{ other_change.row.values, change.row.values },
-                                    else => panic("Bad input_ix for join: {}", .{node_input.input_ix}),
-                                };
-                                const output_change = Change{
-                                    .row = .{ .values = try std.mem.concat(self.allocator, Value, values) },
-                                    .diff = change.diff * other_change.diff,
-                                    .timestamp = try Timestamp.leastUpperBound(self.allocator, change.timestamp, other_change.timestamp),
-                                };
-                                try output_change_batch_builder.changes.append(output_change);
-                            }
-                        }
-                    }
-                }
+                try index.mergeJoin(
+                    change_batch,
+                    join.key_columns,
+                    switch (node_input.input_ix) {
+                        0 => .RightThenLeft,
+                        1 => .LeftThenRight,
+                        else => panic("Bad input_ix for join: {}", .{node_input.input_ix}),
+                    },
+                    &output_change_batch_builder,
+                );
                 if (try output_change_batch_builder.finishAndReset()) |output_change_batch| {
                     try self.emitChangeBatch(node_input.node, output_change_batch);
                 }

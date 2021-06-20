@@ -53,7 +53,7 @@ pub fn main() !void {
         .map_fn = (struct {
             fn drop_middle(_: *dida.core.NodeSpec.MapSpec.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
                 var output_values = try allocator.alloc(dida.core.Value, 2);
-                output_values[0] = input.values[3];
+                output_values[0] = input.values[2];
                 output_values[1] = input.values[1];
                 return dida.core.Row{ .values = output_values };
             }

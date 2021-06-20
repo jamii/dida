@@ -12,7 +12,7 @@ const distinct_reach_index = graph_builder.addNode(subgraph_1, new dida.NodeSpec
 const swapped_edges = graph_builder.addNode(subgraph_1, new dida.NodeSpec.Map(edges_1, input => [input[1], input[0]]));
 const swapped_edges_index = graph_builder.addNode(subgraph_1, new dida.NodeSpec.Index(swapped_edges));
 const joined = graph_builder.addNode(subgraph_1, new dida.NodeSpec.Join([distinct_reach_index, swapped_edges_index], 1));
-const without_middle = graph_builder.addNode(subgraph_1, new dida.NodeSpec.Map(joined, input => [input[3], input[1]]));
+const without_middle = graph_builder.addNode(subgraph_1, new dida.NodeSpec.Map(joined, input => [input[2], input[1]]));
 const reach = graph_builder.addNode(subgraph_1, new dida.NodeSpec.Union([edges_1, without_middle]));
 graph_builder.connectLoop(reach, reach_future);
 const reach_out = graph_builder.addNode(subgraph_0, new dida.NodeSpec.TimestampPop(distinct_reach_index));
