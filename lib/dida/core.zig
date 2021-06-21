@@ -290,38 +290,30 @@ pub const ChangeBatch = struct {
     // Invariant: no two changes with same row/timestamp
     changes: []Change,
 
-    pub fn seekCurrentRowEnd(self: ChangeBatch, from: usize, key_columns: usize) usize {
-        var ix = from;
-        const row = self.changes[ix].row;
-        ix += 1;
-        while (ix < self.changes.len and
-            dida.meta.deepEqual(
-            row.values[0..key_columns],
-            self.changes[ix].row.values[0..key_columns],
-        )) ix += 1;
-        return ix;
-    }
-
+    /// Find the first row after `from` that starts with `row[0..key_columns]` or, if there is no such row, the position where it would be.
+    /// IE returns `ix` such that:
+    /// * `self.changes[ix].row[0..key_columns] >= row[0..key_columns]` (or `ix == self.changes.len`)
+    /// * `self.changes[ix-1].row[0..key_columns] < row[0..key_columns]` (or `ix == 0`)
+    /// Uses a binary search with increasing step size.
+    /// If `from == self.changes.len`, then returns `from`.
     pub fn seekRowStart(self: ChangeBatch, from: usize, row: Row, key_columns: usize) usize {
         assert(
-            from < self.changes.len,
-            "Can't seek to row from a start point that is at or beyond the end of the batch",
+            from <= self.changes.len,
+            "Can't seek to row from a start point that is beyond the end of the batch",
             .{},
         );
-        assert(
+        if (from == self.changes.len or
             dida.meta.deepOrder(
-                self.changes[from].row.values[0..key_columns],
-                row.values[0..key_columns],
-            ) == .lt,
-            "Can't seek to row from a start point that is already at or beyond that row",
-            .{},
-        );
-        var ix = from;
+            self.changes[from].row.values[0..key_columns],
+            row.values[0..key_columns],
+        ) != .lt)
+            return from;
+        var lo = from;
         var skip: usize = 1;
         while (true) {
-            const next = ix + skip;
+            const next = lo + skip;
             if (next >= self.changes.len) {
-                skip = self.changes.len - ix;
+                skip = self.changes.len - lo;
                 break;
             }
             if (dida.meta.deepOrder(
@@ -329,39 +321,80 @@ pub const ChangeBatch = struct {
                 row.values[0..key_columns],
             ) != .lt)
                 break;
-            ix = next;
+            lo = next;
             skip *= 2;
         }
-        // now ix is < row and ix+skip is >= row
+        var hi = lo + skip;
+        // now lo is < row and hi is >= row
         assert(
             dida.meta.deepOrder(
-                self.changes[ix].row.values[0..key_columns],
+                self.changes[lo].row.values[0..key_columns],
                 row.values[0..key_columns],
             ) == .lt,
             "",
             .{},
         );
         assert(
-            ix + skip >= self.changes.len or
+            hi >= self.changes.len or
                 dida.meta.deepOrder(
-                self.changes[ix + skip].row.values[0..key_columns],
+                self.changes[hi].row.values[0..key_columns],
                 row.values[0..key_columns],
             ) != .lt,
             "",
             .{},
         );
-        while (skip > 1) {
-            skip = @divTrunc(skip, 2);
-            const next = ix + skip;
+        while (hi - lo > 1) {
+            const mid = lo + @divTrunc(hi - lo, 2);
             if (dida.meta.deepOrder(
-                self.changes[next].row.values[0..key_columns],
+                self.changes[mid].row.values[0..key_columns],
                 row.values[0..key_columns],
-            ) == .lt)
-                ix = next;
+            ) == .lt) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
         }
-        return ix + skip;
+        return hi;
     }
 
+    /// Find the last row after `from` that starts with `row[0..key_columns]` or, if there is no such row, the position where it would be.
+    /// IE returns `ix` such that:
+    /// * `self.changes[ix].row[0..key_columns] > row[0..key_columns]` (or `ix == self.changes.len`)
+    /// * `self.changes[ix-1].row[0..key_columns] <= row[0..key_columns]` (or `ix == 0`)
+    /// Uses a linear scan.
+    /// If `from == self.changes.len`, then returns `from`.
+    pub fn seekRowEnd(self: ChangeBatch, from: usize, row: Row, key_columns: usize) usize {
+        assert(
+            from <= self.changes.len,
+            "Can't seek to row from a start point that is beyond the end of the batch",
+            .{},
+        );
+        if (from == self.changes.len)
+            return from;
+        var ix = from;
+        while (ix < self.changes.len and
+            dida.meta.deepOrder(
+            self.changes[ix].row.values[0..key_columns],
+            row.values[0..key_columns],
+        ) != .gt) ix += 1;
+        return ix;
+    }
+
+    /// Find the last row after `from` that starts with `self.changes[from].row[0..key_columns]`
+    /// If `from == self.changes.len`, then returns `from`.
+    pub fn seekCurrentRowEnd(self: ChangeBatch, from: usize, key_columns: usize) usize {
+        assert(
+            from <= self.changes.len,
+            "Can't seek to row from a start point that is beyond the end of the batch",
+            .{},
+        );
+        if (from == self.changes.len)
+            return from;
+        return self.seekRowEnd(from + 1, self.changes[from].row, key_columns);
+    }
+
+    /// Relational join on the first `key_columns` columns of self and other.
+    /// Produces rows that look like `self_row ++ other_row[key_columns..]`.
     pub fn mergeJoin(self: ChangeBatch, other: ChangeBatch, key_columns: usize, into_builder: *ChangeBatchBuilder) !void {
         var ix_self: usize = 0;
         var ix_other: usize = 0;
@@ -491,37 +524,50 @@ pub const Index = struct {
         }
     }
 
+    /// Relational join on the first `key_columns` columns of self and change_batch.
+    /// Produces rows that look like:
+    /// * `self_row ++ other_row[key_columns..]` if `concat_order == .LeftThenRight`
+    /// * `other_row ++ self_row[key_columns..]` if `concat_order == .RightThenLeft`
     // TODO would it be better to merge against a cursor, to avoid touching change_batch multiple times?
     pub fn mergeJoin(
         self: *Index,
         change_batch: ChangeBatch,
         key_columns: usize,
-        merge_direction: enum { LeftThenRight, RightThenLeft },
+        concat_order: enum { LeftThenRight, RightThenLeft },
         into_builder: *ChangeBatchBuilder,
     ) !void {
         const change_batch_a = change_batch;
         for (self.change_batches.items) |self_change_batch| {
-            switch (merge_direction) {
+            switch (concat_order) {
                 .LeftThenRight => try self_change_batch.mergeJoin(change_batch, key_columns, into_builder),
                 .RightThenLeft => try change_batch.mergeJoin(self_change_batch, key_columns, into_builder),
             }
         }
     }
 
-    /// Return the state of the bag as of `timestamp`.
-    // TODO This is a temporary hack, to be replaced by cursors
-    pub fn getBagAsOf(self: *Index, allocator: *Allocator, timestamp: Timestamp) !Bag {
-        var bag = Bag.init(allocator);
+    /// Appends every change for `row` into `into_changes`.
+    pub fn getChangesForRow(self: *Index, row: Row, into_changes: *ArrayList(Change)) !void {
         for (self.change_batches.items) |change_batch| {
-            if (change_batch.lower_bound.causalOrder(timestamp).isLessThanOrEqual()) {
-                for (change_batch.changes) |change| {
-                    if (change.timestamp.causalOrder(timestamp).isLessThanOrEqual()) {
-                        try bag.update(change.row, change.diff);
-                    }
-                }
+            var start_ix = change_batch.seekRowStart(0, row, row.values.len);
+            const end_ix = change_batch.seekRowEnd(start_ix, row, row.values.len);
+            while (start_ix < end_ix) : (start_ix += 1)
+                try into_changes.append(change_batch.changes[start_ix]);
+        }
+    }
+
+    /// Returns the sum of the diffs for every change for `row`.
+    pub fn getCountForRowAsOf(self: *Index, row: Row, timestamp: Timestamp) isize {
+        var count: isize = 0;
+        for (self.change_batches.items) |change_batch| {
+            var start_ix = change_batch.seekRowStart(0, row, row.values.len);
+            const end_ix = change_batch.seekRowEnd(start_ix, row, row.values.len);
+            while (start_ix < end_ix) : (start_ix += 1) {
+                const change = change_batch.changes[start_ix];
+                if (change.timestamp.causalOrder(timestamp).isLessThanOrEqual())
+                    count += change.diff;
             }
         }
-        return bag;
+        return count;
     }
 };
 
@@ -660,11 +706,13 @@ pub const NodeState = union(enum) {
 
     pub const DistinctState = struct {
         index: Index,
-        /// These are times in the future at which the output might change even if there is no new input.
+        /// These are rows/timestamps at which the output might change even if there is no new input.
+        /// For example, if a distinct row appears at two different timestamps, then at the leastUpperBound of those timestamps the total count would be 2 and we need to correct that.
         /// To calculate:
-        /// * Take the leastUpperBound of the timestamps of every possible subset of changes in the input node.
+        /// * For each row in the input, take the leastUpperBound of every possible subset of timestamps at which that row changed.
         /// * Filter out timestamps that are before the output frontier of this node.
-        pending_timestamps: DeepHashSet(Timestamp),
+        // TODO If Index supported cheap single updates, it would maybe be a suitable data structure here.
+        pending_corrections: DeepHashMap(Row, DeepHashSet(Timestamp)),
     };
 
     pub fn init(allocator: *Allocator, node_spec: NodeSpec) NodeState {
@@ -695,7 +743,7 @@ pub const NodeState = union(enum) {
             .Distinct => .{
                 .Distinct = .{
                     .index = Index.init(allocator),
-                    .pending_timestamps = DeepHashSet(Timestamp).init(allocator),
+                    .pending_corrections = DeepHashMap(Row, DeepHashSet(Timestamp)).init(allocator),
                 },
             },
         };
@@ -1166,20 +1214,27 @@ pub const Shard = struct {
                 try self.emitChangeBatch(node_input.node, change_batch);
             },
             .Distinct => |distinct| {
-                // Figure out which new timestamps are pending
-                // TODO is there a faster way to do this?
+                // Figure out which new rows/timestamps might need later corrections
                 for (change_batch.changes) |change| {
-                    // change.timestamp is pending
+                    const timestamps_entry = try node_state.Distinct.pending_corrections.getOrPut(change.row);
+                    if (!timestamps_entry.found_existing)
+                        timestamps_entry.value_ptr.* = DeepHashSet(Timestamp).init(self.allocator);
+                    const timestamps = timestamps_entry.value_ptr;
+
                     {
-                        const old_entry = try node_state.Distinct.pending_timestamps.fetchPut(change.timestamp, {});
-                        if (old_entry == null) {
-                            _ = try self.applyFrontierUpdate(node, change.timestamp, 1);
-                        }
+                        // change.timestamp is pending
+                        const old_entry = try timestamps.fetchPut(change.timestamp, {});
+
+                        // if was already pending, nothing more to do
+                        if (old_entry != null) continue;
+
+                        // otherwise, update frontier
+                        _ = try self.applyFrontierUpdate(node, change.timestamp, 1);
                     }
 
-                    // for any other_timestamp in pending_timestamps, leastUpperBound(change.timestamp, other_timestamp) is pending
+                    // for any other pending timestamp on this row, leastUpperBound(change.timestamp, other_timestamp) is pending
                     var buffer = ArrayList(Timestamp).init(self.allocator);
-                    var iter = node_state.Distinct.pending_timestamps.iterator();
+                    var iter = timestamps.iterator();
                     while (iter.next()) |entry| {
                         const timestamp = try Timestamp.leastUpperBound(
                             self.allocator,
@@ -1189,10 +1244,9 @@ pub const Shard = struct {
                         try buffer.append(timestamp);
                     }
                     for (buffer.items) |timestamp| {
-                        const old_entry = try node_state.Distinct.pending_timestamps.fetchPut(timestamp, {});
-                        if (old_entry == null) {
-                            _ = try self.applyFrontierUpdate(node, timestamp, 1);
-                        }
+                        const old_entry = try timestamps.fetchPut(timestamp, {});
+                        if (old_entry != null) continue;
+                        _ = try self.applyFrontierUpdate(node, timestamp, 1);
                     }
                 }
             },
@@ -1200,6 +1254,7 @@ pub const Shard = struct {
     }
 
     /// Report that the input frontier at `node_input` has changed, so the output frontier might need updating.
+    // TODO rename -> queueFrontierSupportChange
     fn queueFrontierUpdate(self: *Shard, node_input: NodeInput, timestamp: Timestamp, diff: isize) !void {
         const node_spec = self.graph.node_specs[node_input.node.id];
         const input_node = node_spec.getInputs()[node_input.input_ix];
@@ -1213,6 +1268,7 @@ pub const Shard = struct {
     }
 
     /// Change the output frontier at `node` and report the change to any downstream nodes. 
+    // TODO name is misleading, rename -> applyFrontierSupportChange
     fn applyFrontierUpdate(self: *Shard, node: Node, timestamp: Timestamp, diff: isize) !enum { Updated, NotUpdated } {
         var frontier_changes = ArrayList(FrontierChange).init(self.allocator);
         try self.node_frontiers[node.id].update(timestamp, diff, &frontier_changes);
@@ -1315,64 +1371,81 @@ pub const Shard = struct {
             }
 
             // Distinct-specific stuff
-            // TODO this is very inefficient
+            // TODO this is somewhat inefficient
             if (node_spec == .Distinct) {
                 const input_frontier = self.node_frontiers[node_spec.Distinct.input.id];
-
-                // Going to emit a result for any timestamp that is before the new input frontier
-                var timestamps_to_emit = ArrayList(Timestamp).init(self.allocator);
-                {
-                    var iter = node_state.Distinct.pending_timestamps.iterator();
-                    while (iter.next()) |entry| {
-                        if (input_frontier.frontier.causalOrder(entry.key_ptr.*) == .gt)
-                            try timestamps_to_emit.append(entry.key_ptr.*);
-                    }
-                }
-
-                // Sort timestamps
-                std.sort.sort(Timestamp, timestamps_to_emit.items, {}, struct {
-                    fn lessThan(_: void, a: Timestamp, b: Timestamp) bool {
-                        return a.lexicalOrder(b) == .lt;
-                    }
-                }.lessThan);
-
-                // Compute changes at each timestamp.
-                // Lexical order is a complete extension of causal order so we can be sure that for each timestamp all previous timestamps have already been handled.
-                // TODO think hard about what should happen if input counts are negative
-                var change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 const input_index = self.node_states[node_spec.Distinct.input.id].getIndex().?;
-                const output_index = self.node_states[node.id].getIndex().?;
-                for (timestamps_to_emit.items) |timestamp| {
-                    const old_bag = try output_index.getBagAsOf(self.allocator, timestamp);
-                    var new_bag = try input_index.getBagAsOf(self.allocator, timestamp);
-                    // Count things that are in new_bag
+                const output_index = &node_state.Distinct.index;
+                var change_batch_builder = ChangeBatchBuilder.init(self.allocator);
+                var frontier_support_changes = ArrayList(FrontierChange).init(self.allocator);
+
+                var row_iter = node_state.Distinct.pending_corrections.iterator();
+                while (row_iter.next()) |row_entry| {
+                    const row = row_entry.key_ptr.*;
+                    const timestamps = row_entry.value_ptr;
+
+                    // Going to check any pending timestamp that is before the new input frontier
+                    var timestamps_to_check = ArrayList(Timestamp).init(self.allocator);
                     {
-                        var iter = new_bag.rows.iterator();
-                        while (iter.next()) |new_entry| {
-                            const diff = 1 - (old_bag.rows.get(new_entry.key_ptr.*) orelse 0);
-                            if (diff != 0)
-                                try change_batch_builder.changes.append(.{
-                                    .row = new_entry.key_ptr.*,
-                                    .diff = diff,
-                                    .timestamp = timestamp,
-                                });
-                        }
-                    }
-                    // Count things that are in old_bag and not in new_bag
-                    {
-                        var iter = old_bag.rows.iterator();
-                        while (iter.next()) |old_entry| {
-                            if (!new_bag.rows.contains(old_entry.key_ptr.*)) {
-                                const diff = -old_entry.value_ptr.*;
-                                try change_batch_builder.changes.append(.{
-                                    .row = old_entry.key_ptr.*,
-                                    .diff = diff,
-                                    .timestamp = timestamp,
-                                });
+                        var timestamp_iter = timestamps.iterator();
+                        while (timestamp_iter.next()) |timestamp_entry| {
+                            const timestamp = timestamp_entry.key_ptr.*;
+                            if (input_frontier.frontier.causalOrder(timestamp) == .gt) {
+                                try timestamps_to_check.append(timestamp);
+                                try frontier_support_changes.append(.{ .timestamp = timestamp, .diff = -1 });
                             }
                         }
                     }
+                    for (timestamps_to_check.items) |timestamp_to_check| {
+                        _ = timestamps.remove(timestamp_to_check);
+                    }
+
+                    // Sort timestamps so that when we reach each one we've already taken into account previous corrections
+                    std.sort.sort(Timestamp, timestamps_to_check.items, {}, struct {
+                        fn lessThan(_: void, a: Timestamp, b: Timestamp) bool {
+                            return a.lexicalOrder(b) == .lt;
+                        }
+                    }.lessThan);
+
+                    // Get past inputs for this row
+                    var input_changes = ArrayList(Change).init(self.allocator);
+                    try input_index.getChangesForRow(row, &input_changes);
+
+                    // Figure out correction for each timestamp
+                    var output_changes = ArrayList(Change).init(self.allocator);
+                    for (timestamps_to_check.items) |timestamp_to_check| {
+                        var input_count: isize = 0;
+                        for (input_changes.items) |input_change| {
+                            if (input_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
+                                input_count += input_change.diff;
+                        }
+                        assert(
+                            input_count >= 0,
+                            "Input count for any row should never be negative. Found row {} with count {} at time {}.",
+                            .{ row, input_count, timestamp_to_check },
+                        );
+
+                        var output_count = try output_index.getCountForRowAsOf(row, timestamp_to_check);
+                        // Include previous corrections
+                        for (output_changes.items) |output_change| {
+                            if (output_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
+                                output_count += output_change.diff;
+                        }
+
+                        const correct_output_count: isize = if (input_count == 0) 0 else 1;
+                        const diff = correct_output_count - output_count;
+                        if (diff != 0) {
+                            try output_changes.append(.{
+                                .row = row,
+                                .timestamp = timestamp_to_check,
+                                .diff = diff,
+                            });
+                        }
+                    }
+
+                    try change_batch_builder.changes.appendSlice(output_changes.items);
                 }
+                // TODO if timestamps now empty for a row, remove entry
 
                 // Emit changes
                 if (try change_batch_builder.finishAndReset()) |change_batch| {
@@ -1380,11 +1453,9 @@ pub const Shard = struct {
                     try self.emitChangeBatch(node, change_batch);
                 }
 
-                // Remove emitted timestamps from pending timestamps and from support
-                for (timestamps_to_emit.items) |timestamp| {
-                    _ = node_state.Distinct.pending_timestamps.remove(timestamp);
-                    _ = try self.applyFrontierUpdate(node, timestamp, -1);
-                }
+                // Remove frontier support
+                for (frontier_support_changes.items) |frontier_support_change|
+                    _ = try self.applyFrontierUpdate(node, frontier_support_change.timestamp, frontier_support_change.diff);
             }
         }
     }

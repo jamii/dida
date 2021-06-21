@@ -732,6 +732,158 @@ test "test index add" {
     );
 }
 
+fn testChangeBatchSeekRowStart(
+    allocator: *std.mem.Allocator,
+    anon_changes: anytype,
+    ix: usize,
+    anon_row: anytype,
+    key_columns: usize,
+    expected_ix: usize,
+) !void {
+    const changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_changes);
+    const row = dida.sugar.coerceAnonTo(allocator, dida.core.Row, anon_row);
+
+    var builder = dida.core.ChangeBatchBuilder.init(allocator);
+    for (changes) |change| {
+        try builder.changes.append(change);
+    }
+    const change_batch = (try builder.finishAndReset()).?;
+
+    const actual_ix = change_batch.seekRowStart(ix, row, key_columns);
+    try std.testing.expectEqual(expected_ix, actual_ix);
+}
+
+test "test change batch seek row start" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = &arena.allocator;
+    const changes = .{
+        .{ .{ "a", "x" }, .{0}, 1 },
+        .{ .{ "a", "y" }, .{1}, 1 },
+        .{ .{ "a", "z" }, .{2}, 1 },
+        .{ .{ "c", "c" }, .{0}, 1 },
+        .{ .{ "e", "e" }, .{0}, 1 },
+    };
+
+    try testChangeBatchSeekRowStart(a, changes, 0, .{"a"}, 1, 0);
+    try testChangeBatchSeekRowStart(a, changes, 1, .{"a"}, 1, 1);
+    try testChangeBatchSeekRowStart(a, changes, 2, .{"a"}, 1, 2);
+    try testChangeBatchSeekRowStart(a, changes, 3, .{"a"}, 1, 3);
+    try testChangeBatchSeekRowStart(a, changes, 4, .{"a"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 5, .{"a"}, 1, 5);
+
+    try testChangeBatchSeekRowStart(a, changes, 0, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowStart(a, changes, 1, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowStart(a, changes, 2, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowStart(a, changes, 3, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowStart(a, changes, 4, .{"b"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 5, .{"b"}, 1, 5);
+
+    try testChangeBatchSeekRowStart(a, changes, 0, .{"c"}, 1, 3);
+    try testChangeBatchSeekRowStart(a, changes, 1, .{"c"}, 1, 3);
+    try testChangeBatchSeekRowStart(a, changes, 2, .{"c"}, 1, 3);
+    try testChangeBatchSeekRowStart(a, changes, 3, .{"c"}, 1, 3);
+    try testChangeBatchSeekRowStart(a, changes, 4, .{"c"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 5, .{"c"}, 1, 5);
+
+    try testChangeBatchSeekRowStart(a, changes, 0, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 1, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 2, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 3, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 4, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 5, .{"d"}, 1, 5);
+
+    try testChangeBatchSeekRowStart(a, changes, 0, .{"e"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 1, .{"e"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 2, .{"e"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 3, .{"e"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 4, .{"e"}, 1, 4);
+    try testChangeBatchSeekRowStart(a, changes, 5, .{"e"}, 1, 5);
+
+    try testChangeBatchSeekRowStart(a, changes, 0, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowStart(a, changes, 1, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowStart(a, changes, 2, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowStart(a, changes, 3, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowStart(a, changes, 4, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowStart(a, changes, 5, .{"f"}, 1, 5);
+}
+
+fn testChangeBatchSeekRowEnd(
+    allocator: *std.mem.Allocator,
+    anon_changes: anytype,
+    ix: usize,
+    anon_row: anytype,
+    key_columns: usize,
+    expected_ix: usize,
+) !void {
+    const changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_changes);
+    const row = dida.sugar.coerceAnonTo(allocator, dida.core.Row, anon_row);
+
+    var builder = dida.core.ChangeBatchBuilder.init(allocator);
+    for (changes) |change| {
+        try builder.changes.append(change);
+    }
+    const change_batch = (try builder.finishAndReset()).?;
+
+    const actual_ix = change_batch.seekRowEnd(ix, row, key_columns);
+    try std.testing.expectEqual(expected_ix, actual_ix);
+}
+
+test "test change batch seek current row end" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = &arena.allocator;
+    const changes = .{
+        .{ .{ "a", "x" }, .{0}, 1 },
+        .{ .{ "a", "y" }, .{1}, 1 },
+        .{ .{ "a", "z" }, .{2}, 1 },
+        .{ .{ "c", "c" }, .{0}, 1 },
+        .{ .{ "e", "e" }, .{0}, 1 },
+    };
+
+    try testChangeBatchSeekRowEnd(a, changes, 0, .{"a"}, 1, 3);
+    try testChangeBatchSeekRowEnd(a, changes, 1, .{"a"}, 1, 3);
+    try testChangeBatchSeekRowEnd(a, changes, 2, .{"a"}, 1, 3);
+    try testChangeBatchSeekRowEnd(a, changes, 3, .{"a"}, 1, 3);
+    try testChangeBatchSeekRowEnd(a, changes, 4, .{"a"}, 1, 4);
+    try testChangeBatchSeekRowEnd(a, changes, 5, .{"a"}, 1, 5);
+
+    try testChangeBatchSeekRowEnd(a, changes, 0, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowEnd(a, changes, 1, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowEnd(a, changes, 2, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowEnd(a, changes, 3, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowEnd(a, changes, 4, .{"b"}, 1, 4);
+    try testChangeBatchSeekRowEnd(a, changes, 5, .{"b"}, 1, 5);
+
+    try testChangeBatchSeekRowEnd(a, changes, 0, .{"c"}, 1, 4);
+    try testChangeBatchSeekRowEnd(a, changes, 1, .{"c"}, 1, 4);
+    try testChangeBatchSeekRowEnd(a, changes, 2, .{"c"}, 1, 4);
+    try testChangeBatchSeekRowEnd(a, changes, 3, .{"c"}, 1, 4);
+    try testChangeBatchSeekRowEnd(a, changes, 4, .{"c"}, 1, 4);
+    try testChangeBatchSeekRowEnd(a, changes, 5, .{"c"}, 1, 5);
+
+    try testChangeBatchSeekRowEnd(a, changes, 0, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowEnd(a, changes, 1, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowEnd(a, changes, 2, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowEnd(a, changes, 3, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowEnd(a, changes, 4, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowEnd(a, changes, 5, .{"d"}, 1, 5);
+
+    try testChangeBatchSeekRowEnd(a, changes, 0, .{"e"}, 1, 5);
+    try testChangeBatchSeekRowEnd(a, changes, 1, .{"e"}, 1, 5);
+    try testChangeBatchSeekRowEnd(a, changes, 2, .{"e"}, 1, 5);
+    try testChangeBatchSeekRowEnd(a, changes, 3, .{"e"}, 1, 5);
+    try testChangeBatchSeekRowEnd(a, changes, 4, .{"e"}, 1, 5);
+    try testChangeBatchSeekRowEnd(a, changes, 5, .{"e"}, 1, 5);
+
+    try testChangeBatchSeekRowEnd(a, changes, 0, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowEnd(a, changes, 1, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowEnd(a, changes, 2, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowEnd(a, changes, 3, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowEnd(a, changes, 4, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowEnd(a, changes, 5, .{"f"}, 1, 5);
+}
+
 fn testChangeBatchSeekCurrentRowEnd(
     allocator: *std.mem.Allocator,
     anon_changes: anytype,
@@ -767,63 +919,7 @@ test "test change batch seek current row end" {
     try testChangeBatchSeekCurrentRowEnd(a, changes, 2, 1, 3);
     try testChangeBatchSeekCurrentRowEnd(a, changes, 3, 1, 4);
     try testChangeBatchSeekCurrentRowEnd(a, changes, 4, 1, 5);
-}
-
-fn testChangeBatchSeekRowStart(
-    allocator: *std.mem.Allocator,
-    anon_changes: anytype,
-    ix: usize,
-    anon_row: anytype,
-    key_columns: usize,
-    expected_ix: usize,
-) !void {
-    const changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_changes);
-    const row = dida.sugar.coerceAnonTo(allocator, dida.core.Row, anon_row);
-
-    var builder = dida.core.ChangeBatchBuilder.init(allocator);
-    for (changes) |change| {
-        try builder.changes.append(change);
-    }
-    const change_batch = (try builder.finishAndReset()).?;
-
-    const actual_ix = change_batch.seekRowStart(ix, row, key_columns);
-    try std.testing.expectEqual(expected_ix, actual_ix);
-}
-
-test "test change batch seek current row end" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = &arena.allocator;
-    const changes = .{
-        .{ .{ "a", "x" }, .{0}, 1 },
-        .{ .{ "a", "y" }, .{1}, 1 },
-        .{ .{ "a", "z" }, .{2}, 1 },
-        .{ .{ "c", "c" }, .{0}, 1 },
-        .{ .{ "e", "e" }, .{0}, 1 },
-    };
-
-    try testChangeBatchSeekRowStart(a, changes, 0, .{"b"}, 1, 3);
-    try testChangeBatchSeekRowStart(a, changes, 1, .{"b"}, 1, 3);
-    try testChangeBatchSeekRowStart(a, changes, 2, .{"b"}, 1, 3);
-
-    try testChangeBatchSeekRowStart(a, changes, 0, .{"c"}, 1, 3);
-    try testChangeBatchSeekRowStart(a, changes, 1, .{"c"}, 1, 3);
-    try testChangeBatchSeekRowStart(a, changes, 2, .{"c"}, 1, 3);
-
-    try testChangeBatchSeekRowStart(a, changes, 0, .{"d"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 1, .{"d"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 2, .{"d"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 3, .{"d"}, 1, 4);
-
-    try testChangeBatchSeekRowStart(a, changes, 0, .{"e"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 1, .{"e"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 2, .{"e"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 3, .{"e"}, 1, 4);
-
-    try testChangeBatchSeekRowStart(a, changes, 0, .{"f"}, 1, 5);
-    try testChangeBatchSeekRowStart(a, changes, 1, .{"f"}, 1, 5);
-    try testChangeBatchSeekRowStart(a, changes, 2, .{"f"}, 1, 5);
-    try testChangeBatchSeekRowStart(a, changes, 3, .{"f"}, 1, 5);
+    try testChangeBatchSeekCurrentRowEnd(a, changes, 5, 1, 5);
 }
 
 fn testChangeBatchJoin(
@@ -984,6 +1080,72 @@ test "test change batch join" {
             },
         );
     }
+}
+
+pub fn testIndexGetCountForRowAsOf(
+    allocator: *std.mem.Allocator,
+    anon_change_batches: anytype,
+    anon_row: anytype,
+    anon_timestamp: anytype,
+    expected_count: isize,
+) !void {
+    var index = dida.core.Index.init(allocator);
+    const change_batches = dida.sugar.coerceAnonTo(allocator, []dida.core.ChangeBatch, anon_change_batches);
+    const row = dida.sugar.coerceAnonTo(allocator, dida.core.Row, anon_row);
+    const timestamp = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_timestamp);
+    for (change_batches) |change_batch| {
+        try index.addChangeBatch(change_batch);
+    }
+    const actual_count = index.getCountForRowAsOf(row, timestamp);
+    try std.testing.expectEqual(expected_count, actual_count);
+}
+
+test "test index get count for row as of" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = &arena.allocator;
+    const changes = .{
+        .{
+            .{ .{"a"}, .{1}, 1 },
+        },
+        .{
+            .{ .{"b"}, .{0}, 1 },
+        },
+        .{
+            .{ .{"c"}, .{0}, 1 },
+        },
+        .{
+            .{ .{"a"}, .{2}, 2 },
+        },
+        .{
+            .{ .{"e"}, .{0}, 1 },
+        },
+        .{
+            .{ .{"f"}, .{0}, 1 },
+        },
+        .{
+            .{ .{"a"}, .{0}, 1 },
+        },
+        .{
+            .{ .{"h"}, .{3}, 1 },
+            .{ .{"i"}, .{0}, 1 },
+            .{ .{"c"}, .{0}, 2 },
+            .{ .{"k"}, .{0}, 1 },
+            .{ .{"l"}, .{0}, 1 },
+            .{ .{"c"}, .{1}, -3 },
+            .{ .{"n"}, .{0}, 1 },
+            .{ .{"o"}, .{0}, 1 },
+        },
+    };
+    try testIndexGetCountForRowAsOf(a, changes, .{"a"}, .{0}, 1);
+    try testIndexGetCountForRowAsOf(a, changes, .{"a"}, .{1}, 2);
+    try testIndexGetCountForRowAsOf(a, changes, .{"a"}, .{2}, 4);
+    try testIndexGetCountForRowAsOf(a, changes, .{"a"}, .{3}, 4);
+    try testIndexGetCountForRowAsOf(a, changes, .{"c"}, .{0}, 3);
+    try testIndexGetCountForRowAsOf(a, changes, .{"c"}, .{1}, 0);
+    try testIndexGetCountForRowAsOf(a, changes, .{"h"}, .{0}, 0);
+    try testIndexGetCountForRowAsOf(a, changes, .{"h"}, .{3}, 1);
+    try testIndexGetCountForRowAsOf(a, changes, .{"z"}, .{3}, 0);
 }
 
 // TODO:
