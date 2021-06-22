@@ -1,10 +1,10 @@
 usingnamespace @import("../js_common/js_common.zig");
+pub const abi = @import("./abi.zig");
 
-const c = @cImport({
-    @cInclude("node_api.h");
-});
+// TODO remove once abi is complete
+const c = abi.c;
 
-export fn napi_register_module_v1(env: c.napi_env, exports: c.napi_value) c.napi_value {
+export fn napi_register_module_v1(env: abi.Env, exports: abi.Value) abi.Value {
     napiExportFn(env, exports, napiWrapFn(GraphBuilder_init), "GraphBuilder_init");
     napiExportFn(env, exports, napiWrapFn(dida.core.GraphBuilder.addSubgraph), "GraphBuilder_addSubgraph");
     napiExportFn(env, exports, napiWrapFn(dida.core.GraphBuilder.addNode), "GraphBuilder_addNode");
@@ -38,26 +38,14 @@ fn Shard_init(graph: *const dida.core.Graph) !dida.core.Shard {
 
 // --- helpers ---
 
-fn napiCall(comptime napi_fn: anytype, args: anytype, comptime ReturnType: type) ReturnType {
-    if (ReturnType != void) {
-        var result: ReturnType = undefined;
-        const status: c.napi_status = @call(.{}, napi_fn, args ++ .{&result});
-        dida.common.assert(status == .napi_ok, "Call returned status {}", .{status});
-        return result;
-    } else {
-        const status: c.napi_status = @call(.{}, napi_fn, args);
-        dida.common.assert(status == .napi_ok, "Call returned status {}", .{status});
-    }
-}
-
-fn napiExportFn(env: c.napi_env, exports: c.napi_value, export_fn: c.napi_callback, export_fn_name: [:0]const u8) void {
-    const napi_fn = napiCall(c.napi_create_function, .{ env, export_fn_name, export_fn_name.len, export_fn, null }, c.napi_value);
-    napiCall(c.napi_set_named_property, .{ env, exports, export_fn_name, napi_fn }, void);
+fn napiExportFn(env: abi.Env, exports: abi.Value, export_fn: c.napi_callback, export_fn_name: [:0]const u8) void {
+    const napi_fn = abi.napiCall(c.napi_create_function, .{ env, export_fn_name, export_fn_name.len, export_fn, null }, abi.Value);
+    abi.setProperty(env, exports, abi.createString(env, export_fn_name), napi_fn);
 }
 
 fn napiWrapFn(comptime zig_fn: anytype) c.napi_callback {
     return struct {
-        fn wrappedMethod(env: c.napi_env, info: c.napi_callback_info) callconv(.C) c.napi_value {
+        fn wrappedMethod(env: abi.Env, info: c.napi_callback_info) callconv(.C) abi.Value {
             var zig_args: std.meta.ArgsTuple(@TypeOf(zig_fn)) = undefined;
             const napi_args = napiGetCbInfo(env, info, zig_args.len).args;
             comptime var i: usize = 0;
@@ -88,11 +76,11 @@ fn napiWrapFn(comptime zig_fn: anytype) c.napi_callback {
     }.wrappedMethod;
 }
 
-fn napiGetCbInfo(env: c.napi_env, info: c.napi_callback_info, comptime expected_num_args: usize) struct { args: [expected_num_args]c.napi_value, this: c.napi_value } {
+fn napiGetCbInfo(env: abi.Env, info: c.napi_callback_info, comptime expected_num_args: usize) struct { args: [expected_num_args]abi.Value, this: abi.Value } {
     var actual_num_args: usize = expected_num_args;
-    var args: [expected_num_args]c.napi_value = undefined;
-    var this: c.napi_value = undefined;
-    napiCall(c.napi_get_cb_info, .{ env, info, &actual_num_args, if (expected_num_args == 0) null else @ptrCast([*]c.napi_value, &args), &this, null }, void);
+    var args: [expected_num_args]abi.Value = undefined;
+    var this: abi.Value = undefined;
+    abi.napiCall(c.napi_get_cb_info, .{ env, info, &actual_num_args, if (expected_num_args == 0) null else @ptrCast([*]abi.Value, &args), &this, null }, void);
     dida.common.assert(actual_num_args == expected_num_args, "Expected {} args, got {} args", .{ expected_num_args, actual_num_args });
     return .{
         .args = args,
@@ -109,7 +97,7 @@ comptime {
     );
 }
 
-fn napiCreateExternal(env: c.napi_env, value: anytype) c.napi_value {
+fn napiCreateExternal(env: abi.Env, value: anytype) abi.Value {
     const info = @typeInfo(@TypeOf(value));
     dida.common.comptimeAssert(
         comptime (serdeStrategy(@TypeOf(value)) == .External),
@@ -126,13 +114,13 @@ fn napiCreateExternal(env: c.napi_env, value: anytype) c.napi_value {
         "Tried to create an external for a type that doesn't have a matching js constructor: {}",
         .{@TypeOf(value)},
     );
-    const external = napiCall(c.napi_create_external, .{ env, @ptrCast(*c_void, value), null, null }, c.napi_value);
-    const result = napiCall(c.napi_create_object, .{env}, c.napi_value);
-    napiCall(c.napi_set_named_property, .{ env, result, "external", external }, void);
+    const external = abi.createExternal(env, @ptrCast(*c_void, value));
+    const result = abi.createObject(env);
+    abi.setProperty(env, result, abi.createString(env, "external"), external);
     return result;
 }
 
-fn napiGetExternal(env: c.napi_env, value: c.napi_value, comptime ReturnType: type) ReturnType {
+fn napiGetExternal(env: abi.Env, value: abi.Value, comptime ReturnType: type) ReturnType {
     dida.common.comptimeAssert(
         comptime (serdeStrategy(ReturnType) == .External),
         "Used napiGetExternal on a type that is expected to require napiGetValue: {}",
@@ -144,12 +132,12 @@ fn napiGetExternal(env: c.napi_env, value: c.napi_value, comptime ReturnType: ty
         "napiGetExternal should be called with *T, got {}",
         .{ReturnType},
     );
-    const external = napiCall(c.napi_get_named_property, .{ env, value, "external" }, c.napi_value);
-    const ptr = napiCall(c.napi_get_value_external, .{ env, external }, ?*c_void);
+    const external = abi.getProperty(env, value, abi.createString(env, "external"));
+    const ptr = abi.getExternal(env, external);
     return @ptrCast(ReturnType, @alignCast(@alignOf(info.Pointer.child), ptr));
 }
 
-fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
+fn napiCreateValue(env: abi.Env, value: anytype) abi.Value {
     dida.common.comptimeAssert(
         comptime (serdeStrategy(@TypeOf(value)) == .Value),
         "Used napiCreateValue on a type that is expected to require napiCreateExternal: {}",
@@ -157,7 +145,7 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
     );
 
     if (@TypeOf(value) == []const u8) {
-        return napiCall(c.napi_create_string_utf8, .{ env, @ptrCast([*c]const u8, value), value.len }, c.napi_value);
+        return abi.createString(env, value);
     }
 
     if (@TypeOf(value) == dida.core.Value) {
@@ -177,12 +165,12 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
 
     if (@TypeOf(value) == dida.core.Frontier) {
         const len = value.timestamps.count();
-        const napi_array = napiCall(c.napi_create_array_with_length, .{ env, @intCast(u32, len) }, c.napi_value);
+        const napi_array = abi.createArray(env, len);
         var iter = value.timestamps.iterator();
         var i: usize = 0;
         while (iter.next()) |entry| {
             const napi_timestamp = napiCreateValue(env, entry.key_ptr.*);
-            napiCall(c.napi_set_element, .{ env, napi_array, @intCast(u32, i), napi_timestamp }, void);
+            abi.setElement(env, napi_array, @intCast(u32, i), napi_timestamp);
             i += 1;
         }
         return napi_array;
@@ -191,25 +179,25 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
     const info = @typeInfo(@TypeOf(value));
     switch (info) {
         .Bool => {
-            return napiCall(c.napi_get_boolean, .{ env, value }, c.napi_value);
+            return abi.createBoolean(env, value);
         },
         .Int => {
             const cast_value = switch (@TypeOf(value)) {
                 usize => @intCast(isize, value),
                 else => value,
             };
-            const napi_fn = switch (@TypeOf(cast_value)) {
-                isize => if (usize_bits == 64) c.napi_create_int64 else c.napi_create_int32,
+            const abi_fn = switch (@TypeOf(cast_value)) {
+                isize => if (usize_bits == 64) abi.createInt64 else abi.createInt32,
                 else => dida.common.compileError("Don't know how to create napi value for {}", .{@TypeOf(cast_value)}),
             };
-            return napiCall(napi_fn, .{ env, cast_value }, c.napi_value);
+            return @call(.{}, abi_fn, .{ env, cast_value });
         },
         .Float => {
-            const napi_fn = switch (@TypeOf(value)) {
-                f64 => c.napi_create_double,
+            const abi_fn = switch (@TypeOf(value)) {
+                f64 => abi.createFloat64,
                 else => dida.common.compileError("Don't know how to create napi value for {}", .{@TypeOf(value)}),
             };
-            return napiCall(napi_fn, .{ env, value }, c.napi_value);
+            return @call(.{}, abi_fn, .{ env, value });
         },
         .Struct => |struct_info| {
             dida.common.comptimeAssert(
@@ -217,13 +205,10 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
                 "Tried to create a value for a struct type that doesn't have a matching js constructor: {}",
                 .{@TypeOf(value)},
             );
-            const result = napiCall(c.napi_create_object, .{env}, c.napi_value);
+            const result = abi.createObject(env);
             inline for (struct_info.fields) |field_info| {
-                var field_name: [field_info.name.len:0]u8 = undefined;
-                std.mem.copy(u8, &field_name, field_info.name);
-                field_name[field_info.name.len] = 0;
                 const field_value = napiCreateValue(env, @field(value, field_info.name));
-                napiCall(c.napi_set_named_property, .{ env, result, &field_name, field_value }, void);
+                abi.setProperty(env, result, abi.createString(env, field_info.name), field_value);
             }
             return result;
         },
@@ -234,16 +219,14 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
                     "Tried to create a value for a union type that doesn't have a matching js constructor: {}",
                     .{@TypeOf(value)},
                 );
-                const result = napiCall(c.napi_create_object, .{env}, c.napi_value);
+                const result = abi.createObject(env);
                 const tag = std.meta.activeTag(value);
-                const tag_name = @tagName(tag);
-                const napi_tag_name = napiCall(c.napi_create_string_utf8, .{ env, @ptrCast([*]const u8, tag_name), tag_name.len }, c.napi_value);
-                napiCall(c.napi_set_named_property, .{ env, result, "tag", napi_tag_name }, void);
+                abi.setProperty(env, result, abi.createString(env, "tag"), abi.createString(env, @tagName(tag)));
                 inline for (@typeInfo(tag_type).Enum.fields) |enum_field_info, i| {
                     if (@enumToInt(tag) == enum_field_info.value) {
                         const payload = @field(value, enum_field_info.name);
                         const napi_payload = napiCreateValue(env, payload);
-                        napiCall(c.napi_set_named_property, .{ env, result, "payload", napi_payload }, void);
+                        abi.setProperty(env, result, abi.createString(env, "payload"), napi_payload);
                         return result;
                     }
                 }
@@ -261,7 +244,7 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
             }
             // max_len+1 to make space for null byte :(
             var buffer: [max_len + 1]u8 = undefined;
-            const buffer_size = napiCall(c.napi_get_value_string_utf8, .{ env, value, &buffer, max_len + 1 }, usize);
+            const buffer_size = abi.napiCall(c.napi_get_value_string_utf8, .{ env, value, &buffer, max_len + 1 }, usize);
             const tag_name = buffer[0..buffer_size];
             inline for (enum_info.fields) |field_info| {
                 if (std.mem.eql(u8, tag_name, field_info.name)) {
@@ -273,45 +256,45 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
         .Pointer => |pointer_info| {
             switch (pointer_info.size) {
                 .Slice => {
-                    const napi_array = napiCall(c.napi_create_array_with_length, .{ env, @intCast(u32, value.len) }, c.napi_value);
+                    const napi_array = abi.createArray(env, value.len);
                     for (value) |elem, i| {
                         const napi_elem = napiCreateValue(env, elem);
-                        napiCall(c.napi_set_element, .{ env, napi_array, @intCast(u32, i), napi_elem }, void);
+                        abi.setElement(env, napi_array, @intCast(u32, i), napi_elem);
                     }
                     return napi_array;
                 },
-                else => dida.common.compileError("Dont know how to create value of type {}", .{@TypeOf(value)}),
+                else => dida.common.compileError("Don't know how to create value of type {}", .{@TypeOf(value)}),
             }
         },
         .Optional => {
             return if (value) |payload|
                 napiCreateValue(env, payload)
             else
-                napiCall(c.napi_get_undefined, .{env}, c.napi_value);
+                abi.napiCall(c.napi_get_undefined, .{env}, abi.Value);
         },
         .Void => {
-            return napiCall(c.napi_get_undefined, .{env}, c.napi_value);
+            return abi.napiCall(c.napi_get_undefined, .{env}, abi.Value);
         },
-        else => dida.common.compileError("Dont know how to create value of type {}", .{@TypeOf(value)}),
+        else => dida.common.compileError("Don't know how to create value of type {}", .{@TypeOf(value)}),
     }
 }
 
 const NapiMapper = struct {
     // TODO is it safe to hold on to this?
-    env: c.napi_env,
+    env: abi.Env,
     napi_fn_ref: c.napi_ref,
     mapper: dida.core.NodeSpec.MapSpec.Mapper,
 
     fn map(self: *dida.core.NodeSpec.MapSpec.Mapper, row: dida.core.Row) error{OutOfMemory}!dida.core.Row {
         const parent = @fieldParentPtr(NapiMapper, "mapper", self);
-        const napi_fn = napiCall(c.napi_get_reference_value, .{ parent.env, parent.napi_fn_ref }, c.napi_value);
-        const napi_args = [_]c.napi_value{
+        const napi_fn = abi.napiCall(c.napi_get_reference_value, .{ parent.env, parent.napi_fn_ref }, abi.Value);
+        const napi_args = [_]abi.Value{
             napiCreateValue(parent.env, row),
         };
-        dida.common.assert(!napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions before mapper cal", .{});
-        const napi_undefined = napiCall(c.napi_get_undefined, .{parent.env}, c.napi_value);
-        const napi_output = napiCall(c.napi_call_function, .{ parent.env, napi_undefined, napi_fn, napi_args.len, &napi_args }, c.napi_value);
-        dida.common.assert(!napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions after mapper call", .{});
+        dida.common.assert(!abi.napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions before mapper cal", .{});
+        const napi_undefined = abi.napiCall(c.napi_get_undefined, .{parent.env}, abi.Value);
+        const napi_output = abi.napiCall(c.napi_call_function, .{ parent.env, napi_undefined, napi_fn, napi_args.len, &napi_args }, abi.Value);
+        dida.common.assert(!abi.napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions after mapper call", .{});
         const output = napiGetValue(parent.env, napi_output, dida.core.Row);
         return output;
     }
@@ -319,28 +302,28 @@ const NapiMapper = struct {
 
 const NapiReducer = struct {
     // TODO is it safe to hold on to this?
-    env: c.napi_env,
+    env: abi.Env,
     napi_fn_ref: c.napi_ref,
     reducer: dida.core.NodeSpec.ReduceSpec.Reducer,
 
     fn reduce(self: *dida.core.NodeSpec.ReduceSpec.Reducer, reduced_value: dida.core.Value, row: dida.core.Row, count: usize) error{OutOfMemory}!dida.core.Value {
         const parent = @fieldParentPtr(NapiReducer, "reducer", self);
-        const napi_fn = napiCall(c.napi_get_reference_value, .{ parent.env, parent.napi_fn_ref }, c.napi_value);
-        const napi_args = [_]c.napi_value{
+        const napi_fn = abi.napiCall(c.napi_get_reference_value, .{ parent.env, parent.napi_fn_ref }, abi.Value);
+        const napi_args = [_]abi.Value{
             napiCreateValue(parent.env, reduced_value),
             napiCreateValue(parent.env, row),
             napiCreateValue(parent.env, count),
         };
-        dida.common.assert(!napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions before mapper cal", .{});
-        const napi_undefined = napiCall(c.napi_get_undefined, .{parent.env}, c.napi_value);
-        const napi_output = napiCall(c.napi_call_function, .{ parent.env, napi_undefined, napi_fn, napi_args.len, &napi_args }, c.napi_value);
-        dida.common.assert(!napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions after mapper call", .{});
+        dida.common.assert(!abi.napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions before mapper cal", .{});
+        const napi_undefined = abi.napiCall(c.napi_get_undefined, .{parent.env}, abi.Value);
+        const napi_output = abi.napiCall(c.napi_call_function, .{ parent.env, napi_undefined, napi_fn, napi_args.len, &napi_args }, abi.Value);
+        dida.common.assert(!abi.napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions after mapper call", .{});
         const output = napiGetValue(parent.env, napi_output, dida.core.Value);
         return output;
     }
 };
 
-fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type) ReturnType {
+fn napiGetValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) ReturnType {
     dida.common.comptimeAssert(
         comptime (serdeStrategy(ReturnType) == .Value),
         "Used napiGetValue on a type that is expected to require napiGetExternal: {}",
@@ -348,18 +331,18 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
     );
 
     if (ReturnType == []const u8) {
-        const len = napiCall(c.napi_get_value_string_utf8, .{ env, value, null, 0 }, usize);
+        const len = abi.napiCall(c.napi_get_value_string_utf8, .{ env, value, null, 0 }, usize);
         var string = allocator.alloc(u8, len) catch |err| dida.common.panic("{}", .{err});
-        _ = napiCall(c.napi_get_value_string_utf8, .{ env, value, @ptrCast([*c]u8, string), len + 1 }, usize);
+        _ = abi.napiCall(c.napi_get_value_string_utf8, .{ env, value, @ptrCast([*c]u8, string), len + 1 }, usize);
         return string;
     }
 
     if (ReturnType == dida.core.Value) {
-        const napi_type = napiCall(c.napi_typeof, .{ env, value }, c.napi_valuetype);
-        return switch (napi_type) {
-            .napi_string => dida.core.Value{ .String = napiGetValue(env, value, []const u8) },
-            .napi_number => dida.core.Value{ .Number = napiGetValue(env, value, f64) },
-            else => dida.common.panic("Don't know how to get a dida.core.Value from {}", .{napi_type}),
+        const js_type = abi.jsTypeOf(env, value);
+        return switch (js_type) {
+            .String => dida.core.Value{ .String = napiGetValue(env, value, []const u8) },
+            .Number => dida.core.Value{ .Number = napiGetValue(env, value, f64) },
+            else => dida.common.panic("Don't know how to get a dida.core.Value from {}", .{js_type}),
         };
     }
 
@@ -376,7 +359,7 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
         var napi_mapper = allocator.create(NapiMapper) catch |err| dida.common.panic("{}", .{err});
         napi_mapper.* = NapiMapper{
             .env = env,
-            .napi_fn_ref = napiCall(c.napi_create_reference, .{ env, value, 1 }, c.napi_ref),
+            .napi_fn_ref = abi.napiCall(c.napi_create_reference, .{ env, value, 1 }, c.napi_ref),
             .mapper = .{
                 .map_fn = NapiMapper.map,
             },
@@ -389,7 +372,7 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
         var napi_reducer = allocator.create(NapiReducer) catch |err| dida.common.panic("{}", .{err});
         napi_reducer.* = NapiReducer{
             .env = env,
-            .napi_fn_ref = napiCall(c.napi_create_reference, .{ env, value, 1 }, c.napi_ref),
+            .napi_fn_ref = abi.napiCall(c.napi_create_reference, .{ env, value, 1 }, c.napi_ref),
             .reducer = .{
                 .reduce_fn = NapiReducer.reduce,
             },
@@ -408,7 +391,7 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
                 usize => isize,
                 else => ReturnType,
             };
-            const result = napiCall(napi_fn, .{ env, value }, CastType);
+            const result = abi.napiCall(napi_fn, .{ env, value }, CastType);
             return @intCast(ReturnType, result);
         },
         .Float => {
@@ -416,26 +399,23 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
                 f64 => c.napi_get_value_double,
                 else => dida.common.compileError("Don't know how to create napi value for {}", .{ReturnType}),
             };
-            return napiCall(napi_fn, .{ env, value }, ReturnType);
+            return abi.napiCall(napi_fn, .{ env, value }, ReturnType);
         },
         .Struct => |struct_info| {
             var result: ReturnType = undefined;
             inline for (struct_info.fields) |field_info| {
-                var field_name: [field_info.name.len:0]u8 = undefined;
-                std.mem.copy(u8, &field_name, field_info.name);
-                field_name[field_info.name.len] = 0;
-                const field_value = napiCall(c.napi_get_named_property, .{ env, value, &field_name }, c.napi_value);
+                const field_value = abi.getProperty(env, value, abi.createString(env, field_info.name));
                 @field(result, field_info.name) = napiGetValue(env, field_value, field_info.field_type);
             }
             return result;
         },
         .Union => |union_info| {
             if (union_info.tag_type) |tag_type| {
-                const tag = napiGetValue(env, napiCall(c.napi_get_named_property, .{ env, value, "tag" }, c.napi_value), tag_type);
+                const tag = napiGetValue(env, abi.getProperty(env, value, abi.createString(env, "tag")), tag_type);
                 inline for (@typeInfo(tag_type).Enum.fields) |enum_field_info, i| {
                     if (@enumToInt(tag) == enum_field_info.value) {
                         const union_field_info = union_info.fields[i];
-                        const payload = napiGetValue(env, napiCall(c.napi_get_named_property, .{ env, value, "payload" }, c.napi_value), union_field_info.field_type);
+                        const payload = napiGetValue(env, abi.getProperty(env, value, abi.createString(env, "payload")), union_field_info.field_type);
                         return @unionInit(ReturnType, union_field_info.name, payload);
                     }
                 }
@@ -453,7 +433,7 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
             }
             // max_len+1 to make space for null byte :(
             var buffer: [max_len + 1]u8 = undefined;
-            const buffer_size = napiCall(c.napi_get_value_string_utf8, .{ env, value, &buffer, max_len + 1 }, usize);
+            const buffer_size = abi.napiCall(c.napi_get_value_string_utf8, .{ env, value, &buffer, max_len + 1 }, usize);
             const tag_name = buffer[0..buffer_size];
             inline for (enum_info.fields) |field_info| {
                 if (std.mem.eql(u8, tag_name, field_info.name)) {
@@ -463,11 +443,11 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
             dida.common.panic("Type {s} does not contain a tag named \"{s}\"", .{ ReturnType, tag_name });
         },
         .Array => |array_info| {
-            const napi_len = napiCall(c.napi_get_array_length, .{ env, value }, u32);
+            const napi_len = abi.getArrayLength(env, value);
             dida.common.assert(napi_len == array_info.len, "Expected array of length {}, got length {}", .{ array_info.len, napi_len });
             var result: ReturnType = undefined;
             for (result) |*elem, i| {
-                const napi_elem = napiCall(c.napi_get_element, .{ env, value, @intCast(u32, i) }, c.napi_value);
+                const napi_elem = abi.getElement(env, value, @intCast(u32, i));
                 elem.* = napiGetValue(env, napi_elem, array_info.child);
             }
             return result;
@@ -475,27 +455,27 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
         .Pointer => |pointer_info| {
             switch (pointer_info.size) {
                 .Slice => {
-                    const len = napiCall(c.napi_get_array_length, .{ env, value }, u32);
+                    const len = abi.getArrayLength(env, value);
                     const result = allocator.alloc(pointer_info.child, len) catch |err| dida.common.panic("{}", .{err});
                     for (result) |*elem, i| {
-                        const napi_elem = napiCall(c.napi_get_element, .{ env, value, @intCast(u32, i) }, c.napi_value);
+                        const napi_elem = abi.getElement(env, value, @intCast(u32, i));
                         elem.* = napiGetValue(env, napi_elem, pointer_info.child);
                     }
                     return result;
                 },
-                else => dida.common.compileError("Dont know how to get value for type {}", .{ReturnType}),
+                else => dida.common.compileError("Don't know how to get value for type {}", .{ReturnType}),
             }
         },
         .Optional => |optional_info| {
-            const napi_type = napiCall(c.napi_typeof, .{ env, value }, c.napi_valuetype);
-            return switch (napi_type) {
-                .napi_undefined, .napi_null => null,
+            const js_type = abi.jsTypeOf(env, value);
+            return switch (js_type) {
+                .Undefined, .Null => null,
                 else => napiGetValue(env, value, optional_info.child),
             };
         },
         .Void => {
             return {};
         },
-        else => dida.common.compileError("Dont know how to get value for type {}", .{ReturnType}),
+        else => dida.common.compileError("Don't know how to get value for type {}", .{ReturnType}),
     }
 }

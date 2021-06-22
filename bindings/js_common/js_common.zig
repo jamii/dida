@@ -1,5 +1,16 @@
 pub const std = @import("std");
 pub const dida = @import("../../lib/dida.zig");
+const abi = @import("root").abi;
+
+pub const JsType = enum {
+    Undefined,
+    Null,
+    Boolean,
+    Number,
+    String,
+    Object,
+    Function,
+};
 
 var gpa = std.heap.GeneralPurposeAllocator(.{
     .safety = true,
