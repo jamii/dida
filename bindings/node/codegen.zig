@@ -1,4 +1,4 @@
-usingnamespace @import("./dida_node_common.zig");
+usingnamespace @import("../js_common/js_common.zig");
 
 pub fn main() !void {
     var writer = std.io.getStdOut().writer();

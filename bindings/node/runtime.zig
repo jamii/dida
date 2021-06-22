@@ -1,4 +1,4 @@
-usingnamespace @import("./dida_node_common.zig");
+usingnamespace @import("../js_common/js_common.zig");
 
 const c = @cImport({
     @cInclude("node_api.h");
@@ -200,14 +200,14 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
             };
             const napi_fn = switch (@TypeOf(cast_value)) {
                 isize => if (usize_bits == 64) c.napi_create_int64 else c.napi_create_int32,
-                else => compileError("Don't know how to create napi value for {}", .{@TypeOf(cast_value)}),
+                else => dida.common.compileError("Don't know how to create napi value for {}", .{@TypeOf(cast_value)}),
             };
             return napiCall(napi_fn, .{ env, cast_value }, c.napi_value);
         },
         .Float => {
             const napi_fn = switch (@TypeOf(value)) {
                 f64 => c.napi_create_double,
-                else => compileError("Don't know how to create napi value for {}", .{@TypeOf(value)}),
+                else => dida.common.compileError("Don't know how to create napi value for {}", .{@TypeOf(value)}),
             };
             return napiCall(napi_fn, .{ env, value }, c.napi_value);
         },
@@ -249,7 +249,7 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
                 }
                 unreachable;
             } else {
-                compileError("Can't create value for untagged union type {}", .{ReturnType});
+                dida.common.compileError("Can't create value for untagged union type {}", .{ReturnType});
             }
         },
         .Enum => |enum_info| {
@@ -280,7 +280,7 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
                     }
                     return napi_array;
                 },
-                else => compileError("Dont know how to create value of type {}", .{@TypeOf(value)}),
+                else => dida.common.compileError("Dont know how to create value of type {}", .{@TypeOf(value)}),
             }
         },
         .Optional => {
@@ -292,7 +292,7 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
         .Void => {
             return napiCall(c.napi_get_undefined, .{env}, c.napi_value);
         },
-        else => compileError("Dont know how to create value of type {}", .{@TypeOf(value)}),
+        else => dida.common.compileError("Dont know how to create value of type {}", .{@TypeOf(value)}),
     }
 }
 
@@ -305,13 +305,38 @@ const NapiMapper = struct {
     fn map(self: *dida.core.NodeSpec.MapSpec.Mapper, row: dida.core.Row) error{OutOfMemory}!dida.core.Row {
         const parent = @fieldParentPtr(NapiMapper, "mapper", self);
         const napi_fn = napiCall(c.napi_get_reference_value, .{ parent.env, parent.napi_fn_ref }, c.napi_value);
-        const napi_input_row = napiCreateValue(parent.env, row);
-        const napi_undefined = napiCall(c.napi_get_undefined, .{parent.env}, c.napi_value);
+        const napi_args = [_]c.napi_value{
+            napiCreateValue(parent.env, row),
+        };
         dida.common.assert(!napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions before mapper cal", .{});
-        const napi_output_row = napiCall(c.napi_call_function, .{ parent.env, napi_undefined, napi_fn, 1, &napi_input_row }, c.napi_value);
+        const napi_undefined = napiCall(c.napi_get_undefined, .{parent.env}, c.napi_value);
+        const napi_output = napiCall(c.napi_call_function, .{ parent.env, napi_undefined, napi_fn, 1, &napi_args }, c.napi_value);
         dida.common.assert(!napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions after mapper call", .{});
-        const output_row = napiGetValue(parent.env, napi_output_row, dida.core.Row);
-        return output_row;
+        const output = napiGetValue(parent.env, napi_output, dida.core.Row);
+        return output;
+    }
+};
+
+const NapiReducer = struct {
+    // TODO is it safe to hold on to this?
+    env: c.napi_env,
+    napi_fn_ref: c.napi_ref,
+    reducer: dida.core.NodeSpec.ReduceSpec.Reducer,
+
+    fn reduce(self: *dida.core.NodeSpec.ReduceSpec.Reducer, reduced_value: dida.core.Value, row: dida.core.Row, count: usize) error{OutOfMemory}!dida.core.Value {
+        const parent = @fieldParentPtr(NapiReducer, "reducer", self);
+        const napi_fn = napiCall(c.napi_get_reference_value, .{ parent.env, parent.napi_fn_ref }, c.napi_value);
+        const napi_args = [_]c.napi_value{
+            napiCreateValue(parent.env, reduced_value),
+            napiCreateValue(parent.env, row),
+            napiCreateValue(parent.env, count),
+        };
+        dida.common.assert(!napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions before mapper cal", .{});
+        const napi_undefined = napiCall(c.napi_get_undefined, .{parent.env}, c.napi_value);
+        const napi_output = napiCall(c.napi_call_function, .{ parent.env, napi_undefined, napi_fn, 1, &napi_args }, c.napi_value);
+        dida.common.assert(!napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions after mapper call", .{});
+        const output = napiGetValue(parent.env, napi_output, dida.core.Value);
+        return output;
     }
 };
 
@@ -359,12 +384,25 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
         return &napi_mapper.mapper;
     }
 
+    if (ReturnType == *dida.core.NodeSpec.ReduceSpec.Reducer) {
+        // TODO we're just leaking this for now
+        var napi_reducer = allocator.create(NapiReducer) catch |err| dida.common.panic("{}", .{err});
+        napi_reducer.* = NapiReducer{
+            .env = env,
+            .napi_fn_ref = napiCall(c.napi_create_reference, .{ env, value, 1 }, c.napi_ref),
+            .reducer = .{
+                .reduce_fn = NapiReducer.reduce,
+            },
+        };
+        return &napi_reducer.reducer;
+    }
+
     const info = @typeInfo(ReturnType);
     switch (info) {
         .Int => {
             const napi_fn = switch (ReturnType) {
                 usize, isize => if (usize_bits == 64) c.napi_get_value_int64 else c.napi.get_value_int32,
-                else => compileError("Don't know how to create napi value for {}", .{ReturnType}),
+                else => dida.common.compileError("Don't know how to create napi value for {}", .{ReturnType}),
             };
             const CastType = switch (ReturnType) {
                 usize => isize,
@@ -376,7 +414,7 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
         .Float => {
             const napi_fn = switch (ReturnType) {
                 f64 => c.napi_get_value_double,
-                else => compileError("Don't know how to create napi value for {}", .{ReturnType}),
+                else => dida.common.compileError("Don't know how to create napi value for {}", .{ReturnType}),
             };
             return napiCall(napi_fn, .{ env, value }, ReturnType);
         },
@@ -403,7 +441,7 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
                 }
                 unreachable;
             } else {
-                compileError("Can't get value for untagged union type {}", .{ReturnType});
+                dida.common.compileError("Can't get value for untagged union type {}", .{ReturnType});
             }
         },
         .Enum => |enum_info| {
@@ -445,7 +483,7 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
                     }
                     return result;
                 },
-                else => compileError("Dont know how to get value for type {}", .{ReturnType}),
+                else => dida.common.compileError("Dont know how to get value for type {}", .{ReturnType}),
             }
         },
         .Optional => |optional_info| {
@@ -458,6 +496,6 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
         .Void => {
             return {};
         },
-        else => compileError("Dont know how to get value for type {}", .{ReturnType}),
+        else => dida.common.compileError("Dont know how to get value for type {}", .{ReturnType}),
     }
 }

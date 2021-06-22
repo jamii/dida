@@ -4,8 +4,8 @@
   "description": "",
   "main": "test.js",
   "scripts": {
-    "runtime": "zig build-lib ./dida_node_runtime.zig -femit-bin=dida.node --main-pkg-path ../../ -dynamic -lc -isystem $NIX_NODEJS/include/node",
-    "codegen": "zig run ./dida_node_codegen.zig --main-pkg-path ../../ > ./dida.js",
+    "runtime": "zig build-lib ./runtime.zig -femit-bin=dida.node --main-pkg-path ../../ -dynamic -lc -isystem $NIX_NODEJS/include/node",
+    "codegen": "zig run ./codegen.zig --main-pkg-path ../../ > ./dida.js",
     "build": "npm run-script runtime && npm run-script codegen"
   },
   "author": "Jamie Brandon <jamie@scattered-thoughts.net>",

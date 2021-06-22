@@ -1,6 +1,12 @@
 pub const std = @import("std");
 pub const dida = @import("../../lib/dida.zig");
 
+var gpa = std.heap.GeneralPurposeAllocator(.{
+    .safety = true,
+    .never_unmap = true,
+}){};
+pub const allocator = &gpa.allocator;
+
 pub const types_with_js_constructors = .{
     dida.core.GraphBuilder,
     dida.core.Graph,
@@ -79,15 +85,11 @@ pub fn serdeStrategy(comptime T: type) SerdeStrategy {
         dida.core.NodeSpec.IndexSpec,
         dida.core.NodeSpec.UnionSpec,
         dida.core.NodeSpec.DistinctSpec,
+        dida.core.NodeSpec.ReduceSpec,
+        *dida.core.NodeSpec.ReduceSpec.Reducer,
         dida.core.NodeSpec.OutputSpec,
         => .Value,
 
-        else => compileError("No SerdeStrategy for {}", .{T}),
+        else => dida.common.compileError("No SerdeStrategy for {}", .{T}),
     };
 }
-
-var gpa = std.heap.GeneralPurposeAllocator(.{
-    .safety = true,
-    .never_unmap = true,
-}){};
-pub const allocator = &gpa.allocator;
