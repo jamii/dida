@@ -25,6 +25,7 @@ pub const types_with_js_constructors = .{
     dida.core.NodeSpec.IndexSpec,
     dida.core.NodeSpec.UnionSpec,
     dida.core.NodeSpec.DistinctSpec,
+    dida.core.NodeSpec.ReduceSpec,
     dida.core.NodeSpec.OutputSpec,
 };
 

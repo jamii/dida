@@ -15,8 +15,21 @@ const joined = graph_builder.addNode(subgraph_1, new dida.NodeSpec.Join([distinc
 const without_middle = graph_builder.addNode(subgraph_1, new dida.NodeSpec.Map(joined, input => [input[2], input[1]]));
 const reach = graph_builder.addNode(subgraph_1, new dida.NodeSpec.Union([edges_1, without_middle]));
 graph_builder.connectLoop(reach, reach_future);
-const reach_out = graph_builder.addNode(subgraph_0, new dida.NodeSpec.TimestampPop(distinct_reach_index));
-const out = graph_builder.addNode(subgraph_0, new dida.NodeSpec.Output(reach_out));
+const reach_pop = graph_builder.addNode(subgraph_0, new dida.NodeSpec.TimestampPop(distinct_reach_index));
+const reach_out = graph_builder.addNode(subgraph_0, new dida.NodeSpec.Output(reach_pop));
+
+const reach_summary = graph_builder.addNode(subgraph_1, new dida.NodeSpec.Reduce(
+    distinct_reach_index,
+    1,
+    "",
+    function (reduced_value, row, count) {
+        for (var i = 0; i < count; i++) {
+            reduced_value += row[1];
+        }
+        return reduced_value;
+    }
+));
+const reach_summary_out = graph_builder.addNode(subgraph_1, new dida.NodeSpec.Output(reach_summary));
 
 const graph = graph_builder.finishAndReset();
 
@@ -33,7 +46,12 @@ shard.advanceInput(edges, [1]);
 while (shard.hasWork()) {
     shard.doWork();
     while (true) {
-        const change_batch = shard.popOutput(out);
+        const change_batch = shard.popOutput(reach_out);
+        if (change_batch == undefined) break;
+        console.log(util.inspect(change_batch, false, null, true));
+    }
+    while (true) {
+        const change_batch = shard.popOutput(reach_summary_out);
         if (change_batch == undefined) break;
         console.log(util.inspect(change_batch, false, null, true));
     }
@@ -45,7 +63,12 @@ shard.advanceInput(edges, [2]);
 while (shard.hasWork()) {
     shard.doWork();
     while (true) {
-        const change_batch = shard.popOutput(out);
+        const change_batch = shard.popOutput(reach_out);
+        if (change_batch == undefined) break;
+        console.log(util.inspect(change_batch, false, null, true));
+    }
+    while (true) {
+        const change_batch = shard.popOutput(reach_summary_out);
         if (change_batch == undefined) break;
         console.log(util.inspect(change_batch, false, null, true));
     }

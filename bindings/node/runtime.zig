@@ -157,7 +157,7 @@ fn napiCreateValue(env: c.napi_env, value: anytype) c.napi_value {
     );
 
     if (@TypeOf(value) == []const u8) {
-        return napiCall(c.napi_create_string_utf8, .{ env, @ptrCast([*]const u8, value), value.len }, c.napi_value);
+        return napiCall(c.napi_create_string_utf8, .{ env, @ptrCast([*c]const u8, value), value.len }, c.napi_value);
     }
 
     if (@TypeOf(value) == dida.core.Value) {
@@ -310,7 +310,7 @@ const NapiMapper = struct {
         };
         dida.common.assert(!napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions before mapper cal", .{});
         const napi_undefined = napiCall(c.napi_get_undefined, .{parent.env}, c.napi_value);
-        const napi_output = napiCall(c.napi_call_function, .{ parent.env, napi_undefined, napi_fn, 1, &napi_args }, c.napi_value);
+        const napi_output = napiCall(c.napi_call_function, .{ parent.env, napi_undefined, napi_fn, napi_args.len, &napi_args }, c.napi_value);
         dida.common.assert(!napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions after mapper call", .{});
         const output = napiGetValue(parent.env, napi_output, dida.core.Row);
         return output;
@@ -333,7 +333,7 @@ const NapiReducer = struct {
         };
         dida.common.assert(!napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions before mapper cal", .{});
         const napi_undefined = napiCall(c.napi_get_undefined, .{parent.env}, c.napi_value);
-        const napi_output = napiCall(c.napi_call_function, .{ parent.env, napi_undefined, napi_fn, 1, &napi_args }, c.napi_value);
+        const napi_output = napiCall(c.napi_call_function, .{ parent.env, napi_undefined, napi_fn, napi_args.len, &napi_args }, c.napi_value);
         dida.common.assert(!napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions after mapper call", .{});
         const output = napiGetValue(parent.env, napi_output, dida.core.Value);
         return output;
@@ -350,7 +350,7 @@ fn napiGetValue(env: c.napi_env, value: c.napi_value, comptime ReturnType: type)
     if (ReturnType == []const u8) {
         const len = napiCall(c.napi_get_value_string_utf8, .{ env, value, null, 0 }, usize);
         var string = allocator.alloc(u8, len) catch |err| dida.common.panic("{}", .{err});
-        _ = napiCall(c.napi_get_value_string_utf8, .{ env, value, @ptrCast([*:0]u8, string), len + 1 }, usize);
+        _ = napiCall(c.napi_get_value_string_utf8, .{ env, value, @ptrCast([*c]u8, string), len + 1 }, usize);
         return string;
     }
 
