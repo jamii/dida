@@ -99,9 +99,12 @@ Compared to differential dataflow, dida aims to:
   * [ ] Add debug-mode validation to progress tracker, shard
   * [ ] Integration test against problems with known results (eg TPC)
   * [ ] Enable double free, use after free and memory leak detection for all tests
+  * [ ] Figure out how to test bindings
+    * [ ] Wasm
+    * [ ] Node
 * [ ] Bindings
   * [ ] Wasm
-  * [ ] Node.js
+  * [ ] Node
     * [x] Basic sketch
     * [ ] Type tags
     * [ ] Exceptions
@@ -114,7 +117,7 @@ Compared to differential dataflow, dida aims to:
     * [ ] Automatically add Push/Pop nodes as needed
     * [ ] Add index wrappers for indexes behind Push/Pop
   * [ ] Wasm
-  * [ ] Node.js
+  * [ ] Node
 * [ ] Debuggers / visualization
 * [ ] Documentation / book
   * [x] First pass at high-level explanation
