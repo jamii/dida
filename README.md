@@ -57,10 +57,14 @@ Compared to differential dataflow, dida aims to:
       * [x] Basic logic
       * [x] Semi-efficient implementation using per-row pending timestamps
       * [ ] Figure out a cheaper way to maintain pending timestamps?
+      * [ ] Count, Threshold
     * [ ] Join
       * [x] Basic logic
       * [x] Efficient implementation using merge join
-    * [ ] Reduce
+    * [x] Reduce
+      * [x] Basic logic
+      * [ ] Efficient implementation using better index structure
+    * [ ] ReduceAbelian
     * [ ] Exchange
   * [x] Graph
     * [x] Validation

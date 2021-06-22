@@ -188,6 +188,24 @@ pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
             };
         }
 
+        pub fn reduce(self: Self, key_columns: usize, init_value: anytype, reducer: *dida.core.NodeSpec.ReduceSpec.Reducer) Node(.Reduce) {
+            const builder = &self.sugar.state.Building;
+            const subgraph = builder.node_subgraphs.items[self.inner.id];
+            const new_inner = assert_ok(self.sugar.state.Building.addNode(
+                subgraph,
+                .{ .Reduce = .{
+                    .input = self.inner,
+                    .key_columns = key_columns,
+                    .init_value = coerceAnonTo(self.sugar.allocator, dida.core.Value, init_value),
+                    .reducer = reducer,
+                } },
+            ));
+            return .{
+                .sugar = self.sugar,
+                .inner = new_inner,
+            };
+        }
+
         pub fn project(self: Self, columns: anytype) Node(.Map) {
             return self.projectInner(coerceAnonTo(self.sugar.allocator, []usize, columns));
         }

@@ -67,8 +67,29 @@ pub fn main() !void {
     });
     const reach = try graph_builder.addNode(subgraph_1, .{ .Union = .{ .inputs = .{ edges_1, without_middle } } });
     graph_builder.connectLoop(reach, reach_future);
-    const reach_out = try graph_builder.addNode(subgraph_0, .{ .TimestampPop = .{ .input = distinct_reach_index } });
-    const out = try graph_builder.addNode(subgraph_0, .{ .Output = .{ .input = reach_out } });
+    const reach_pop = try graph_builder.addNode(subgraph_0, .{ .TimestampPop = .{ .input = distinct_reach_index } });
+    const reach_out = try graph_builder.addNode(subgraph_0, .{ .Output = .{ .input = reach_pop } });
+
+    var reducer = dida.core.NodeSpec.ReduceSpec.Reducer{
+        .reduce_fn = (struct {
+            fn concat(_: *dida.core.NodeSpec.ReduceSpec.Reducer, reduced_value: dida.core.Value, row: dida.core.Row, count: usize) !dida.core.Value {
+                var string = std.ArrayList(u8).init(allocator);
+                try string.appendSlice(reduced_value.String);
+                var i: usize = 0;
+                while (i < count) : (i += 1) {
+                    try string.appendSlice(row.values[1].String);
+                }
+                return dida.core.Value{ .String = string.toOwnedSlice() };
+            }
+        }).concat,
+    };
+    const reach_summary = try graph_builder.addNode(subgraph_1, .{ .Reduce = .{
+        .input = distinct_reach_index,
+        .key_columns = 1,
+        .init_value = .{ .String = "" },
+        .reducer = &reducer,
+    } });
+    const reach_summary_out = try graph_builder.addNode(subgraph_1, .{ .Output = .{ .input = reach_summary } });
 
     const graph = try graph_builder.finishAndReset();
 
@@ -94,7 +115,10 @@ pub fn main() !void {
         // dida.common.dump(shard);
         try shard.doWork();
 
-        while (shard.popOutput(out)) |change_batch| {
+        while (shard.popOutput(reach_out)) |change_batch| {
+            dida.common.dump(change_batch);
+        }
+        while (shard.popOutput(reach_summary_out)) |change_batch| {
             dida.common.dump(change_batch);
         }
     }
@@ -106,7 +130,10 @@ pub fn main() !void {
         // dida.common.dump(shard);
         try shard.doWork();
 
-        while (shard.popOutput(out)) |change_batch| {
+        while (shard.popOutput(reach_out)) |change_batch| {
+            dida.common.dump(change_batch);
+        }
+        while (shard.popOutput(reach_summary_out)) |change_batch| {
             dida.common.dump(change_batch);
         }
     }

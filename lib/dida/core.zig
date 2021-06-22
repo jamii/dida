@@ -545,17 +545,16 @@ pub const Index = struct {
         }
     }
 
-    /// Appends every change for `row` into `into_changes`.
-    pub fn getChangesForRow(self: *Index, row: Row, into_changes: *ArrayList(Change)) !void {
+    /// Appends every change where `row.values[0..key_columns] == change.row.values[0..key_columns]` into `into_changes`.
+    pub fn getChangesForKey(self: *Index, row: Row, key_columns: usize, into_changes: *ArrayList(Change)) !void {
         for (self.change_batches.items) |change_batch| {
-            var start_ix = change_batch.seekRowStart(0, row, row.values.len);
-            const end_ix = change_batch.seekRowEnd(start_ix, row, row.values.len);
+            var start_ix = change_batch.seekRowStart(0, row, key_columns);
+            const end_ix = change_batch.seekRowEnd(start_ix, row, key_columns);
             while (start_ix < end_ix) : (start_ix += 1)
                 try into_changes.append(change_batch.changes[start_ix]);
         }
     }
 
-    /// Returns the sum of the diffs for every change for `row`.
     pub fn getCountForRowAsOf(self: *Index, row: Row, timestamp: Timestamp) isize {
         var count: isize = 0;
         for (self.change_batches.items) |change_batch| {
@@ -593,10 +592,18 @@ pub const NodeSpecTag = enum {
     TimestampPop,
     Union,
     Distinct,
+    Reduce,
 
     pub fn hasIndex(self: NodeSpecTag) bool {
         return switch (self) {
-            .Index, .Distinct => true,
+            .Index, .Distinct, .Reduce => true,
+            else => false,
+        };
+    }
+
+    pub fn needsIndex(self: NodeSpecTag) bool {
+        return switch (self) {
+            .Distinct, .Reduce => true,
             else => false,
         };
     }
@@ -614,6 +621,7 @@ pub const NodeSpec = union(NodeSpecTag) {
     TimestampPop: TimestampPopSpec,
     Union: UnionSpec,
     Distinct: DistinctSpec,
+    Reduce: ReduceSpec,
 
     pub const MapSpec = struct {
         input: Node,
@@ -658,6 +666,17 @@ pub const NodeSpec = union(NodeSpecTag) {
         input: Node,
     };
 
+    pub const ReduceSpec = struct {
+        input: Node,
+        key_columns: usize,
+        init_value: Value,
+        reducer: *Reducer,
+
+        pub const Reducer = struct {
+            reduce_fn: fn (self: *Reducer, reduced_value: Value, row: Row, count: usize) error{OutOfMemory}!Value,
+        };
+    };
+
     pub fn getInputs(self: *const NodeSpec) []const Node {
         return switch (self.*) {
             .Input => |_| &[_]Node{},
@@ -668,6 +687,7 @@ pub const NodeSpec = union(NodeSpecTag) {
             .TimestampIncrement => |*spec| ptrToSlice(Node, &spec.input.?),
             .TimestampPop => |*spec| ptrToSlice(Node, &spec.input),
             .Distinct => |*spec| ptrToSlice(Node, &spec.input),
+            .Reduce => |*spec| ptrToSlice(Node, &spec.input),
             .Join => |*spec| &spec.inputs,
             .Union => |*spec| &spec.inputs,
         };
@@ -686,6 +706,7 @@ pub const NodeState = union(enum) {
     TimestampPop,
     Union,
     Distinct: DistinctState,
+    Reduce: ReduceState,
 
     pub const InputState = struct {
         frontier: Frontier,
@@ -710,6 +731,17 @@ pub const NodeState = union(enum) {
         /// For example, if a distinct row appears at two different timestamps, then at the leastUpperBound of those timestamps the total count would be 2 and we need to correct that.
         /// To calculate:
         /// * For each row in the input, take the leastUpperBound of every possible subset of timestamps at which that row changed.
+        /// * Filter out timestamps that are before the output frontier of this node.
+        // TODO If Index supported cheap single updates, it would maybe be a suitable data structure here.
+        pending_corrections: DeepHashMap(Row, DeepHashSet(Timestamp)),
+    };
+
+    pub const ReduceState = struct {
+        index: Index,
+        /// These are keys/timestamps at which the output might change even if there is no new input.
+        /// For example, if a key appears at two different timestamps, then at the leastUpperBound of those timestamps the there will be two output values and we need to replace that with the correct single output.
+        /// To calculate:
+        /// * For each key in the input, take the leastUpperBound of every possible subset of timestamps at which that key changed.
         /// * Filter out timestamps that are before the output frontier of this node.
         // TODO If Index supported cheap single updates, it would maybe be a suitable data structure here.
         pending_corrections: DeepHashMap(Row, DeepHashSet(Timestamp)),
@@ -746,6 +778,12 @@ pub const NodeState = union(enum) {
                     .pending_corrections = DeepHashMap(Row, DeepHashSet(Timestamp)).init(allocator),
                 },
             },
+            .Reduce => .{
+                .Reduce = .{
+                    .index = Index.init(allocator),
+                    .pending_corrections = DeepHashMap(Row, DeepHashSet(Timestamp)).init(allocator),
+                },
+            },
         };
     }
 
@@ -753,6 +791,7 @@ pub const NodeState = union(enum) {
         return switch (self.*) {
             .Index => |*state| &state.index,
             .Distinct => |*state| &state.index,
+            .Reduce => |*state| &state.index,
             // TODO should be able to follow TimestampPush/Pop to an index and wrap it
             else => null,
         };
@@ -858,14 +897,12 @@ pub const Graph = struct {
                         .{},
                     );
                 }
-                switch (node_spec) {
-                    .Join, .Distinct => assert(
+                if (std.meta.activeTag(node_spec).needsIndex())
+                    assert(
                         std.meta.activeTag(self.node_specs[input_node.id]).hasIndex(),
                         "Inputs to {} node must contain an index",
                         .{std.meta.activeTag(node_spec)},
-                    ),
-                    else => {},
-                }
+                    );
                 switch (node_spec) {
                     .TimestampPush => {
                         const input_subgraph = last(Subgraph, self.node_subgraphs[input_node.id]);
@@ -1213,10 +1250,20 @@ pub const Shard = struct {
                 // Pass straight through
                 try self.emitChangeBatch(node_input.node, change_batch);
             },
-            .Distinct => |distinct| {
+            .Distinct, .Reduce => {
                 // Figure out which new rows/timestamps might need later corrections
+                const pending_corrections = switch (node_state.*) {
+                    .Distinct => |*state| &state.pending_corrections,
+                    .Reduce => |*state| &state.pending_corrections,
+                    else => unreachable,
+                };
                 for (change_batch.changes) |change| {
-                    const timestamps_entry = try node_state.Distinct.pending_corrections.getOrPut(change.row);
+                    const key = switch (node_spec) {
+                        .Distinct => change.row,
+                        .Reduce => |spec| Row{ .values = change.row.values[0..spec.key_columns] },
+                        else => unreachable,
+                    };
+                    const timestamps_entry = try pending_corrections.getOrPut(key);
                     if (!timestamps_entry.found_existing)
                         timestamps_entry.value_ptr.* = DeepHashSet(Timestamp).init(self.allocator);
                     const timestamps = timestamps_entry.value_ptr;
@@ -1370,19 +1417,25 @@ pub const Shard = struct {
                 }
             }
 
-            // Distinct-specific stuff
+            // Distinct/Reduce-specific stuff
             // TODO this is somewhat inefficient
-            if (node_spec == .Distinct) {
-                const input_frontier = self.node_frontiers[node_spec.Distinct.input.id];
-                const input_index = self.node_states[node_spec.Distinct.input.id].getIndex().?;
-                const output_index = &node_state.Distinct.index;
+            if (node_spec == .Distinct or node_spec == .Reduce) {
+                const input_node = node_spec.getInputs()[0];
+                const input_frontier = self.node_frontiers[input_node.id];
+                const input_index = self.node_states[input_node.id].getIndex().?;
+                const output_index = node_state.getIndex().?;
                 var change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 var frontier_support_changes = ArrayList(FrontierChange).init(self.allocator);
 
-                var row_iter = node_state.Distinct.pending_corrections.iterator();
-                while (row_iter.next()) |row_entry| {
-                    const row = row_entry.key_ptr.*;
-                    const timestamps = row_entry.value_ptr;
+                const pending_corrections = switch (node_state.*) {
+                    .Distinct => |*state| &state.pending_corrections,
+                    .Reduce => |*state| &state.pending_corrections,
+                    else => unreachable,
+                };
+                var key_iter = pending_corrections.iterator();
+                while (key_iter.next()) |key_entry| {
+                    const key = key_entry.key_ptr.*;
+                    const timestamps = key_entry.value_ptr;
 
                     // Going to check any pending timestamp that is before the new input frontier
                     var timestamps_to_check = ArrayList(Timestamp).init(self.allocator);
@@ -1407,43 +1460,110 @@ pub const Shard = struct {
                         }
                     }.lessThan);
 
-                    // Get past inputs for this row
+                    // Get past inputs for this key
+                    // TODO a sorted iterator would be nicer for this
                     var input_changes = ArrayList(Change).init(self.allocator);
-                    try input_index.getChangesForRow(row, &input_changes);
+                    try input_index.getChangesForKey(key, key.values.len, &input_changes);
 
                     // Figure out correction for each timestamp
-                    var output_changes = ArrayList(Change).init(self.allocator);
+                    // TODO instead of having these separate corrections, would be much nicer to just add them to the index and have it produce a change at the end
+                    var new_output_changes = ArrayList(Change).init(self.allocator);
                     for (timestamps_to_check.items) |timestamp_to_check| {
-                        var input_count: isize = 0;
-                        for (input_changes.items) |input_change| {
-                            if (input_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
-                                input_count += input_change.diff;
-                        }
-                        assert(
-                            input_count >= 0,
-                            "Input count for any row should never be negative. Found row {} with count {} at time {}.",
-                            .{ row, input_count, timestamp_to_check },
-                        );
+                        switch (node_spec) {
+                            .Distinct => {
+                                // Calculate the correct count for this row
+                                var input_count: isize = 0;
+                                for (input_changes.items) |input_change| {
+                                    if (input_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
+                                        input_count += input_change.diff;
+                                }
 
-                        var output_count = try output_index.getCountForRowAsOf(row, timestamp_to_check);
-                        // Include previous corrections
-                        for (output_changes.items) |output_change| {
-                            if (output_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
-                                output_count += output_change.diff;
-                        }
+                                // Calculate what we're currently saying the count is for this row
+                                var output_count = output_index.getCountForRowAsOf(key, timestamp_to_check);
+                                // Include previous corrections
+                                for (new_output_changes.items) |output_change| {
+                                    if (output_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
+                                        output_count += output_change.diff;
+                                }
 
-                        const correct_output_count: isize = if (input_count == 0) 0 else 1;
-                        const diff = correct_output_count - output_count;
-                        if (diff != 0) {
-                            try output_changes.append(.{
-                                .row = row,
-                                .timestamp = timestamp_to_check,
-                                .diff = diff,
-                            });
+                                // If needed, issue a correction
+                                const correct_output_count: isize = if (input_count == 0) 0 else 1;
+                                const diff = correct_output_count - output_count;
+                                if (diff != 0) {
+                                    try new_output_changes.append(.{
+                                        .row = key,
+                                        .timestamp = timestamp_to_check,
+                                        .diff = diff,
+                                    });
+                                }
+                            },
+                            .Reduce => |spec| {
+                                // Coalesce inputs so reduce_fn only has to deal with positive diffs
+                                var input_bag = Bag.init(self.allocator);
+                                for (input_changes.items) |input_change| {
+                                    if (input_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
+                                        try input_bag.update(input_change.row, input_change.diff);
+                                }
+
+                                // Reduce fn might not be commutative, so it has to process changes in some well-defined order
+                                var sorted_input_changes = ArrayList(Change).init(self.allocator);
+                                var input_bag_iter = input_bag.rows.iterator();
+                                while (input_bag_iter.next()) |input_bag_entry|
+                                    try sorted_input_changes.append(.{
+                                        .row = input_bag_entry.key_ptr.*,
+                                        .timestamp = timestamp_to_check,
+                                        .diff = input_bag_entry.value_ptr.*,
+                                    });
+                                std.sort.sort(Change, sorted_input_changes.items, {}, (struct {
+                                    fn lessThan(_: void, a: Change, b: Change) bool {
+                                        return dida.meta.deepOrder(a, b) == .lt;
+                                    }
+                                }).lessThan);
+
+                                // Calculate the correct reduced value
+                                var input_value = spec.init_value;
+                                for (sorted_input_changes.items) |input_change| {
+                                    assert(
+                                        input_change.diff > 0,
+                                        "Reduce should never see negative input counts at any timestamp: {}",
+                                        .{input_change},
+                                    );
+                                    input_value = try spec.reducer.reduce_fn(spec.reducer, input_value, input_change.row, @intCast(usize, input_change.diff));
+                                }
+
+                                // Cancel all previous outputs for this key
+                                // TODO if we don't coalesce these, we're going to generate a lot of junk that the builder has to clean up
+                                var output_changes = ArrayList(Change).init(self.allocator);
+                                try output_index.getChangesForKey(key, key.values.len, &output_changes);
+                                for (new_output_changes.items) |output_change| {
+                                    if (output_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
+                                        try output_changes.append(output_change);
+                                }
+                                for (output_changes.items) |output_change| {
+                                    try new_output_changes.append(.{
+                                        .row = output_change.row,
+                                        .timestamp = timestamp_to_check,
+                                        .diff = -output_change.diff,
+                                    });
+                                }
+
+                                // Add the new output
+                                try new_output_changes.append(.{
+                                    .row = Row{
+                                        .values = try std.mem.concat(self.allocator, Value, &[_][]const Value{
+                                            key.values,
+                                            &[_]Value{input_value},
+                                        }),
+                                    },
+                                    .timestamp = timestamp_to_check,
+                                    .diff = 1,
+                                });
+                            },
+                            else => unreachable,
                         }
                     }
 
-                    try change_batch_builder.changes.appendSlice(output_changes.items);
+                    try change_batch_builder.changes.appendSlice(new_output_changes.items);
                 }
                 // TODO if timestamps now empty for a row, remove entry
 
