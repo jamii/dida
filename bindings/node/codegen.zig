@@ -1,4 +1,4 @@
-usingnamespace @import("../js_common/js_common.zig");
+usingnamespace @import("../js_common.zig");
 
 pub fn main() !void {
     var writer = std.io.getStdOut().writer();
@@ -114,7 +114,7 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                         }
                         try writer.writeAll("};\n\n");
                     } else {
-                        compileError("Can't know how to make constructor for non-tagged union type {}", .{Type});
+                        compileError("Don't know how to make constructor for non-tagged union type {}", .{Type});
                     }
                 },
                 else => compileError("Don't know how to make constructor for type {}", .{Type}),

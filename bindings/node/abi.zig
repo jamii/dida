@@ -1,9 +1,11 @@
-/// [NAPI docs](https://nodejs.org/api/n-api.html)
-usingnamespace @import("../js_common/js_common.zig");
+//! Wrapper aound [NAPI](https://nodejs.org/api/n-api.html).
+//! Used by ../js_common.zig
+
+usingnamespace @import("../js_common.zig");
 
 // --- node-specific stuff ---
 
-pub const c = @cImport({
+const c = @cImport({
     @cInclude("node_api.h");
 });
 
