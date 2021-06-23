@@ -1,26 +1,34 @@
 usingnamespace @import("../js_common/js_common.zig");
 pub const abi = @import("./abi.zig");
 
-// TODO remove once abi is complete
-const c = abi.c;
+const napi_exports = .{
+    .{ "GraphBuilder_init", GraphBuilder_init },
+    .{ "GraphBuilder_addSubgraph", dida.core.GraphBuilder.addSubgraph },
+    .{ "GraphBuilder_addNode", dida.core.GraphBuilder.addNode },
+    .{ "GraphBuilder_connectLoop", dida.core.GraphBuilder.connectLoop },
+    .{ "GraphBuilder_finishAndReset", dida.core.GraphBuilder.finishAndReset },
+
+    .{ "Graph_init", Graph_init },
+
+    .{ "Shard_init", Shard_init },
+    .{ "Shard_pushInput", dida.core.Shard.pushInput },
+    .{ "Shard_flushInput", dida.core.Shard.flushInput },
+    .{ "Shard_advanceInput", dida.core.Shard.advanceInput },
+    .{ "Shard_hasWork", dida.core.Shard.hasWork },
+    .{ "Shard_doWork", dida.core.Shard.doWork },
+    .{ "Shard_popOutput", dida.core.Shard.popOutput },
+};
 
 export fn napi_register_module_v1(env: abi.Env, exports: abi.Value) abi.Value {
-    napiExportFn(env, exports, napiWrapFn(GraphBuilder_init), "GraphBuilder_init");
-    napiExportFn(env, exports, napiWrapFn(dida.core.GraphBuilder.addSubgraph), "GraphBuilder_addSubgraph");
-    napiExportFn(env, exports, napiWrapFn(dida.core.GraphBuilder.addNode), "GraphBuilder_addNode");
-    napiExportFn(env, exports, napiWrapFn(dida.core.GraphBuilder.connectLoop), "GraphBuilder_connectLoop");
-    napiExportFn(env, exports, napiWrapFn(dida.core.GraphBuilder.finishAndReset), "GraphBuilder_finishAndReset");
-
-    napiExportFn(env, exports, napiWrapFn(Graph_init), "Graph_init");
-
-    napiExportFn(env, exports, napiWrapFn(Shard_init), "Shard_init");
-    napiExportFn(env, exports, napiWrapFn(dida.core.Shard.pushInput), "Shard_pushInput");
-    napiExportFn(env, exports, napiWrapFn(dida.core.Shard.flushInput), "Shard_flushInput");
-    napiExportFn(env, exports, napiWrapFn(dida.core.Shard.advanceInput), "Shard_advanceInput");
-    napiExportFn(env, exports, napiWrapFn(dida.core.Shard.hasWork), "Shard_hasWork");
-    napiExportFn(env, exports, napiWrapFn(dida.core.Shard.doWork), "Shard_doWork");
-    napiExportFn(env, exports, napiWrapFn(dida.core.Shard.popOutput), "Shard_popOutput");
-
+    inline for (napi_exports) |napi_export| {
+        const num_args = @typeInfo(@TypeOf(napi_export[1])).Fn.args.len;
+        abi.setProperty(
+            env,
+            exports,
+            abi.createString(env, napi_export[0]),
+            abi.createFunction(env, napi_export[0], num_args, comptime napiWrapFn(napi_export[1])),
+        );
+    }
     return exports;
 }
 
@@ -38,16 +46,10 @@ fn Shard_init(graph: *const dida.core.Graph) !dida.core.Shard {
 
 // --- helpers ---
 
-fn napiExportFn(env: abi.Env, exports: abi.Value, export_fn: c.napi_callback, export_fn_name: [:0]const u8) void {
-    const napi_fn = abi.napiCall(c.napi_create_function, .{ env, export_fn_name, export_fn_name.len, export_fn, null }, abi.Value);
-    abi.setProperty(env, exports, abi.createString(env, export_fn_name), napi_fn);
-}
-
-fn napiWrapFn(comptime zig_fn: anytype) c.napi_callback {
+fn napiWrapFn(comptime zig_fn: anytype) fn (abi.Env, []const abi.Value) abi.Value {
     return struct {
-        fn wrappedMethod(env: abi.Env, info: c.napi_callback_info) callconv(.C) abi.Value {
+        fn wrappedMethod(env: abi.Env, napi_args: []const abi.Value) abi.Value {
             var zig_args: std.meta.ArgsTuple(@TypeOf(zig_fn)) = undefined;
-            const napi_args = napiGetCbInfo(env, info, zig_args.len).args;
             comptime var i: usize = 0;
             inline while (i < zig_args.len) : (i += 1) {
                 const napi_arg = napi_args[i];
@@ -74,18 +76,6 @@ fn napiWrapFn(comptime zig_fn: anytype) c.napi_callback {
             }
         }
     }.wrappedMethod;
-}
-
-fn napiGetCbInfo(env: abi.Env, info: c.napi_callback_info, comptime expected_num_args: usize) struct { args: [expected_num_args]abi.Value, this: abi.Value } {
-    var actual_num_args: usize = expected_num_args;
-    var args: [expected_num_args]abi.Value = undefined;
-    var this: abi.Value = undefined;
-    abi.napiCall(c.napi_get_cb_info, .{ env, info, &actual_num_args, if (expected_num_args == 0) null else @ptrCast([*]abi.Value, &args), &this, null }, void);
-    dida.common.assert(actual_num_args == expected_num_args, "Expected {} args, got {} args", .{ expected_num_args, actual_num_args });
-    return .{
-        .args = args,
-        .this = this,
-    };
 }
 
 const usize_bits = @bitSizeOf(usize);
@@ -281,7 +271,7 @@ fn napiCreateValue(env: abi.Env, value: anytype) abi.Value {
 const NapiMapper = struct {
     // TODO is it safe to hold on to this?
     env: abi.Env,
-    napi_fn_ref: c.napi_ref,
+    napi_fn_ref: abi.RefCounted,
     mapper: dida.core.NodeSpec.MapSpec.Mapper,
 
     fn map(self: *dida.core.NodeSpec.MapSpec.Mapper, row: dida.core.Row) error{OutOfMemory}!dida.core.Row {
@@ -290,10 +280,7 @@ const NapiMapper = struct {
         const napi_args = [_]abi.Value{
             napiCreateValue(parent.env, row),
         };
-        dida.common.assert(!abi.napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions before mapper cal", .{});
-        const napi_undefined = abi.getUndefined(parent.env);
-        const napi_output = abi.napiCall(c.napi_call_function, .{ parent.env, napi_undefined, napi_fn, napi_args.len, &napi_args }, abi.Value);
-        dida.common.assert(!abi.napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions after mapper call", .{});
+        const napi_output = abi.callFunction(parent.env, napi_fn, &napi_args);
         const output = napiGetValue(parent.env, napi_output, dida.core.Row);
         return output;
     }
@@ -302,7 +289,7 @@ const NapiMapper = struct {
 const NapiReducer = struct {
     // TODO is it safe to hold on to this?
     env: abi.Env,
-    napi_fn_ref: c.napi_ref,
+    napi_fn_ref: abi.RefCounted,
     reducer: dida.core.NodeSpec.ReduceSpec.Reducer,
 
     fn reduce(self: *dida.core.NodeSpec.ReduceSpec.Reducer, reduced_value: dida.core.Value, row: dida.core.Row, count: usize) error{OutOfMemory}!dida.core.Value {
@@ -313,10 +300,7 @@ const NapiReducer = struct {
             napiCreateValue(parent.env, row),
             napiCreateValue(parent.env, count),
         };
-        dida.common.assert(!abi.napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions before mapper cal", .{});
-        const napi_undefined = abi.getUndefined(parent.env);
-        const napi_output = abi.napiCall(c.napi_call_function, .{ parent.env, napi_undefined, napi_fn, napi_args.len, &napi_args }, abi.Value);
-        dida.common.assert(!abi.napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions after mapper call", .{});
+        const napi_output = abi.callFunction(parent.env, napi_fn, &napi_args);
         const output = napiGetValue(parent.env, napi_output, dida.core.Value);
         return output;
     }

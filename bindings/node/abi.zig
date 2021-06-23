@@ -7,7 +7,7 @@ pub const c = @cImport({
     @cInclude("node_api.h");
 });
 
-pub fn napiCall(comptime napi_fn: anytype, args: anytype, comptime ReturnType: type) ReturnType {
+fn napiCall(comptime napi_fn: anytype, args: anytype, comptime ReturnType: type) ReturnType {
     if (ReturnType != void) {
         var result: ReturnType = undefined;
         const status: c.napi_status = @call(.{}, napi_fn, args ++ .{&result});
@@ -130,4 +130,46 @@ pub fn getProperty(env: Env, object: Value, name: Value) Value {
 
 pub fn getArrayLength(env: Env, array: Value) u32 {
     return napiCall(c.napi_get_array_length, .{ env, array }, u32);
+}
+
+pub fn callFunction(env: Env, function: Value, args: []const Value) Value {
+    dida.common.assert(!napiCall(c.napi_is_exception_pending, .{env}, bool), "Shouldn't be any exceptions before function call", .{});
+    const napi_undefined = getUndefined(env);
+    const output = napiCall(c.napi_call_function, .{ env, napi_undefined, function, args.len, @ptrCast([*c]const Value, args) }, Value);
+    dida.common.assert(!napiCall(c.napi_is_exception_pending, .{env}, bool), "Shouldn't be any exceptions after function call", .{});
+    return output;
+}
+
+pub fn createFunction(
+    env: Env,
+    name: [:0]const u8,
+    comptime num_args: usize,
+    comptime zig_fn: fn (env: Env, []const Value) Value,
+) Value {
+    const callback = struct {
+        fn callback(callback_env: Env, info: c.napi_callback_info) callconv(.C) Value {
+            var actual_num_args: usize = num_args;
+            var args: [num_args]Value = undefined;
+            var this: Value = undefined;
+            napiCall(c.napi_get_cb_info, .{
+                callback_env,
+                info,
+                &actual_num_args,
+                // TODO try removing this
+                if (num_args == 0) null else @ptrCast([*]Value, &args),
+                &this,
+                null,
+            }, void);
+            dida.common.assert(
+                actual_num_args == num_args,
+                "Expected {} args, got {} args",
+                .{
+                    num_args,
+                    actual_num_args,
+                },
+            );
+            return @call(.{}, zig_fn, .{ callback_env, &args });
+        }
+    }.callback;
+    return napiCall(c.napi_create_function, .{ env, name, name.len, callback, null }, Value);
 }
