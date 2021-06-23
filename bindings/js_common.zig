@@ -75,10 +75,14 @@ pub fn hasJsConstructor(comptime T: type) bool {
     return false;
 }
 
+/// How a given type will be (de)serialized across the abi boundary
 pub const SerdeStrategy = enum {
+    /// Heap-allocate on zig side and give a pointer to js side
     External,
+    /// Convert between zig and js values at the callsite
     Value,
 };
+
 pub fn serdeStrategy(comptime T: type) SerdeStrategy {
     return switch (T) {
         dida.core.GraphBuilder,
@@ -134,6 +138,7 @@ pub fn serdeStrategy(comptime T: type) SerdeStrategy {
     };
 }
 
+/// Take a zig function and return a wrapped version that handles serde
 pub fn wrapFunction(comptime zig_fn: anytype) fn (abi.Env, []const abi.Value) abi.Value {
     return struct {
         fn wrappedMethod(env: abi.Env, js_args: []const abi.Value) abi.Value {
@@ -156,10 +161,10 @@ pub fn wrapFunction(comptime zig_fn: anytype) fn (abi.Env, []const abi.Value) ab
                 .External => {
                     const result_ptr = allocator.create(@TypeOf(result)) catch |err| dida.common.panic("{}", .{err});
                     result_ptr.* = result;
-                    return SerializeExternal(env, result_ptr);
+                    return serializeExternal(env, result_ptr);
                 },
                 .Value => {
-                    return SerializeValue(env, result);
+                    return serializeValue(env, result);
                 },
             }
         }
@@ -177,16 +182,16 @@ comptime {
     );
 }
 
-fn SerializeExternal(env: abi.Env, value: anytype) abi.Value {
+fn serializeExternal(env: abi.Env, value: anytype) abi.Value {
     const info = @typeInfo(@TypeOf(value));
     dida.common.comptimeAssert(
         comptime (serdeStrategy(@TypeOf(value)) == .External),
-        "Used SerializeExternal on a type that is expected to require SerializeValue: {}",
+        "Used serializeExternal on a type that is expected to require serializeValue: {}",
         .{@TypeOf(value)},
     );
     dida.common.comptimeAssert(
         info == .Pointer and info.Pointer.size == .One,
-        "SerializeExternal should be called with *T, got {}",
+        "serializeExternal should be called with *T, got {}",
         .{@TypeOf(value)},
     );
     dida.common.comptimeAssert(
@@ -217,10 +222,10 @@ fn deserializeExternal(env: abi.Env, value: abi.Value, comptime ReturnType: type
     return @ptrCast(ReturnType, @alignCast(@alignOf(info.Pointer.child), ptr));
 }
 
-fn SerializeValue(env: abi.Env, value: anytype) abi.Value {
+fn serializeValue(env: abi.Env, value: anytype) abi.Value {
     dida.common.comptimeAssert(
         comptime (serdeStrategy(@TypeOf(value)) == .Value),
-        "Used SerializeValue on a type that is expected to require SerializeExternal: {}",
+        "Used serializeValue on a type that is expected to require serializeExternal: {}",
         .{@TypeOf(value)},
     );
 
@@ -230,17 +235,17 @@ fn SerializeValue(env: abi.Env, value: anytype) abi.Value {
 
     if (@TypeOf(value) == dida.core.Value) {
         return switch (value) {
-            .String => |string| SerializeValue(env, string),
-            .Number => |number| SerializeValue(env, number),
+            .String => |string| serializeValue(env, string),
+            .Number => |number| serializeValue(env, number),
         };
     }
 
     if (@TypeOf(value) == dida.core.Row) {
-        return SerializeValue(env, value.values);
+        return serializeValue(env, value.values);
     }
 
     if (@TypeOf(value) == dida.core.Timestamp) {
-        return SerializeValue(env, value.coords);
+        return serializeValue(env, value.coords);
     }
 
     if (@TypeOf(value) == dida.core.Frontier) {
@@ -249,7 +254,7 @@ fn SerializeValue(env: abi.Env, value: anytype) abi.Value {
         var iter = value.timestamps.iterator();
         var i: usize = 0;
         while (iter.next()) |entry| {
-            const js_timestamp = SerializeValue(env, entry.key_ptr.*);
+            const js_timestamp = serializeValue(env, entry.key_ptr.*);
             abi.setElement(env, js_array, @intCast(u32, i), js_timestamp);
             i += 1;
         }
@@ -287,7 +292,7 @@ fn SerializeValue(env: abi.Env, value: anytype) abi.Value {
             );
             const result = abi.createObject(env);
             inline for (struct_info.fields) |field_info| {
-                const field_value = SerializeValue(env, @field(value, field_info.name));
+                const field_value = serializeValue(env, @field(value, field_info.name));
                 abi.setProperty(env, result, abi.createString(env, field_info.name), field_value);
             }
             return result;
@@ -305,7 +310,7 @@ fn SerializeValue(env: abi.Env, value: anytype) abi.Value {
                 inline for (@typeInfo(tag_type).Enum.fields) |enum_field_info, i| {
                     if (@enumToInt(tag) == enum_field_info.value) {
                         const payload = @field(value, enum_field_info.name);
-                        const js_payload = SerializeValue(env, payload);
+                        const js_payload = serializeValue(env, payload);
                         abi.setProperty(env, result, abi.createString(env, "payload"), js_payload);
                         return result;
                     }
@@ -337,7 +342,7 @@ fn SerializeValue(env: abi.Env, value: anytype) abi.Value {
                 .Slice => {
                     const js_array = abi.createArray(env, value.len);
                     for (value) |elem, i| {
-                        const js_elem = SerializeValue(env, elem);
+                        const js_elem = serializeValue(env, elem);
                         abi.setElement(env, js_array, @intCast(u32, i), js_elem);
                     }
                     return js_array;
@@ -347,7 +352,7 @@ fn SerializeValue(env: abi.Env, value: anytype) abi.Value {
         },
         .Optional => {
             return if (value) |payload|
-                SerializeValue(env, payload)
+                serializeValue(env, payload)
             else
                 abi.getUndefined(env);
         },
@@ -368,7 +373,7 @@ const JsMapper = struct {
         const parent = @fieldParentPtr(JsMapper, "mapper", self);
         const js_fn = abi.getRefCounted(parent.env, parent.js_fn_ref);
         const js_args = [_]abi.Value{
-            SerializeValue(parent.env, row),
+            serializeValue(parent.env, row),
         };
         const js_output = abi.callFunction(parent.env, js_fn, &js_args);
         const output = deserializeValue(parent.env, js_output, dida.core.Row);
@@ -386,9 +391,9 @@ const JsReducer = struct {
         const parent = @fieldParentPtr(JsReducer, "reducer", self);
         const js_fn = abi.getRefCounted(parent.env, parent.js_fn_ref);
         const js_args = [_]abi.Value{
-            SerializeValue(parent.env, reduced_value),
-            SerializeValue(parent.env, row),
-            SerializeValue(parent.env, count),
+            serializeValue(parent.env, reduced_value),
+            serializeValue(parent.env, row),
+            serializeValue(parent.env, count),
         };
         const js_output = abi.callFunction(parent.env, js_fn, &js_args);
         const output = deserializeValue(parent.env, js_output, dida.core.Value);
