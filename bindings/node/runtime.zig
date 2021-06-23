@@ -242,10 +242,9 @@ fn napiCreateValue(env: abi.Env, value: anytype) abi.Value {
                     max_len = dida.common.max(max_len, field_info.name.len);
                 }
             }
-            // max_len+1 to make space for null byte :(
+            // max_len+1 to make space for null byte
             var buffer: [max_len + 1]u8 = undefined;
-            const buffer_size = abi.napiCall(c.napi_get_value_string_utf8, .{ env, value, &buffer, max_len + 1 }, usize);
-            const tag_name = buffer[0..buffer_size];
+            const tag_name = abi.getStringInto(env, value, &buffer);
             inline for (enum_info.fields) |field_info| {
                 if (std.mem.eql(u8, tag_name, field_info.name)) {
                     return @intToEnum(ReturnType, field_info.value);
@@ -270,10 +269,10 @@ fn napiCreateValue(env: abi.Env, value: anytype) abi.Value {
             return if (value) |payload|
                 napiCreateValue(env, payload)
             else
-                abi.napiCall(c.napi_get_undefined, .{env}, abi.Value);
+                abi.getUndefined(env);
         },
         .Void => {
-            return abi.napiCall(c.napi_get_undefined, .{env}, abi.Value);
+            return abi.getUndefined(env);
         },
         else => dida.common.compileError("Don't know how to create value of type {}", .{@TypeOf(value)}),
     }
@@ -287,12 +286,12 @@ const NapiMapper = struct {
 
     fn map(self: *dida.core.NodeSpec.MapSpec.Mapper, row: dida.core.Row) error{OutOfMemory}!dida.core.Row {
         const parent = @fieldParentPtr(NapiMapper, "mapper", self);
-        const napi_fn = abi.napiCall(c.napi_get_reference_value, .{ parent.env, parent.napi_fn_ref }, abi.Value);
+        const napi_fn = abi.getRefCounted(parent.env, parent.napi_fn_ref);
         const napi_args = [_]abi.Value{
             napiCreateValue(parent.env, row),
         };
         dida.common.assert(!abi.napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions before mapper cal", .{});
-        const napi_undefined = abi.napiCall(c.napi_get_undefined, .{parent.env}, abi.Value);
+        const napi_undefined = abi.getUndefined(parent.env);
         const napi_output = abi.napiCall(c.napi_call_function, .{ parent.env, napi_undefined, napi_fn, napi_args.len, &napi_args }, abi.Value);
         dida.common.assert(!abi.napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions after mapper call", .{});
         const output = napiGetValue(parent.env, napi_output, dida.core.Row);
@@ -308,14 +307,14 @@ const NapiReducer = struct {
 
     fn reduce(self: *dida.core.NodeSpec.ReduceSpec.Reducer, reduced_value: dida.core.Value, row: dida.core.Row, count: usize) error{OutOfMemory}!dida.core.Value {
         const parent = @fieldParentPtr(NapiReducer, "reducer", self);
-        const napi_fn = abi.napiCall(c.napi_get_reference_value, .{ parent.env, parent.napi_fn_ref }, abi.Value);
+        const napi_fn = abi.getRefCounted(parent.env, parent.napi_fn_ref);
         const napi_args = [_]abi.Value{
             napiCreateValue(parent.env, reduced_value),
             napiCreateValue(parent.env, row),
             napiCreateValue(parent.env, count),
         };
         dida.common.assert(!abi.napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions before mapper cal", .{});
-        const napi_undefined = abi.napiCall(c.napi_get_undefined, .{parent.env}, abi.Value);
+        const napi_undefined = abi.getUndefined(parent.env);
         const napi_output = abi.napiCall(c.napi_call_function, .{ parent.env, napi_undefined, napi_fn, napi_args.len, &napi_args }, abi.Value);
         dida.common.assert(!abi.napiCall(c.napi_is_exception_pending, .{parent.env}, bool), "Shouldn't be any exceptions after mapper call", .{});
         const output = napiGetValue(parent.env, napi_output, dida.core.Value);
@@ -331,10 +330,7 @@ fn napiGetValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) Retur
     );
 
     if (ReturnType == []const u8) {
-        const len = abi.napiCall(c.napi_get_value_string_utf8, .{ env, value, null, 0 }, usize);
-        var string = allocator.alloc(u8, len) catch |err| dida.common.panic("{}", .{err});
-        _ = abi.napiCall(c.napi_get_value_string_utf8, .{ env, value, @ptrCast([*c]u8, string), len + 1 }, usize);
-        return string;
+        return abi.getString(env, value) catch |err| dida.common.panic("{}", .{err});
     }
 
     if (ReturnType == dida.core.Value) {
@@ -359,7 +355,7 @@ fn napiGetValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) Retur
         var napi_mapper = allocator.create(NapiMapper) catch |err| dida.common.panic("{}", .{err});
         napi_mapper.* = NapiMapper{
             .env = env,
-            .napi_fn_ref = abi.napiCall(c.napi_create_reference, .{ env, value, 1 }, c.napi_ref),
+            .napi_fn_ref = abi.createRefCounted(env, value, 1),
             .mapper = .{
                 .map_fn = NapiMapper.map,
             },
@@ -372,7 +368,7 @@ fn napiGetValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) Retur
         var napi_reducer = allocator.create(NapiReducer) catch |err| dida.common.panic("{}", .{err});
         napi_reducer.* = NapiReducer{
             .env = env,
-            .napi_fn_ref = abi.napiCall(c.napi_create_reference, .{ env, value, 1 }, c.napi_ref),
+            .napi_fn_ref = abi.createRefCounted(env, value, 1),
             .reducer = .{
                 .reduce_fn = NapiReducer.reduce,
             },
@@ -383,23 +379,19 @@ fn napiGetValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) Retur
     const info = @typeInfo(ReturnType);
     switch (info) {
         .Int => {
-            const napi_fn = switch (ReturnType) {
-                usize, isize => if (usize_bits == 64) c.napi_get_value_int64 else c.napi.get_value_int32,
+            const abi_fn = switch (ReturnType) {
+                usize, isize => if (usize_bits == 64) abi.getInt64 else abi.getInt32,
                 else => dida.common.compileError("Don't know how to create napi value for {}", .{ReturnType}),
             };
-            const CastType = switch (ReturnType) {
-                usize => isize,
-                else => ReturnType,
-            };
-            const result = abi.napiCall(napi_fn, .{ env, value }, CastType);
+            const result = @call(.{}, abi_fn, .{ env, value });
             return @intCast(ReturnType, result);
         },
         .Float => {
-            const napi_fn = switch (ReturnType) {
-                f64 => c.napi_get_value_double,
+            const abi_fn = switch (ReturnType) {
+                f64 => abi.getFloat64,
                 else => dida.common.compileError("Don't know how to create napi value for {}", .{ReturnType}),
             };
-            return abi.napiCall(napi_fn, .{ env, value }, ReturnType);
+            return @call(.{}, abi_fn, .{ env, value });
         },
         .Struct => |struct_info| {
             var result: ReturnType = undefined;
@@ -433,8 +425,7 @@ fn napiGetValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) Retur
             }
             // max_len+1 to make space for null byte :(
             var buffer: [max_len + 1]u8 = undefined;
-            const buffer_size = abi.napiCall(c.napi_get_value_string_utf8, .{ env, value, &buffer, max_len + 1 }, usize);
-            const tag_name = buffer[0..buffer_size];
+            const tag_name = abi.getStringInto(env, value, &buffer);
             inline for (enum_info.fields) |field_info| {
                 if (std.mem.eql(u8, tag_name, field_info.name)) {
                     return @intToEnum(ReturnType, field_info.value);

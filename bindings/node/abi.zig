@@ -1,3 +1,4 @@
+/// [NAPI docs](https://nodejs.org/api/n-api.html)
 usingnamespace @import("../js_common/js_common.zig");
 
 // --- node-specific stuff ---
@@ -22,6 +23,7 @@ pub fn napiCall(comptime napi_fn: anytype, args: anytype, comptime ReturnType: t
 
 pub const Env = c.napi_env;
 pub const Value = c.napi_value;
+pub const RefCounted = c.napi_ref;
 
 pub fn jsTypeOf(env: Env, value: Value) JsType {
     const napi_type = napiCall(c.napi_typeof, .{ env, value }, c.napi_valuetype);
@@ -70,8 +72,44 @@ pub fn createExternal(env: Env, pointer: *c_void) Value {
     return napiCall(c.napi_create_external, .{ env, pointer, null, null }, Value);
 }
 
+pub fn createRefCounted(env: Env, value: Value, refcount: u32) RefCounted {
+    return napiCall(c.napi_create_reference, .{ env, value, refcount }, RefCounted);
+}
+
+pub fn getUndefined(env: Env) Value {
+    return napiCall(c.napi_get_undefined, .{env}, Value);
+}
+
+pub fn getInt32(env: Env, value: Value) i32 {
+    return napiCall(c.napi_get_value_int32, .{ env, value }, i32);
+}
+
+pub fn getInt64(env: Env, value: Value) i64 {
+    return napiCall(c.napi_get_value_int64, .{ env, value }, i64);
+}
+
+pub fn getFloat64(env: Env, value: Value) f64 {
+    return napiCall(c.napi_get_value_double, .{ env, value }, f64);
+}
+
+pub fn getString(env: Env, value: Value) ![]const u8 {
+    const len = napiCall(c.napi_get_value_string_utf8, .{ env, value, null, 0 }, usize);
+    // len+1 for null byte
+    var buffer = try allocator.alloc(u8, len + 1);
+    return getStringInto(env, value, buffer);
+}
+
+pub fn getStringInto(env: Env, value: Value, buffer: []u8) []const u8 {
+    const len = napiCall(c.napi_get_value_string_utf8, .{ env, value, @ptrCast([*c]u8, buffer), buffer.len }, usize);
+    return buffer[0..len];
+}
+
 pub fn getExternal(env: Env, value: Value) *c_void {
     return napiCall(c.napi_get_value_external, .{ env, value }, ?*c_void).?;
+}
+
+pub fn getRefCounted(env: Env, ref: RefCounted) Value {
+    return napiCall(c.napi_get_reference_value, .{ env, ref }, Value);
 }
 
 pub fn setElement(env: Env, array: Value, index: u32, value: Value) void {
