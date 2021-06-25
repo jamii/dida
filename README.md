@@ -82,7 +82,7 @@ Compared to differential dataflow, dida aims to:
     * [ ] Expose as state machine for easy simulation
   * [ ] Memory management
 * [ ] Testing
-  * [] Unit test
+  * [ ] Unit test
     * [x] Timestamp ordering / lub
     * [x] Batch builder
     * [x] Frontier move / order
