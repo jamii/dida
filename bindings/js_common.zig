@@ -139,7 +139,7 @@ pub fn serdeStrategy(comptime T: type) SerdeStrategy {
 }
 
 /// Take a zig function and return a wrapped version that handles serde
-pub fn wrapFunction(comptime zig_fn: anytype) fn (abi.Env, []const abi.Value) abi.Value {
+pub fn handleSerdeForFunction(comptime zig_fn: anytype) fn (abi.Env, []const abi.Value) abi.Value {
     return struct {
         fn wrappedMethod(env: abi.Env, js_args: []const abi.Value) abi.Value {
             var zig_args: std.meta.ArgsTuple(@TypeOf(zig_fn)) = undefined;
