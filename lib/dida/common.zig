@@ -14,11 +14,12 @@ pub const HashMap = std.HashMap;
 pub const AutoHashMap = std.AutoHashMap;
 
 pub fn panic(comptime message: []const u8, args: anytype) noreturn {
-    if (format(std.heap.page_allocator, message, args)) |formatted| {
-        @panic(formatted);
-    } else |_| {
-        @panic("OOM in assert");
-    }
+    // TODO should we preallocate memory for panics?
+    var buf = ArrayList(u8).init(std.heap.page_allocator);
+    var writer = buf.writer();
+    std.fmt.format(writer, message, args) catch |_|
+        std.mem.copy(u8, buf.items[buf.items.len - 3 .. buf.items.len], "OOM");
+    @panic(buf.toOwnedSlice());
 }
 
 pub fn assert(condition: bool, comptime message: []const u8, args: anytype) void {
