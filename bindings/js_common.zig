@@ -267,15 +267,11 @@ fn serializeValue(env: abi.Env, value: anytype) abi.Value {
             return abi.createBoolean(env, value);
         },
         .Int => {
-            const cast_value = switch (@TypeOf(value)) {
-                usize => @intCast(isize, value),
-                else => value,
-            };
-            const abi_fn = switch (@TypeOf(cast_value)) {
-                isize => if (usize_bits == 64) abi.createI64 else abi.createI32,
+            return switch (@TypeOf(value)) {
+                usize => if (usize_bits == 64) abi.createI64(env, @intCast(i64, value)) else abi.createU32(env, value),
+                isize => if (usize_bits == 64) abi.createI64(env, value) else abi.createI32(env, value),
                 else => dida.common.compileError("Don't know how to create js value for {}", .{@TypeOf(cast_value)}),
             };
-            return @call(.{}, abi_fn, .{ env, cast_value });
         },
         .Float => {
             const abi_fn = switch (@TypeOf(value)) {
@@ -458,12 +454,11 @@ fn deserializeValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) R
     const info = @typeInfo(ReturnType);
     switch (info) {
         .Int => {
-            const abi_fn = switch (ReturnType) {
-                usize, isize => if (usize_bits == 64) abi.getI64 else abi.getI32,
+            return switch (ReturnType) {
+                usize => if (usize_bits == 64) @intCast(usize, abi.getI64(env, value)) else abi.getU32(env, value),
+                isize => if (usize_bits == 64) abi.getI64(env, value) else abi.getI32(env, value),
                 else => dida.common.compileError("Don't know how to create js value for {}", .{ReturnType}),
             };
-            const result = @call(.{}, abi_fn, .{ env, value });
-            return @intCast(ReturnType, result);
         },
         .Float => {
             const abi_fn = switch (ReturnType) {

@@ -83,6 +83,10 @@ pub fn createBoolean(env: Env, value: bool) Value {
     return napiCall(c.napi_get_boolean, .{ env, value }, Value);
 }
 
+pub fn createU32(env: Env, int: u32) Value {
+    return napiCall(c.napi_create_uint32, .{ env, int }, Value);
+}
+
 pub fn createI32(env: Env, int: i32) Value {
     return napiCall(c.napi_create_int32, .{ env, int }, Value);
 }
