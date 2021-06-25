@@ -3,7 +3,6 @@
 pub const dida = @import("../dida.zig");
 pub const builtin = @import("builtin");
 pub const std = @import("std");
-pub const panic = std.debug.panic;
 pub const warn = std.debug.warn;
 pub const debug_assert = std.debug.assert;
 pub const max = std.math.max;
@@ -13,6 +12,14 @@ pub const ArenaAllocator = std.heap.ArenaAllocator;
 pub const ArrayList = std.ArrayList;
 pub const HashMap = std.HashMap;
 pub const AutoHashMap = std.AutoHashMap;
+
+pub fn panic(comptime message: []const u8, args: anytype) noreturn {
+    if (format(std.heap.page_allocator, message, args)) |formatted| {
+        @panic(formatted);
+    } else |_| {
+        @panic("OOM in assert");
+    }
+}
 
 pub fn assert(condition: bool, comptime message: []const u8, args: anytype) void {
     if (!condition) panic(message, args);
