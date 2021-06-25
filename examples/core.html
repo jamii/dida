@@ -3,11 +3,11 @@
 
 <head>
   <meta charset="UTF-8">
-  <script src="./abi.js"></script>
-  <script src="./dida.js"></script>
+  <script src="../bindings/wasm/abi.js"></script>
+  <script src="../bindings/wasm/dida.js"></script>
   <script>
     async function run() {
-        const abi = await Abi();
+        const abi = await Abi("../bindings/wasm/dida.wasm");
         const dida = new Dida(abi);
         
         // TODO just grab core.js?

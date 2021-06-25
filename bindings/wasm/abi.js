@@ -1,4 +1,4 @@
-async function Abi() {
+async function Abi(dida_url) {
     var stack = [];
     var ref_counted = {};
     
@@ -23,7 +23,7 @@ async function Abi() {
     }
     
     function pushString(address, length) {
-        let bytes = new Uint8Array(dida.instance.exports.memory.buffer);
+        let bytes = new Uint8Array(wasm.instance.exports.memory.buffer);
         let string = new TextDecoder().decode(bytes.slice(address, address + length));
         return stackPush(string);
     }
@@ -48,8 +48,8 @@ async function Abi() {
         console.error(stack[message_id]);
     }
     
-    const dida = await WebAssembly.instantiateStreaming(
-        fetch("./dida.wasm"),
+    const wasm = await WebAssembly.instantiateStreaming(
+        fetch(dida_url),
         {
             env: {
                 getU32: stackRead,
@@ -67,7 +67,7 @@ async function Abi() {
     );
     
     return {
-        dida: dida,
+        wasm: wasm,
         stackGetLength: stackGetLength,
         stackReset: stackReset,
         stackRead: stackRead,
