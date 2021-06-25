@@ -272,14 +272,14 @@ fn serializeValue(env: abi.Env, value: anytype) abi.Value {
                 else => value,
             };
             const abi_fn = switch (@TypeOf(cast_value)) {
-                isize => if (usize_bits == 64) abi.createInt64 else abi.createInt32,
+                isize => if (usize_bits == 64) abi.createI64 else abi.createI32,
                 else => dida.common.compileError("Don't know how to create js value for {}", .{@TypeOf(cast_value)}),
             };
             return @call(.{}, abi_fn, .{ env, cast_value });
         },
         .Float => {
             const abi_fn = switch (@TypeOf(value)) {
-                f64 => abi.createFloat64,
+                f64 => abi.createF64,
                 else => dida.common.compileError("Don't know how to create js value for {}", .{@TypeOf(value)}),
             };
             return @call(.{}, abi_fn, .{ env, value });
@@ -459,7 +459,7 @@ fn deserializeValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) R
     switch (info) {
         .Int => {
             const abi_fn = switch (ReturnType) {
-                usize, isize => if (usize_bits == 64) abi.getInt64 else abi.getInt32,
+                usize, isize => if (usize_bits == 64) abi.getI64 else abi.getI32,
                 else => dida.common.compileError("Don't know how to create js value for {}", .{ReturnType}),
             };
             const result = @call(.{}, abi_fn, .{ env, value });
@@ -467,7 +467,7 @@ fn deserializeValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) R
         },
         .Float => {
             const abi_fn = switch (ReturnType) {
-                f64 => abi.getFloat64,
+                f64 => abi.getF64,
                 else => dida.common.compileError("Don't know how to create js value for {}", .{ReturnType}),
             };
             return @call(.{}, abi_fn, .{ env, value });

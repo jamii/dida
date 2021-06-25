@@ -1,10 +1,15 @@
 async function Abi(dida_url) {
+    // id >= 0 for values on stack
+    // id < 0 for values in ref_counted
+    
     var stack = [];
     var ref_counted = {};
     var next_ref_counted_id = -1;
 
-    // id >= 0 for values on stack
-    // id < 0 for values in ref_counted
+    function stackPush(value) {
+        stack.push(value);
+        return stack.length - 1;
+    }
 
     function stackRead(ix) {
         return stack[ix];
@@ -16,11 +21,6 @@ async function Abi(dida_url) {
 
     function stackReset(length) {
         stack.length = length;
-    }
-
-    function stackPush(value) {
-        stack.push(value);
-        return stack.length - 1;
     }
 
     function RefCounted(value, refcount) {
@@ -54,21 +54,21 @@ async function Abi(dida_url) {
         throw (typ + ' is not a type that the abi understands');
     }
 
-    function pushUndefined() {
+    function createUndefined() {
         return stackPush(undefined);
     }
 
-    function pushString(address, length) {
+    function createString(address, length) {
         let bytes = new Uint8Array(wasm.instance.exports.memory.buffer);
         let string = new TextDecoder().decode(bytes.slice(address, address + length));
         return stackPush(string);
     }
 
-    function pushObject() {
+    function createObject() {
         return stackPush({});
     }
 
-    function pushArray(len) {
+    function createArray(len) {
         return stackPush(new Array(len));
     }
 
@@ -126,15 +126,15 @@ async function Abi(dida_url) {
         {
             env: {
                 jsTypeOf: jsTypeOf,
-                pushUndefined: pushUndefined,
-                pushBool: stackPush,
-                pushU32: stackPush,
-                pushI32: stackPush,
-                pushI64: stackPush,
-                pushF64: stackPush,
-                pushString: pushString,
-                pushObject: pushObject,
-                pushArray: pushArray,
+                createUndefined: createUndefined,
+                createBool: stackPush,
+                createU32: stackPush,
+                createI32: stackPush,
+                createI64: stackPush,
+                createF64: stackPush,
+                createString: createString,
+                createObject: createObject,
+                createArray: createArray,
                 createRefCounted: createRefCounted,
                 getU32: stackRead,
                 getI32: stackRead,

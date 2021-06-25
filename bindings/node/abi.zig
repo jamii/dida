@@ -36,8 +36,7 @@ pub fn createFunction(
                 callback_env,
                 info,
                 &actual_num_args,
-                // TODO try removing this
-                if (num_args == 0) null else @ptrCast([*]Value, &args),
+                @ptrCast([*c]Value, @as([]Value, &args)),
                 &this,
                 null,
             }, void);
@@ -84,15 +83,15 @@ pub fn createBoolean(env: Env, value: bool) Value {
     return napiCall(c.napi_get_boolean, .{ env, value }, Value);
 }
 
-pub fn createInt32(env: Env, int: i32) Value {
+pub fn createI32(env: Env, int: i32) Value {
     return napiCall(c.napi_create_int32, .{ env, int }, Value);
 }
 
-pub fn createInt64(env: Env, int: i64) Value {
+pub fn createI64(env: Env, int: i64) Value {
     return napiCall(c.napi_create_int64, .{ env, int }, Value);
 }
 
-pub fn createFloat64(env: Env, float: f64) Value {
+pub fn createF64(env: Env, float: f64) Value {
     return napiCall(c.napi_create_double, .{ env, float }, Value);
 }
 
@@ -116,15 +115,15 @@ pub fn createRefCounted(env: Env, value: Value, refcount: u32) RefCounted {
     return napiCall(c.napi_create_reference, .{ env, value, refcount }, RefCounted);
 }
 
-pub fn getInt32(env: Env, value: Value) i32 {
+pub fn getI32(env: Env, value: Value) i32 {
     return napiCall(c.napi_get_value_int32, .{ env, value }, i32);
 }
 
-pub fn getInt64(env: Env, value: Value) i64 {
+pub fn getI64(env: Env, value: Value) i64 {
     return napiCall(c.napi_get_value_int64, .{ env, value }, i64);
 }
 
-pub fn getFloat64(env: Env, value: Value) f64 {
+pub fn getF64(env: Env, value: Value) f64 {
     return napiCall(c.napi_get_value_double, .{ env, value }, f64);
 }
 

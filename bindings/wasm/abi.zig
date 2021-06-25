@@ -1,5 +1,6 @@
 //! Wasm abi mimicking NAPI
 //! Used by ../js_common.zig
+//! TODO much of this could be automatically generated with https://github.com/ziglang/zig/issues/6709
 
 usingnamespace @import("../js_common.zig");
 
@@ -7,15 +8,15 @@ usingnamespace @import("../js_common.zig");
 
 pub const js = struct {
     pub extern fn jsTypeOf(Value) u32;
-    pub extern fn pushUndefined() Value;
-    pub extern fn pushBool(bool) Value;
-    pub extern fn pushU32(u32) Value;
-    pub extern fn pushI32(i32) Value;
-    pub extern fn pushI64(i64) Value;
-    pub extern fn pushF64(f64) Value;
-    pub extern fn pushString(u32, u32) Value;
-    pub extern fn pushObject() Value;
-    pub extern fn pushArray(u32) Value;
+    pub extern fn createUndefined() Value;
+    pub extern fn createBool(bool) Value;
+    pub extern fn createU32(u32) Value;
+    pub extern fn createI32(i32) Value;
+    pub extern fn createI64(i64) Value;
+    pub extern fn createF64(f64) Value;
+    pub extern fn createString(u32, u32) Value;
+    pub extern fn createObject() Value;
+    pub extern fn createArray(u32) Value;
     pub extern fn createRefCounted(Value, u32) RefCounted;
     pub extern fn getRefCounted(RefCounted) Value;
     pub extern fn getU32(Value) u32;
@@ -49,7 +50,6 @@ pub fn handleAbiForFunction(
     comptime num_args: usize,
     comptime zig_fn: fn (env: Env, []const Value) Value,
 ) HandleAbiForFunction(num_args) {
-    // TODO this would be much nicer if @Type() allowed creating functions
     return switch (num_args) {
         0 => struct {
             fn callback() callconv(.C) Value {
@@ -78,7 +78,6 @@ pub fn handleAbiForFunction(
 // --- interface required by js_common ---
 
 pub const Env = void;
-// TODO should wrap these in structs to avoid type errors?
 pub const Value = i32;
 pub const RefCounted = i32;
 
@@ -91,66 +90,63 @@ pub fn jsTypeOf(env: Env, value: Value) JsType {
 }
 
 pub fn createUndefined(env: Env) Value {
-    return js.pushUndefined();
+    return js.createUndefined();
 }
 
 pub fn createBoolean(env: Env, b: bool) Value {
-    return js.pushBool(b);
+    return js.createBool(b);
 }
 
-// TODO rename abi number fns
-pub fn createUint32(env: Env, int: u32) Value {
-    return js.pushU32(int);
+pub fn createU32(env: Env, int: u32) Value {
+    return js.createU32(int);
 }
 
-pub fn createInt32(env: Env, int: i32) Value {
-    return js.pushI32(int);
+pub fn createI32(env: Env, int: i32) Value {
+    return js.createI32(int);
 }
 
-pub fn createInt64(env: Env, int: i64) Value {
-    return js.pushI64(int);
+pub fn createI64(env: Env, int: i64) Value {
+    return js.createI64(int);
 }
 
-pub fn createFloat64(env: Env, int: f64) Value {
-    return js.pushF64(int);
+pub fn createF64(env: Env, int: f64) Value {
+    return js.createF64(int);
 }
 
 pub fn createString(env: Env, string: []const u8) Value {
-    return js.pushString(@intCast(u32, @ptrToInt(@ptrCast([*c]const u8, string))), @intCast(u32, string.len));
+    return js.createString(@intCast(u32, @ptrToInt(@ptrCast([*c]const u8, string))), @intCast(u32, string.len));
 }
 
 pub fn createObject(env: Env) Value {
-    return js.pushObject();
+    return js.createObject();
 }
 
 pub fn createArray(env: Env, len: usize) Value {
-    return js.pushArray(len);
+    return js.createArray(len);
 }
 
 pub fn createRefCounted(env: Env, value: Value, refcount: u32) RefCounted {
     return js.createRefCounted(value, refcount);
 }
 
-// TODO this is totally broken - what exactly is the abi here?
-//      makes more sense to call constructors?
 pub fn createExternal(env: Env, pointer: *c_void) Value {
     const address = @intCast(u32, @ptrToInt(pointer));
-    return createUint32(env, address);
+    return createU32(env, address);
 }
 
-pub fn getUint32(env: Env, value: Value) u32 {
+pub fn getU32(env: Env, value: Value) u32 {
     return js.getU32(value);
 }
 
-pub fn getInt32(env: Env, value: Value) i32 {
+pub fn getI32(env: Env, value: Value) i32 {
     return js.getI32(value);
 }
 
-pub fn getInt64(env: Env, value: Value) i64 {
+pub fn getI64(env: Env, value: Value) i64 {
     return js.getI64(value);
 }
 
-pub fn getFloat64(env: Env, value: Value) f64 {
+pub fn getF64(env: Env, value: Value) f64 {
     return js.getF64(value);
 }
 
@@ -166,7 +162,7 @@ pub fn getStringInto(env: Env, value: Value, buffer: []u8) []const u8 {
 }
 
 pub fn getExternal(env: Env, external: Value) *c_void {
-    const address = getUint32({}, external);
+    const address = getU32({}, external);
     return @intToPtr(*c_void, @intCast(usize, address));
 }
 
