@@ -170,7 +170,7 @@ pub fn getProperty(env: Env, object: Value, name: Value) Value {
 
 pub fn callFunction(env: Env, function: Value, args: []const Value) Value {
     dida.common.assert(!napiCall(c.napi_is_exception_pending, .{env}, bool), "Shouldn't be any exceptions before function call", .{});
-    const napi_undefined = getUndefined(env);
+    const napi_undefined = createUndefined(env);
     const output = napiCall(c.napi_call_function, .{ env, napi_undefined, function, args.len, @ptrCast([*c]const Value, args) }, Value);
     dida.common.assert(!napiCall(c.napi_is_exception_pending, .{env}, bool), "Shouldn't be any exceptions after function call", .{});
     return output;
