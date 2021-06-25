@@ -4,8 +4,18 @@
 <head>
   <meta charset="UTF-8">
   <script src="./abi.js"></script>
+  <script src="./dida.js"></script>
   <script>
-  run();
+    async function run() {
+        const abi = await Abi();
+        const dida = new Dida(abi);
+        
+        // TODO just grab core.js?
+        const g = new dida.GraphBuilder();
+        console.log(g);
+        console.log(g.addSubgraph({id: 0}));
+    }
+    run();
   </script>
 </head>
 
