@@ -2,7 +2,7 @@ Dida is a (WIP) library for streaming, incremental, iterative, internally-consis
 
 The jargon-free version: You write code that manipulates collections using familiar operations like `map`, `join` and `loop`. You run the code on some input and get some output. Then when the input changes, you get changes to the output, much faster than recomputing the whole thing from scratch. (And the outputs will be [correct](https://scattered-thoughts.net/writing/internal-consistency-in-streaming-systems/)!)
 
-If you want to learn how it works, start at [docs/why.md](./docs/why.md) and then read [lib/dida/core.zig](./lib/dida/core.zig). 
+If you want to learn how it works, start at [docs/why.md](./docs/why.md) and then read [lib/dida/core.zig](./lib/dida/core.zig).
 
 ## Design
 
@@ -18,7 +18,7 @@ Compared to differential dataflow, dida aims to:
    * [x] Store all state associated with the dataflow in a single flat structure for easy introspection.
    * [ ] Optionally log all actions for easier debugging and vizualization.
    * [ ] Provide well-documented default implementations for common tasks (eg writing output to a file).
-* [ ] Better support use as an interpreter backend and for binding to other languages.  
+* [ ] Better support use as an interpreter backend and for binding to other languages.
   * [ ] Split the api into a data-centric runtime-checked core, and a per-binding-language strongly-typed sugar that helps make dataflows correct-by-construction. (The differential dataflow api provides excellent compile-time safety but is hard to map across FFI into a language with a different type system.)
   * [ ] Don't rely on specialization for performance, since it requires compilation and also doesn't work well cross-language. This will require rethinking eg how functions are lifted over batches.
   * [ ] Support storing data inline in indexes when the size is only known at runtime. (Differential dataflow can support this, but materialize currently stores each row in a separate heap allocation even if the row is all fixed-width types.)

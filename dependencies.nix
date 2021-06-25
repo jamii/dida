@@ -4,7 +4,7 @@ rec {
         url = "https://github.com/NixOS/nixpkgs/archive/20.09.tar.gz";
         sha256 = "1wg61h4gndm3vcprdcg7rc4s1v3jkm5xd7lw8r2f67w502y94gcy";
     }) {};
-    
+
     zig = pkgs.stdenv.mkDerivation {
         name = "zig";
         src = fetchTarball (if (pkgs.system == "x86_64-linux") then {

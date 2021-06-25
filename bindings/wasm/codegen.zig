@@ -31,6 +31,11 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                         arg_name.* = try dida.common.format(allocator, "arg{}", .{i});
                     }
 
+                    var arg_pushes: [args.len][]const u8 = undefined;
+                    for (arg_pushes) |*arg_push, i| {
+                        arg_push.* = try dida.common.format(allocator, "abi.stackPush(arg{})", .{i});
+                    }
+
                     // NOTE this relies on `init` being the first decl
                     if (comptime std.mem.eql(u8, decl_info.name, "init")) {
                         try std.fmt.format(
@@ -48,14 +53,10 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                                 Type,
                                 std.mem.join(allocator, ", ", &arg_names),
                                 Type,
-                                std.mem.join(allocator, ", ", &arg_names),
+                                std.mem.join(allocator, ", ", &arg_pushes),
                             },
                         );
                     } else {
-                        var arg_pushes: [args.len][]const u8 = undefined;
-                        for (arg_pushes) |*arg_push, i| {
-                            arg_push.* = try dida.common.format(allocator, "abi.stackPush(arg{})", .{i});
-                        }
                         try std.fmt.format(
                             writer,
                             \\{s}.prototype.{s} = function {s}({s}) {{

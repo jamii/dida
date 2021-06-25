@@ -354,10 +354,10 @@ fn serializeValue(env: abi.Env, value: anytype) abi.Value {
             return if (value) |payload|
                 serializeValue(env, payload)
             else
-                abi.getUndefined(env);
+                abi.createUndefined(env);
         },
         .Void => {
-            return abi.getUndefined(env);
+            return abi.createUndefined(env);
         },
         else => dida.common.compileError("Don't know how to create value of type {}", .{@TypeOf(value)}),
     }
@@ -553,11 +553,11 @@ fn deserializeValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) R
 // --- abi types ---
 
 pub const JsType = enum {
-    Undefined,
-    Null,
-    Boolean,
-    Number,
-    String,
-    Object,
-    Function,
+    Undefined = 0,
+    Null = 1,
+    Boolean = 2,
+    Number = 3,
+    String = 4,
+    Object = 5,
+    Function = 6,
 };

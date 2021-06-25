@@ -75,6 +75,10 @@ pub fn jsTypeOf(env: Env, value: Value) JsType {
     };
 }
 
+pub fn createUndefined(env: Env) Value {
+    return napiCall(c.napi_get_undefined, .{env}, Value);
+}
+
 pub fn createBoolean(env: Env, value: bool) Value {
     // Not a typo - napi_get_boolean retrieves a global singleton
     return napiCall(c.napi_get_boolean, .{ env, value }, Value);
@@ -112,10 +116,6 @@ pub fn createRefCounted(env: Env, value: Value, refcount: u32) RefCounted {
     return napiCall(c.napi_create_reference, .{ env, value, refcount }, RefCounted);
 }
 
-pub fn getUndefined(env: Env) Value {
-    return napiCall(c.napi_get_undefined, .{env}, Value);
-}
-
 pub fn getInt32(env: Env, value: Value) i32 {
     return napiCall(c.napi_get_value_int32, .{ env, value }, i32);
 }
@@ -148,12 +148,16 @@ pub fn getRefCounted(env: Env, ref: RefCounted) Value {
     return napiCall(c.napi_get_reference_value, .{ env, ref }, Value);
 }
 
-pub fn setElement(env: Env, array: Value, index: u32, value: Value) void {
-    napiCall(c.napi_set_element, .{ env, array, index, value }, void);
+pub fn getArrayLength(env: Env, array: Value) u32 {
+    return napiCall(c.napi_get_array_length, .{ env, array }, u32);
 }
 
 pub fn getElement(env: Env, array: Value, index: u32) Value {
     return napiCall(c.napi_get_element, .{ env, array, index }, Value);
+}
+
+pub fn setElement(env: Env, array: Value, index: u32, value: Value) void {
+    napiCall(c.napi_set_element, .{ env, array, index, value }, void);
 }
 
 pub fn setProperty(env: Env, object: Value, name: Value, value: Value) void {
@@ -162,10 +166,6 @@ pub fn setProperty(env: Env, object: Value, name: Value, value: Value) void {
 
 pub fn getProperty(env: Env, object: Value, name: Value) Value {
     return napiCall(c.napi_get_property, .{ env, object, name }, Value);
-}
-
-pub fn getArrayLength(env: Env, array: Value) u32 {
-    return napiCall(c.napi_get_array_length, .{ env, array }, u32);
 }
 
 pub fn callFunction(env: Env, function: Value, args: []const Value) Value {

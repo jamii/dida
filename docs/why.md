@@ -30,18 +30,18 @@ We can represent collections as a list of changes:
 ("bob", -2)
 ```
 
-To recover the current value of the collections we just add up all the changes that we've seen so far. 
+To recover the current value of the collections we just add up all the changes that we've seen so far.
 
 ``` js
 collections = sum_changes(changes)
 ```
 
-Next, we have to transform our operations that work on collections into operations that work on lists of changes. A correct transformation must obey this rule: 
+Next, we have to transform our operations that work on collections into operations that work on lists of changes. A correct transformation must obey this rule:
 
 ``` js
 assert(
-    sum_changes(incremental_operator(changes)) 
-    == 
+    sum_changes(incremental_operator(changes))
+    ==
     batch_operator(sum_changes(changes))
 )
 ```
@@ -97,7 +97,7 @@ function incremental_join(changes) {
 }
 ```
 
-This basic model is pretty well understood and has been implemented in a wide range of systems including ksqldb, flink etc. 
+This basic model is pretty well understood and has been implemented in a wide range of systems including ksqldb, flink etc.
 
 ## Constraint #1 - internally consistent results
 
@@ -121,8 +121,8 @@ Previously we could get the state of a collection by summing up all the changes.
 
 ``` js
 assert(
-    sum_changes_up_until(time, incremental_operator(changes)) 
-    == 
+    sum_changes_up_until(time, incremental_operator(changes))
+    ==
     batch_operator(sum_changes_up_until(time, changes))
 )
 ```
@@ -169,13 +169,13 @@ function incremental_join(changes) {
 }
 ```
 
-Indexes now need to track not only the latest value of the collection, but all the previous values. The easiest way to do this is to keep a list of all changes, sorted by key and timestamp. 
+Indexes now need to track not only the latest value of the collection, but all the previous values. The easiest way to do this is to keep a list of all changes, sorted by key and timestamp.
 
-Some operations like `sum` can't produce the correct output for a given timestamp until they've seen all the inputs for that timestamp (as opposed to operations like `map` which can emit outputs immediately for each input). To handle this we need to keep track of each operations __frontier__ - the earliest timestamps that might still appear in the output changes for that operation. Whoever is feeding new changes into the inputs is now also responsible for updating the frontier of the inputs, to tell them when they have seen all the changes for a particular timestamp. And as changes flow through the graph we can also update the frontiers of each operation that they pass through. 
+Some operations like `sum` can't produce the correct output for a given timestamp until they've seen all the inputs for that timestamp (as opposed to operations like `map` which can emit outputs immediately for each input). To handle this we need to keep track of each operations __frontier__ - the earliest timestamps that might still appear in the output changes for that operation. Whoever is feeding new changes into the inputs is now also responsible for updating the frontier of the inputs, to tell them when they have seen all the changes for a particular timestamp. And as changes flow through the graph we can also update the frontiers of each operation that they pass through.
 
 (Side note: the more common terminology for a frontier is 'watermark', but 'watermark' is also used to refer to a variety of related concepts including per-operation timeouts for windowed operations and handling of late-arriving data, leading to persistent misunderstandings between different groups of people. Also, as we'll see in a moment, frontiers differ from traditional watermarks once we add iterative computations.)
 
-Frontiers are also useful at the output of the system - downstream consumers can watch the frontier to learn when the have seen all the changes to the output for a given timestamp and can now safely act on the result. 
+Frontiers are also useful at the output of the system - downstream consumers can watch the frontier to learn when the have seen all the changes to the output for a given timestamp and can now safely act on the result.
 
 With timestamps, multi-version indexes and frontiers we can build systems that are internally consistent. As a bonus the changes, timestamps and frontiers at the output are exactly the information that is required at the input, so we can take multiple such systems with different internal implementations and they can be composed into a single consistent computation so long as they stick to this format. (Materialize are working on a [protocol](https://materialize.com/docs/connect/materialize-cdc/) that encodes this information in a way that is idempotent and confluent, so you don't even need to have a reliable or ordered connection between systems.)
 
@@ -207,7 +207,7 @@ The first impact of adding loops is that timestamps become more complicated. Pre
 
 If we need to nest loops, we just keep adding more coordinates. At the output nodes of each loop we strip off the extra timestamp coordinate so that the rest of the system doesn't see the internal state of the loop.
 
-Previously we could get the state of a collection as of any point in time T by summing up all the changes which have timestamps <= T. But what does `<=` mean when our timestamps have multiple coordinates? 
+Previously we could get the state of a collection as of any point in time T by summing up all the changes which have timestamps <= T. But what does `<=` mean when our timestamps have multiple coordinates?
 
 There isn't a unique answer to this. We can choose various different orderings for our timestamps and they will produce different incremental operations. But when calculating the change at time T an incremental operation can only make use of changes with timestamps <= T. So we should choose an ordering that gives as much useful information as possible and removes as much useless information at possible.
 
@@ -217,8 +217,8 @@ Apart from this new definition of `<=`, the rule for incremental operations rema
 
 ``` js
 assert(
-    sum_changes_up_until(time, incremental_operator(changes)) 
-    == 
+    sum_changes_up_until(time, incremental_operator(changes))
+    ==
     batch_operator(sum_changes_up_until(time, changes))
 )
 ```
@@ -351,7 +351,7 @@ In fact, back up, does the causal order even exist? What if we had a timestamp T
 The solution to this is to place some constraints on what kinds of graphs we'll allow. The most important constraints are:
 
 * The output changes at any operation in the graph must not contain timestamps which are earlier than the input change that produced them (ie time must not go backwards).
-* Any backwards edge in the graph must increment the timestamps of the changes that flow across it (ie time in loops must go forwards). 
+* Any backwards edge in the graph must increment the timestamps of the changes that flow across it (ie time in loops must go forwards).
 
 Together, these two constraints prevent the situation where two changes can both potentially cause each other. (See [Graph.validate](https://github.com/jamii/dida/search?q=%22fn+validate%28self%3A+Graph%22) for the full list of constraints.)
 

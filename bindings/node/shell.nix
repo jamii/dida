@@ -5,6 +5,6 @@ pkgs.mkShell rec {
       pkgs.nodejs
       zig
     ];
-    
+
     NIX_NODEJS=pkgs.nodejs;
 }

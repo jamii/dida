@@ -4,7 +4,7 @@
 
 usingnamespace @import("./common.zig");
 
-/// The basic unit of data in dida. 
+/// The basic unit of data in dida.
 /// Every operation takes rows as inputs and produces rows as outputs.
 // TODO This will eventually be replaced by raw bytes plus an optional type tag, so that users of dida can use whatever values and serde scheme they want.
 pub const Row = struct {
@@ -115,8 +115,8 @@ pub const Timestamp = struct {
         return Timestamp{ .coords = output_coords };
     }
 
-    /// A total ordering on timestamps that is compatible with the causal order. 
-    /// ie If `a.causalOrder(b) != .none` then `a.causalOrder(b) == a.lexicalOrder(b)`. 
+    /// A total ordering on timestamps that is compatible with the causal order.
+    /// ie If `a.causalOrder(b) != .none` then `a.causalOrder(b) == a.lexicalOrder(b)`.
     /// This is useful if you want to sort Timestamps by causal order - standard sorting algorithms don't always work well on partial orders.
     pub fn lexicalOrder(self: Timestamp, other: Timestamp) std.math.Order {
         assert(self.coords.len == other.coords.len, "Tried to compute lexicalOrder of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
@@ -147,7 +147,7 @@ pub const Frontier = struct {
     }
 
     /// Compares `timestamp` to `self.timestamps`.
-    /// Since the timestamps in the `self.timestamps` are always mututally incomparable, at most one of them will be comparable to `timestamp`. 
+    /// Since the timestamps in the `self.timestamps` are always mututally incomparable, at most one of them will be comparable to `timestamp`.
     pub fn causalOrder(self: Frontier, timestamp: Timestamp) PartialOrder {
         var iter = self.timestamps.iterator();
         while (iter.next()) |entry| {
@@ -710,7 +710,7 @@ pub const NodeState = union(enum) {
 
     pub const InputState = struct {
         frontier: Frontier,
-        /// These changes are being buffered. 
+        /// These changes are being buffered.
         /// When flushed they will form a change batch.
         unflushed_changes: ChangeBatchBuilder,
     };
@@ -1314,7 +1314,7 @@ pub const Shard = struct {
         _ = if (entry.value_ptr.* == 0) self.unprocessed_frontier_updates.remove(entry.key_ptr.*);
     }
 
-    /// Change the output frontier at `node` and report the change to any downstream nodes. 
+    /// Change the output frontier at `node` and report the change to any downstream nodes.
     // TODO name is misleading, rename -> applyFrontierSupportChange
     fn applyFrontierUpdate(self: *Shard, node: Node, timestamp: Timestamp, diff: isize) !enum { Updated, NotUpdated } {
         var frontier_changes = ArrayList(FrontierChange).init(self.allocator);
@@ -1347,7 +1347,7 @@ pub const Shard = struct {
         return dida.meta.deepOrder(this.node_input, that.node_input);
     }
 
-    /// Process all unprocessed frontier updates. 
+    /// Process all unprocessed frontier updates.
     fn processFrontierUpdates(self: *Shard) !void {
         // Nodes whose input frontiers have changed
         // TODO is it worth tracking the actual changes? might catch cases where the total diff is zero
