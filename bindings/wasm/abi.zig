@@ -114,7 +114,7 @@ pub fn createF64(env: Env, int: f64) Value {
 }
 
 pub fn createString(env: Env, string: []const u8) Value {
-    return js.createString(@intCast(u32, @ptrToInt(@ptrCast([*c]const u8, string))), @intCast(u32, string.len));
+    return js.createString(@as(u32, @ptrToInt(@ptrCast([*c]const u8, string))), @as(u32, string.len));
 }
 
 pub fn createObject(env: Env) Value {
@@ -130,7 +130,7 @@ pub fn createRefCounted(env: Env, value: Value, refcount: u32) RefCounted {
 }
 
 pub fn createExternal(env: Env, pointer: *c_void) Value {
-    const address = @intCast(u32, @ptrToInt(pointer));
+    const address = @as(u32, @ptrToInt(pointer));
     return createU32(env, address);
 }
 
@@ -157,13 +157,13 @@ pub fn getString(env: Env, value: Value) ![]const u8 {
 }
 
 pub fn getStringInto(env: Env, value: Value, buffer: []u8) []const u8 {
-    const len = js.getStringInto(value, @intCast(u32, @ptrToInt(@ptrCast([*c]u8, buffer))), buffer.len);
+    const len = js.getStringInto(value, @as(u32, @ptrToInt(@ptrCast([*c]u8, buffer))), buffer.len);
     return buffer[0..len];
 }
 
 pub fn getExternal(env: Env, external: Value) *c_void {
     const address = getU32({}, external);
-    return @intToPtr(*c_void, @intCast(usize, address));
+    return @intToPtr(*c_void, @as(usize, address));
 }
 
 pub fn getRefCounted(env: Env, ref: RefCounted) Value {
@@ -193,6 +193,6 @@ pub fn setProperty(env: Env, object: Value, name: Value, value: Value) void {
 pub fn callFunction(env: Env, function: Value, args: []const Value) Value {
     const args_array = createArray(env, args.len);
     for (args) |arg, i|
-        setElement(env, args_array, @intCast(u32, i), arg);
+        setElement(env, args_array, @as(u32, i), arg);
     return js.callFunction(function, args_array);
 }
