@@ -104,10 +104,14 @@ Compared to differential dataflow, dida aims to:
     * [ ] Node
 * [ ] Bindings
   * [ ] Wasm
+    * [x] Basic sketch
+    * [ ] Better runtime type checking
+    * [ ] Memory management
+    * [x] Panic handler
+    * [ ] Packaging
   * [ ] Node
     * [x] Basic sketch
-    * [ ] Type tags
-    * [ ] Exceptions
+    * [ ] Better runtime type checking (type tags?)
     * [ ] Memory management
     * [ ] Panic handler
     * [ ] Packaging
