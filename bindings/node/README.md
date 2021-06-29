@@ -1,5 +1,14 @@
+To build:
+
 ```
 nix-shell
-npm run-script build
+zig build install -Drelease-safe=true
+zig build run-codegen
+```
+
+To run example:
+
+```
+nix-shell
 node ../../examples/core.js
 ```

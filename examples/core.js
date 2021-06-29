@@ -1,5 +1,5 @@
 const util = require('util');
-const dida = require('../bindings/node/dida.js');
+const dida = require('../bindings/node/zig-out/lib/dida.js');
 
 var graph_builder = new dida.GraphBuilder();
 const subgraph_0 = new dida.Subgraph(0);
