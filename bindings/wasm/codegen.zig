@@ -1,7 +1,9 @@
 usingnamespace @import("../js_common.zig");
 
 pub fn main() !void {
-    var writer = std.io.getStdOut().writer();
+    const file = try std.fs.cwd().createFile("zig-out/lib/dida.js", .{ .read = false, .truncate = true });
+    defer file.close();
+    var writer = file.writer();
     try writer.writeAll("function Dida(abi) {\n\n");
     inline for (types_with_js_constructors) |T| {
         try generateConstructor(writer, T);

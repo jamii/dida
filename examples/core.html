@@ -4,10 +4,10 @@
 <head>
   <meta charset="UTF-8">
   <script src="../bindings/wasm/abi.js"></script>
-  <script src="../bindings/wasm/dida.js"></script>
+  <script src="../bindings/wasm/zig-out/lib/dida.js"></script>
   <script>
     async function run() {
-        const abi = await Abi("../bindings/wasm/dida.wasm");
+        const abi = await Abi("../bindings/wasm/zig-out/lib/dida.wasm");
         const dida = new Dida(abi);
 
         var graph_builder = new dida.GraphBuilder();
