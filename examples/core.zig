@@ -5,14 +5,10 @@ var gpa = std.heap.GeneralPurposeAllocator(.{
     .safety = true,
     .never_unmap = true,
 }){};
-var arena = std.heap.ArenaAllocator.init(&gpa.allocator);
-const allocator = &arena.allocator;
+const allocator = &gpa.allocator;
 
 pub fn main() !void {
-    defer {
-        arena.deinit();
-        _ = gpa.detectLeaks();
-    }
+    defer _ = gpa.detectLeaks();
 
     var graph_builder = dida.core.GraphBuilder.init(allocator);
     const subgraph_0 = dida.core.Subgraph{ .id = 0 };
