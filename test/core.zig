@@ -1,6 +1,8 @@
 const std = @import("std");
 const dida = @import("../lib/dida.zig");
 
+const allocator = std.testing.allocator;
+
 fn expectDeepEqual(expected: anytype, actual: anytype) !void {
     if (!dida.meta.deepEqual(expected, actual)) {
         dida.common.dump(.{ .expected = expected, .actual = actual });
@@ -9,13 +11,14 @@ fn expectDeepEqual(expected: anytype, actual: anytype) !void {
 }
 
 fn testTimestampOrder(
-    allocator: *std.mem.Allocator,
     anon_a: anytype,
     anon_b: anytype,
     order: dida.core.PartialOrder,
 ) !void {
     const a = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_a);
+    defer a.deinit(allocator);
     const b = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_b);
+    defer b.deinit(allocator);
     try std.testing.expectEqual(order, a.causalOrder(b));
     const reverse_order: dida.core.PartialOrder = switch (order) {
         .none => .none,
@@ -34,65 +37,70 @@ fn testTimestampOrder(
         try std.testing.expectEqual(total_order, a.lexicalOrder(b));
     }
     const lub = try dida.core.Timestamp.leastUpperBound(allocator, a, b);
+    defer lub.deinit(allocator);
     try std.testing.expect(a.causalOrder(lub).isLessThanOrEqual());
     try std.testing.expect(b.causalOrder(lub).isLessThanOrEqual());
 }
 
 test "timestamp order" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = &arena.allocator;
-    try testTimestampOrder(a, .{}, .{}, .eq);
-    try testTimestampOrder(a, .{0}, .{0}, .eq);
-    try testTimestampOrder(a, .{0}, .{1}, .lt);
-    try testTimestampOrder(a, .{1}, .{0}, .gt);
-    try testTimestampOrder(a, .{ 0, 0 }, .{ 0, 0 }, .eq);
-    try testTimestampOrder(a, .{ 0, 0 }, .{ 1, 0 }, .lt);
-    try testTimestampOrder(a, .{ 0, 0 }, .{ 0, 1 }, .lt);
-    try testTimestampOrder(a, .{ 0, 0 }, .{ 1, 1 }, .lt);
-    try testTimestampOrder(a, .{ 1, 0 }, .{ 0, 1 }, .none);
+    try testTimestampOrder(.{}, .{}, .eq);
+    try testTimestampOrder(.{0}, .{0}, .eq);
+    try testTimestampOrder(.{0}, .{1}, .lt);
+    try testTimestampOrder(.{1}, .{0}, .gt);
+    try testTimestampOrder(.{ 0, 0 }, .{ 0, 0 }, .eq);
+    try testTimestampOrder(.{ 0, 0 }, .{ 1, 0 }, .lt);
+    try testTimestampOrder(.{ 0, 0 }, .{ 0, 1 }, .lt);
+    try testTimestampOrder(.{ 0, 0 }, .{ 1, 1 }, .lt);
+    try testTimestampOrder(.{ 1, 0 }, .{ 0, 1 }, .none);
 }
 
 fn testTimestampLub(
-    allocator: *std.mem.Allocator,
     anon_a: anytype,
     anon_b: anytype,
     anon_lub: anytype,
 ) !void {
     const a = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_a);
+    defer a.deinit(allocator);
     const b = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_b);
+    defer b.deinit(allocator);
     const expected_lub = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_lub);
+    defer expected_lub.deinit(allocator);
     const actual_lub = try dida.core.Timestamp.leastUpperBound(allocator, a, b);
+    defer actual_lub.deinit(allocator);
     try std.testing.expectEqualSlices(usize, expected_lub.coords, actual_lub.coords);
 }
 
 test "timestamp lub" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = &arena.allocator;
-    try testTimestampLub(a, .{}, .{}, .{});
-    try testTimestampLub(a, .{0}, .{0}, .{0});
-    try testTimestampLub(a, .{0}, .{1}, .{1});
-    try testTimestampLub(a, .{1}, .{0}, .{1});
-    try testTimestampLub(a, .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 });
-    try testTimestampLub(a, .{ 0, 0 }, .{ 1, 0 }, .{ 1, 0 });
-    try testTimestampLub(a, .{ 0, 0 }, .{ 0, 1 }, .{ 0, 1 });
-    try testTimestampLub(a, .{ 0, 0 }, .{ 1, 1 }, .{ 1, 1 });
-    try testTimestampLub(a, .{ 1, 0 }, .{ 0, 1 }, .{ 1, 1 });
+    try testTimestampLub(.{}, .{}, .{});
+    try testTimestampLub(.{0}, .{0}, .{0});
+    try testTimestampLub(.{0}, .{1}, .{1});
+    try testTimestampLub(.{1}, .{0}, .{1});
+    try testTimestampLub(.{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 });
+    try testTimestampLub(.{ 0, 0 }, .{ 1, 0 }, .{ 1, 0 });
+    try testTimestampLub(.{ 0, 0 }, .{ 0, 1 }, .{ 0, 1 });
+    try testTimestampLub(.{ 0, 0 }, .{ 1, 1 }, .{ 1, 1 });
+    try testTimestampLub(.{ 1, 0 }, .{ 0, 1 }, .{ 1, 1 });
 }
 
 fn testChangeBatchBuilder(
-    allocator: *std.mem.Allocator,
     anon_input_changes: anytype,
     anon_expected_changes: anytype,
 ) !void {
     const input_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_input_changes);
+    defer allocator.free(input_changes);
     const expected_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_expected_changes);
+    defer {
+        for (expected_changes) |expected_change| expected_change.deinit(allocator);
+        allocator.free(expected_changes);
+    }
     var builder = dida.core.ChangeBatchBuilder.init(allocator);
+    defer builder.deinit();
     for (input_changes) |change| {
         try builder.changes.append(change);
     }
-    if (try builder.finishAndReset()) |batch| {
+    if (try builder.finishAndReset()) |_batch| {
+        var batch = _batch;
+        defer batch.deinit(allocator);
         try expectDeepEqual(expected_changes, batch.changes);
         for (batch.changes) |change| {
             try std.testing.expect(batch.lower_bound.causalOrder(change.timestamp).isLessThanOrEqual());
@@ -104,23 +112,17 @@ fn testChangeBatchBuilder(
 }
 
 test "change batch builder" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = &arena.allocator;
     try testChangeBatchBuilder(
-        a,
         .{},
         .{},
     );
     try testChangeBatchBuilder(
-        a,
         .{
             .{ .{}, .{}, 0 },
         },
         .{},
     );
     try testChangeBatchBuilder(
-        a,
         .{
             .{ .{}, .{}, 1 },
         },
@@ -129,7 +131,6 @@ test "change batch builder" {
         },
     );
     try testChangeBatchBuilder(
-        a,
         .{
             .{ .{"a"}, .{}, 1 },
             .{ .{"b"}, .{}, 1 },
@@ -140,7 +141,6 @@ test "change batch builder" {
         },
     );
     try testChangeBatchBuilder(
-        a,
         .{
             .{ .{"a"}, .{}, 1 },
             .{ .{"b"}, .{}, 1 },
@@ -150,7 +150,6 @@ test "change batch builder" {
         .{},
     );
     try testChangeBatchBuilder(
-        a,
         .{
             .{ .{"a"}, .{}, 1 },
             .{ .{"b"}, .{}, 1 },
@@ -162,7 +161,6 @@ test "change batch builder" {
         },
     );
     try testChangeBatchBuilder(
-        a,
         .{
             .{ .{"a"}, .{}, 1 },
             .{ .{"a"}, .{}, -1 },
@@ -173,7 +171,6 @@ test "change batch builder" {
         },
     );
     try testChangeBatchBuilder(
-        a,
         .{
             .{ .{"a"}, .{}, 0 },
             .{ .{"a"}, .{}, 0 },
@@ -182,7 +179,6 @@ test "change batch builder" {
         .{},
     );
     try testChangeBatchBuilder(
-        a,
         .{
             .{ .{"a"}, .{}, 0 },
             .{ .{"a"}, .{}, 0 },
@@ -195,7 +191,6 @@ test "change batch builder" {
 }
 
 fn testFrontierMove(
-    allocator: *std.mem.Allocator,
     anon_frontier: anytype,
     comptime direction: dida.core.Frontier.Direction,
     anon_timestamp: anytype,
@@ -203,17 +198,39 @@ fn testFrontierMove(
     anon_expected_changes: anytype,
 ) !void {
     const frontier_timestamps = dida.sugar.coerceAnonTo(allocator, []dida.core.Timestamp, anon_frontier);
+    defer {
+        for (frontier_timestamps) |frontier_timestamp| frontier_timestamp.deinit(allocator);
+        allocator.free(frontier_timestamps);
+    }
     var frontier = dida.core.Frontier.init(allocator);
+    defer frontier.deinit();
+    var changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
+    defer changes_into.deinit();
     for (frontier_timestamps) |frontier_timestamp| {
-        var changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
         try frontier.move(.Later, frontier_timestamp, &changes_into);
+        for (changes_into.items) |change| change.deinit(allocator);
+        try changes_into.resize(0);
     }
     const timestamp = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_timestamp);
+    defer timestamp.deinit(allocator);
     const expected_frontier_timestamps = dida.sugar.coerceAnonTo(allocator, []dida.core.Timestamp, anon_expected_frontier);
+    defer {
+        for (expected_frontier_timestamps) |expected_frontier_timestamp| expected_frontier_timestamp.deinit(allocator);
+        allocator.free(expected_frontier_timestamps);
+    }
     const expected_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.FrontierChange, anon_expected_changes);
+    defer {
+        for (expected_changes) |expected_change| expected_change.deinit(allocator);
+        allocator.free(expected_changes);
+    }
     var actual_changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
+    defer {
+        for (actual_changes_into.items) |change| change.deinit(allocator);
+        actual_changes_into.deinit();
+    }
     try frontier.move(direction, timestamp, &actual_changes_into);
     var actual_frontier_timestamps = std.ArrayList(dida.core.Timestamp).init(allocator);
+    defer actual_frontier_timestamps.deinit();
     var iter = frontier.timestamps.iterator();
     while (iter.next()) |entry| try actual_frontier_timestamps.append(entry.key_ptr.*);
     std.sort.sort(dida.core.Timestamp, actual_frontier_timestamps.items, {}, struct {
@@ -231,11 +248,7 @@ fn testFrontierMove(
 }
 
 test "test frontier move" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = &arena.allocator;
     try testFrontierMove(
-        a,
         .{},
         .Later,
         .{ 0, 0 },
@@ -247,7 +260,6 @@ test "test frontier move" {
         },
     );
     try testFrontierMove(
-        a,
         .{
             .{ 0, 0 },
         },
@@ -262,7 +274,6 @@ test "test frontier move" {
         },
     );
     try testFrontierMove(
-        a,
         .{
             .{ 0, 1 },
         },
@@ -277,7 +288,6 @@ test "test frontier move" {
         },
     );
     try testFrontierMove(
-        a,
         .{
             .{ 0, 1 },
             .{ 1, 0 },
@@ -294,7 +304,6 @@ test "test frontier move" {
         },
     );
     try testFrontierMove(
-        a,
         .{
             .{ 0, 0, 1 },
             .{ 0, 1, 0 },
@@ -313,33 +322,36 @@ test "test frontier move" {
 }
 
 fn testFrontierOrder(
-    allocator: *std.mem.Allocator,
     anon_frontier: anytype,
     anon_timestamp: anytype,
     expected_order: dida.core.PartialOrder,
 ) !void {
     const frontier_timestamps = dida.sugar.coerceAnonTo(allocator, []dida.core.Timestamp, anon_frontier);
+    defer {
+        for (frontier_timestamps) |frontier_timestamp| frontier_timestamp.deinit(allocator);
+        allocator.free(frontier_timestamps);
+    }
     var frontier = dida.core.Frontier.init(allocator);
+    defer frontier.deinit();
+    var changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
+    defer changes_into.deinit();
     for (frontier_timestamps) |frontier_timestamp| {
-        var changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
         try frontier.move(.Later, frontier_timestamp, &changes_into);
+        for (changes_into.items) |change| change.deinit(allocator);
+        try changes_into.resize(0);
     }
     const timestamp = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_timestamp);
+    defer timestamp.deinit(allocator);
     try std.testing.expectEqual(expected_order, frontier.causalOrder(timestamp));
 }
 
 test "test frontier order" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = &arena.allocator;
     try testFrontierOrder(
-        a,
         .{},
         .{},
         .none,
     );
     try testFrontierOrder(
-        a,
         .{
             .{ 0, 0 },
         },
@@ -347,7 +359,6 @@ test "test frontier order" {
         .eq,
     );
     try testFrontierOrder(
-        a,
         .{
             .{ 0, 0 },
         },
@@ -355,7 +366,6 @@ test "test frontier order" {
         .lt,
     );
     try testFrontierOrder(
-        a,
         .{
             .{ 0, 1 },
         },
@@ -363,7 +373,6 @@ test "test frontier order" {
         .gt,
     );
     try testFrontierOrder(
-        a,
         .{
             .{ 0, 1 },
         },
@@ -371,7 +380,6 @@ test "test frontier order" {
         .none,
     );
     try testFrontierOrder(
-        a,
         .{
             .{ 1, 0 },
             .{ 0, 1 },
@@ -380,7 +388,6 @@ test "test frontier order" {
         .lt,
     );
     try testFrontierOrder(
-        a,
         .{
             .{ 1, 0 },
             .{ 0, 1 },
@@ -389,7 +396,6 @@ test "test frontier order" {
         .lt,
     );
     try testFrontierOrder(
-        a,
         .{
             .{ 2, 0 },
             .{ 0, 2 },
@@ -400,24 +406,45 @@ test "test frontier order" {
 }
 
 fn testSupportFrontierUpdate(
-    allocator: *std.mem.Allocator,
     anon_support: anytype,
     anon_update: anytype,
     anon_expected_frontier: anytype,
     anon_expected_changes: anytype,
 ) !void {
     const support = dida.sugar.coerceAnonTo(allocator, []dida.core.FrontierChange, anon_support);
+    defer {
+        for (support) |frontier_change| frontier_change.deinit(allocator);
+        allocator.free(support);
+    }
     var frontier = try dida.core.SupportedFrontier.init(allocator);
+    defer frontier.deinit();
+    var changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
+    defer changes_into.deinit();
     for (support) |change| {
-        var changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
         try frontier.update(change.timestamp, change.diff, &changes_into);
+        for (changes_into.items) |frontier_change| frontier_change.deinit(allocator);
+        try changes_into.resize(0);
     }
     const update = dida.sugar.coerceAnonTo(allocator, dida.core.FrontierChange, anon_update);
+    defer update.deinit(allocator);
     const expected_frontier_timestamps = dida.sugar.coerceAnonTo(allocator, []dida.core.Timestamp, anon_expected_frontier);
+    defer {
+        for (expected_frontier_timestamps) |expected_frontier_timestamp| expected_frontier_timestamp.deinit(allocator);
+        allocator.free(expected_frontier_timestamps);
+    }
     const expected_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.FrontierChange, anon_expected_changes);
+    defer {
+        for (expected_changes) |expected_change| expected_change.deinit(allocator);
+        allocator.free(expected_changes);
+    }
     var actual_changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
+    defer {
+        for (actual_changes_into.items) |change| change.deinit(allocator);
+        actual_changes_into.deinit();
+    }
     try frontier.update(update.timestamp, update.diff, &actual_changes_into);
     var actual_frontier_timestamps = std.ArrayList(dida.core.Timestamp).init(allocator);
+    defer actual_frontier_timestamps.deinit();
     var iter = frontier.frontier.timestamps.iterator();
     while (iter.next()) |entry| try actual_frontier_timestamps.append(entry.key_ptr.*);
     std.sort.sort(dida.core.Timestamp, actual_frontier_timestamps.items, {}, struct {
@@ -435,11 +462,7 @@ fn testSupportFrontierUpdate(
 }
 
 test "test supported frontier update" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = &arena.allocator;
     try testSupportFrontierUpdate(
-        a,
         .{},
         .{ .{ 0, 0 }, 1 },
         .{
@@ -450,7 +473,6 @@ test "test supported frontier update" {
         },
     );
     try testSupportFrontierUpdate(
-        a,
         .{
             .{ .{ 0, 0 }, 1 },
         },
@@ -461,7 +483,6 @@ test "test supported frontier update" {
         .{},
     );
     try testSupportFrontierUpdate(
-        a,
         .{
             .{ .{ 0, 0 }, 1 },
         },
@@ -472,7 +493,6 @@ test "test supported frontier update" {
         },
     );
     try testSupportFrontierUpdate(
-        a,
         .{
             .{ .{ 0, 0 }, 2 },
         },
@@ -483,7 +503,6 @@ test "test supported frontier update" {
         .{},
     );
     try testSupportFrontierUpdate(
-        a,
         .{
             .{ .{ 0, 0 }, 1 },
             .{ .{ 1, 1 }, 1 },
@@ -498,7 +517,6 @@ test "test supported frontier update" {
         },
     );
     try testSupportFrontierUpdate(
-        a,
         .{
             .{ .{ 1, 1 }, 1 },
         },
@@ -512,7 +530,6 @@ test "test supported frontier update" {
         },
     );
     try testSupportFrontierUpdate(
-        a,
         .{
             .{ .{ 0, 0 }, 1 },
         },
@@ -523,7 +540,6 @@ test "test supported frontier update" {
         .{},
     );
     try testSupportFrontierUpdate(
-        a,
         .{
             .{ .{ 2, 0 }, 1 },
             .{ .{ 0, 1 }, 1 },
@@ -541,32 +557,38 @@ test "test supported frontier update" {
 }
 
 pub fn testIndexAdd(
-    allocator: *std.mem.Allocator,
     anon_change_batches: anytype,
-    anon_expected_changes: anytype,
+    anon_expected_changess: anytype,
 ) !void {
     var index = dida.core.Index.init(allocator);
+    defer index.deinit();
     const change_batches = dida.sugar.coerceAnonTo(allocator, []dida.core.ChangeBatch, anon_change_batches);
-    const expected_changes = dida.sugar.coerceAnonTo(allocator, [][]dida.core.Change, anon_expected_changes);
+    defer allocator.free(change_batches);
+    const expected_changess = dida.sugar.coerceAnonTo(allocator, [][]dida.core.Change, anon_expected_changess);
+    defer {
+        for (expected_changess) |expected_changes| {
+            for (expected_changes) |expected_change| {
+                expected_change.deinit(allocator);
+            }
+            allocator.free(expected_changes);
+        }
+        allocator.free(expected_changess);
+    }
     for (change_batches) |change_batch| {
         try index.addChangeBatch(change_batch);
     }
-    const actual_changes = try allocator.alloc([]dida.core.Change, index.change_batches.items.len);
-    for (actual_changes) |*changes, i| changes.* = index.change_batches.items[i].changes;
-    try expectDeepEqual(expected_changes, actual_changes);
+    const actual_changess = try allocator.alloc([]dida.core.Change, index.change_batches.items.len);
+    defer allocator.free(actual_changess);
+    for (actual_changess) |*changes, i| changes.* = index.change_batches.items[i].changes;
+    try expectDeepEqual(expected_changess, actual_changess);
 }
 
 test "test index add" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = &arena.allocator;
     try testIndexAdd(
-        a,
         .{},
         .{},
     );
     try testIndexAdd(
-        a,
         .{
             .{
                 .{ .{"a"}, .{0}, 1 },
@@ -579,7 +601,6 @@ test "test index add" {
         },
     );
     try testIndexAdd(
-        a,
         .{
             .{
                 .{ .{"a"}, .{0}, 1 },
@@ -595,7 +616,6 @@ test "test index add" {
         },
     );
     try testIndexAdd(
-        a,
         .{
             .{
                 .{ .{"a"}, .{0}, 1 },
@@ -616,7 +636,6 @@ test "test index add" {
         },
     );
     try testIndexAdd(
-        a,
         .{
             .{
                 .{ .{"a"}, .{0}, 1 },
@@ -634,7 +653,6 @@ test "test index add" {
         },
     );
     try testIndexAdd(
-        a,
         .{
             .{
                 .{ .{"a"}, .{0}, 1 },
@@ -676,7 +694,6 @@ test "test index add" {
     );
     // TODO bulk adds break the leveling
     try testIndexAdd(
-        a,
         .{
             .{
                 .{ .{"a"}, .{0}, 1 },
@@ -733,7 +750,6 @@ test "test index add" {
 }
 
 fn testChangeBatchSeekRowStart(
-    allocator: *std.mem.Allocator,
     anon_changes: anytype,
     ix: usize,
     anon_row: anytype,
@@ -741,22 +757,23 @@ fn testChangeBatchSeekRowStart(
     expected_ix: usize,
 ) !void {
     const changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_changes);
+    defer allocator.free(changes);
     const row = dida.sugar.coerceAnonTo(allocator, dida.core.Row, anon_row);
+    defer row.deinit(allocator);
 
     var builder = dida.core.ChangeBatchBuilder.init(allocator);
+    defer builder.deinit();
     for (changes) |change| {
         try builder.changes.append(change);
     }
-    const change_batch = (try builder.finishAndReset()).?;
+    var change_batch = (try builder.finishAndReset()).?;
+    defer change_batch.deinit(allocator);
 
     const actual_ix = change_batch.seekRowStart(ix, row, key_columns);
     try std.testing.expectEqual(expected_ix, actual_ix);
 }
 
 test "test change batch seek row start" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = &arena.allocator;
     const changes = .{
         .{ .{ "a", "x" }, .{0}, 1 },
         .{ .{ "a", "y" }, .{1}, 1 },
@@ -765,51 +782,50 @@ test "test change batch seek row start" {
         .{ .{ "e", "e" }, .{0}, 1 },
     };
 
-    try testChangeBatchSeekRowStart(a, changes, 0, .{"a"}, 1, 0);
-    try testChangeBatchSeekRowStart(a, changes, 1, .{"a"}, 1, 1);
-    try testChangeBatchSeekRowStart(a, changes, 2, .{"a"}, 1, 2);
-    try testChangeBatchSeekRowStart(a, changes, 3, .{"a"}, 1, 3);
-    try testChangeBatchSeekRowStart(a, changes, 4, .{"a"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 5, .{"a"}, 1, 5);
+    try testChangeBatchSeekRowStart(changes, 0, .{"a"}, 1, 0);
+    try testChangeBatchSeekRowStart(changes, 1, .{"a"}, 1, 1);
+    try testChangeBatchSeekRowStart(changes, 2, .{"a"}, 1, 2);
+    try testChangeBatchSeekRowStart(changes, 3, .{"a"}, 1, 3);
+    try testChangeBatchSeekRowStart(changes, 4, .{"a"}, 1, 4);
+    try testChangeBatchSeekRowStart(changes, 5, .{"a"}, 1, 5);
 
-    try testChangeBatchSeekRowStart(a, changes, 0, .{"b"}, 1, 3);
-    try testChangeBatchSeekRowStart(a, changes, 1, .{"b"}, 1, 3);
-    try testChangeBatchSeekRowStart(a, changes, 2, .{"b"}, 1, 3);
-    try testChangeBatchSeekRowStart(a, changes, 3, .{"b"}, 1, 3);
-    try testChangeBatchSeekRowStart(a, changes, 4, .{"b"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 5, .{"b"}, 1, 5);
+    try testChangeBatchSeekRowStart(changes, 0, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowStart(changes, 1, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowStart(changes, 2, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowStart(changes, 3, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowStart(changes, 4, .{"b"}, 1, 4);
+    try testChangeBatchSeekRowStart(changes, 5, .{"b"}, 1, 5);
 
-    try testChangeBatchSeekRowStart(a, changes, 0, .{"c"}, 1, 3);
-    try testChangeBatchSeekRowStart(a, changes, 1, .{"c"}, 1, 3);
-    try testChangeBatchSeekRowStart(a, changes, 2, .{"c"}, 1, 3);
-    try testChangeBatchSeekRowStart(a, changes, 3, .{"c"}, 1, 3);
-    try testChangeBatchSeekRowStart(a, changes, 4, .{"c"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 5, .{"c"}, 1, 5);
+    try testChangeBatchSeekRowStart(changes, 0, .{"c"}, 1, 3);
+    try testChangeBatchSeekRowStart(changes, 1, .{"c"}, 1, 3);
+    try testChangeBatchSeekRowStart(changes, 2, .{"c"}, 1, 3);
+    try testChangeBatchSeekRowStart(changes, 3, .{"c"}, 1, 3);
+    try testChangeBatchSeekRowStart(changes, 4, .{"c"}, 1, 4);
+    try testChangeBatchSeekRowStart(changes, 5, .{"c"}, 1, 5);
 
-    try testChangeBatchSeekRowStart(a, changes, 0, .{"d"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 1, .{"d"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 2, .{"d"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 3, .{"d"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 4, .{"d"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 5, .{"d"}, 1, 5);
+    try testChangeBatchSeekRowStart(changes, 0, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowStart(changes, 1, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowStart(changes, 2, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowStart(changes, 3, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowStart(changes, 4, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowStart(changes, 5, .{"d"}, 1, 5);
 
-    try testChangeBatchSeekRowStart(a, changes, 0, .{"e"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 1, .{"e"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 2, .{"e"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 3, .{"e"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 4, .{"e"}, 1, 4);
-    try testChangeBatchSeekRowStart(a, changes, 5, .{"e"}, 1, 5);
+    try testChangeBatchSeekRowStart(changes, 0, .{"e"}, 1, 4);
+    try testChangeBatchSeekRowStart(changes, 1, .{"e"}, 1, 4);
+    try testChangeBatchSeekRowStart(changes, 2, .{"e"}, 1, 4);
+    try testChangeBatchSeekRowStart(changes, 3, .{"e"}, 1, 4);
+    try testChangeBatchSeekRowStart(changes, 4, .{"e"}, 1, 4);
+    try testChangeBatchSeekRowStart(changes, 5, .{"e"}, 1, 5);
 
-    try testChangeBatchSeekRowStart(a, changes, 0, .{"f"}, 1, 5);
-    try testChangeBatchSeekRowStart(a, changes, 1, .{"f"}, 1, 5);
-    try testChangeBatchSeekRowStart(a, changes, 2, .{"f"}, 1, 5);
-    try testChangeBatchSeekRowStart(a, changes, 3, .{"f"}, 1, 5);
-    try testChangeBatchSeekRowStart(a, changes, 4, .{"f"}, 1, 5);
-    try testChangeBatchSeekRowStart(a, changes, 5, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowStart(changes, 0, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowStart(changes, 1, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowStart(changes, 2, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowStart(changes, 3, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowStart(changes, 4, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowStart(changes, 5, .{"f"}, 1, 5);
 }
 
 fn testChangeBatchSeekRowEnd(
-    allocator: *std.mem.Allocator,
     anon_changes: anytype,
     ix: usize,
     anon_row: anytype,
@@ -817,22 +833,23 @@ fn testChangeBatchSeekRowEnd(
     expected_ix: usize,
 ) !void {
     const changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_changes);
+    defer allocator.free(changes);
     const row = dida.sugar.coerceAnonTo(allocator, dida.core.Row, anon_row);
+    defer row.deinit(allocator);
 
     var builder = dida.core.ChangeBatchBuilder.init(allocator);
+    defer builder.deinit();
     for (changes) |change| {
         try builder.changes.append(change);
     }
-    const change_batch = (try builder.finishAndReset()).?;
+    var change_batch = (try builder.finishAndReset()).?;
+    defer change_batch.deinit(allocator);
 
     const actual_ix = change_batch.seekRowEnd(ix, row, key_columns);
     try std.testing.expectEqual(expected_ix, actual_ix);
 }
 
 test "test change batch seek current row end" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = &arena.allocator;
     const changes = .{
         .{ .{ "a", "x" }, .{0}, 1 },
         .{ .{ "a", "y" }, .{1}, 1 },
@@ -841,70 +858,72 @@ test "test change batch seek current row end" {
         .{ .{ "e", "e" }, .{0}, 1 },
     };
 
-    try testChangeBatchSeekRowEnd(a, changes, 0, .{"a"}, 1, 3);
-    try testChangeBatchSeekRowEnd(a, changes, 1, .{"a"}, 1, 3);
-    try testChangeBatchSeekRowEnd(a, changes, 2, .{"a"}, 1, 3);
-    try testChangeBatchSeekRowEnd(a, changes, 3, .{"a"}, 1, 3);
-    try testChangeBatchSeekRowEnd(a, changes, 4, .{"a"}, 1, 4);
-    try testChangeBatchSeekRowEnd(a, changes, 5, .{"a"}, 1, 5);
+    try testChangeBatchSeekRowEnd(changes, 0, .{"a"}, 1, 3);
+    try testChangeBatchSeekRowEnd(changes, 1, .{"a"}, 1, 3);
+    try testChangeBatchSeekRowEnd(changes, 2, .{"a"}, 1, 3);
+    try testChangeBatchSeekRowEnd(changes, 3, .{"a"}, 1, 3);
+    try testChangeBatchSeekRowEnd(changes, 4, .{"a"}, 1, 4);
+    try testChangeBatchSeekRowEnd(changes, 5, .{"a"}, 1, 5);
 
-    try testChangeBatchSeekRowEnd(a, changes, 0, .{"b"}, 1, 3);
-    try testChangeBatchSeekRowEnd(a, changes, 1, .{"b"}, 1, 3);
-    try testChangeBatchSeekRowEnd(a, changes, 2, .{"b"}, 1, 3);
-    try testChangeBatchSeekRowEnd(a, changes, 3, .{"b"}, 1, 3);
-    try testChangeBatchSeekRowEnd(a, changes, 4, .{"b"}, 1, 4);
-    try testChangeBatchSeekRowEnd(a, changes, 5, .{"b"}, 1, 5);
+    try testChangeBatchSeekRowEnd(changes, 0, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowEnd(changes, 1, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowEnd(changes, 2, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowEnd(changes, 3, .{"b"}, 1, 3);
+    try testChangeBatchSeekRowEnd(changes, 4, .{"b"}, 1, 4);
+    try testChangeBatchSeekRowEnd(changes, 5, .{"b"}, 1, 5);
 
-    try testChangeBatchSeekRowEnd(a, changes, 0, .{"c"}, 1, 4);
-    try testChangeBatchSeekRowEnd(a, changes, 1, .{"c"}, 1, 4);
-    try testChangeBatchSeekRowEnd(a, changes, 2, .{"c"}, 1, 4);
-    try testChangeBatchSeekRowEnd(a, changes, 3, .{"c"}, 1, 4);
-    try testChangeBatchSeekRowEnd(a, changes, 4, .{"c"}, 1, 4);
-    try testChangeBatchSeekRowEnd(a, changes, 5, .{"c"}, 1, 5);
+    try testChangeBatchSeekRowEnd(changes, 0, .{"c"}, 1, 4);
+    try testChangeBatchSeekRowEnd(changes, 1, .{"c"}, 1, 4);
+    try testChangeBatchSeekRowEnd(changes, 2, .{"c"}, 1, 4);
+    try testChangeBatchSeekRowEnd(changes, 3, .{"c"}, 1, 4);
+    try testChangeBatchSeekRowEnd(changes, 4, .{"c"}, 1, 4);
+    try testChangeBatchSeekRowEnd(changes, 5, .{"c"}, 1, 5);
 
-    try testChangeBatchSeekRowEnd(a, changes, 0, .{"d"}, 1, 4);
-    try testChangeBatchSeekRowEnd(a, changes, 1, .{"d"}, 1, 4);
-    try testChangeBatchSeekRowEnd(a, changes, 2, .{"d"}, 1, 4);
-    try testChangeBatchSeekRowEnd(a, changes, 3, .{"d"}, 1, 4);
-    try testChangeBatchSeekRowEnd(a, changes, 4, .{"d"}, 1, 4);
-    try testChangeBatchSeekRowEnd(a, changes, 5, .{"d"}, 1, 5);
+    try testChangeBatchSeekRowEnd(changes, 0, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowEnd(changes, 1, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowEnd(changes, 2, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowEnd(changes, 3, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowEnd(changes, 4, .{"d"}, 1, 4);
+    try testChangeBatchSeekRowEnd(changes, 5, .{"d"}, 1, 5);
 
-    try testChangeBatchSeekRowEnd(a, changes, 0, .{"e"}, 1, 5);
-    try testChangeBatchSeekRowEnd(a, changes, 1, .{"e"}, 1, 5);
-    try testChangeBatchSeekRowEnd(a, changes, 2, .{"e"}, 1, 5);
-    try testChangeBatchSeekRowEnd(a, changes, 3, .{"e"}, 1, 5);
-    try testChangeBatchSeekRowEnd(a, changes, 4, .{"e"}, 1, 5);
-    try testChangeBatchSeekRowEnd(a, changes, 5, .{"e"}, 1, 5);
+    try testChangeBatchSeekRowEnd(changes, 0, .{"e"}, 1, 5);
+    try testChangeBatchSeekRowEnd(changes, 1, .{"e"}, 1, 5);
+    try testChangeBatchSeekRowEnd(changes, 2, .{"e"}, 1, 5);
+    try testChangeBatchSeekRowEnd(changes, 3, .{"e"}, 1, 5);
+    try testChangeBatchSeekRowEnd(changes, 4, .{"e"}, 1, 5);
+    try testChangeBatchSeekRowEnd(changes, 5, .{"e"}, 1, 5);
 
-    try testChangeBatchSeekRowEnd(a, changes, 0, .{"f"}, 1, 5);
-    try testChangeBatchSeekRowEnd(a, changes, 1, .{"f"}, 1, 5);
-    try testChangeBatchSeekRowEnd(a, changes, 2, .{"f"}, 1, 5);
-    try testChangeBatchSeekRowEnd(a, changes, 3, .{"f"}, 1, 5);
-    try testChangeBatchSeekRowEnd(a, changes, 4, .{"f"}, 1, 5);
-    try testChangeBatchSeekRowEnd(a, changes, 5, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowEnd(changes, 0, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowEnd(changes, 1, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowEnd(changes, 2, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowEnd(changes, 3, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowEnd(changes, 4, .{"f"}, 1, 5);
+    try testChangeBatchSeekRowEnd(changes, 5, .{"f"}, 1, 5);
 }
 
 fn testChangeBatchSeekCurrentRowEnd(
-    allocator: *std.mem.Allocator,
     anon_changes: anytype,
     ix: usize,
     key_columns: usize,
     expected_ix: usize,
 ) !void {
     const changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_changes);
+    defer allocator.free(changes);
 
     var builder = dida.core.ChangeBatchBuilder.init(allocator);
+    defer builder.deinit();
     for (changes) |change| {
         try builder.changes.append(change);
     }
-    const change_batch = (try builder.finishAndReset()).?;
+    var change_batch = (try builder.finishAndReset()).?;
+    defer change_batch.deinit(allocator);
 
     const actual_ix = change_batch.seekCurrentRowEnd(ix, key_columns);
     try std.testing.expectEqual(expected_ix, actual_ix);
 }
 
 test "test change batch seek current row end" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const a = &arena.allocator;
     const changes = .{
@@ -914,40 +933,52 @@ test "test change batch seek current row end" {
         .{ .{ "c", "c" }, .{0}, 1 },
         .{ .{ "e", "e" }, .{0}, 1 },
     };
-    try testChangeBatchSeekCurrentRowEnd(a, changes, 0, 1, 3);
-    try testChangeBatchSeekCurrentRowEnd(a, changes, 1, 1, 3);
-    try testChangeBatchSeekCurrentRowEnd(a, changes, 2, 1, 3);
-    try testChangeBatchSeekCurrentRowEnd(a, changes, 3, 1, 4);
-    try testChangeBatchSeekCurrentRowEnd(a, changes, 4, 1, 5);
-    try testChangeBatchSeekCurrentRowEnd(a, changes, 5, 1, 5);
+    try testChangeBatchSeekCurrentRowEnd(changes, 0, 1, 3);
+    try testChangeBatchSeekCurrentRowEnd(changes, 1, 1, 3);
+    try testChangeBatchSeekCurrentRowEnd(changes, 2, 1, 3);
+    try testChangeBatchSeekCurrentRowEnd(changes, 3, 1, 4);
+    try testChangeBatchSeekCurrentRowEnd(changes, 4, 1, 5);
+    try testChangeBatchSeekCurrentRowEnd(changes, 5, 1, 5);
 }
 
 fn testChangeBatchJoin(
-    allocator: *std.mem.Allocator,
     anon_left_changes: anytype,
     anon_right_changes: anytype,
     key_columns: usize,
     anon_expected_changes: anytype,
 ) !void {
     const left_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_left_changes);
+    defer allocator.free(left_changes);
     const right_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_right_changes);
+    defer allocator.free(right_changes);
     const expected_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_expected_changes);
+    defer {
+        for (expected_changes) |change| change.deinit(allocator);
+        allocator.free(expected_changes);
+    }
 
     var left_builder = dida.core.ChangeBatchBuilder.init(allocator);
+    defer left_builder.deinit();
     for (left_changes) |change| {
         try left_builder.changes.append(change);
     }
-    const left_change_batch = (try left_builder.finishAndReset()).?;
+    var left_change_batch = (try left_builder.finishAndReset()).?;
+    defer left_change_batch.deinit(allocator);
 
     var right_builder = dida.core.ChangeBatchBuilder.init(allocator);
+    defer right_builder.deinit();
     for (right_changes) |change| {
         try right_builder.changes.append(change);
     }
-    const right_change_batch = (try right_builder.finishAndReset()).?;
+    var right_change_batch = (try right_builder.finishAndReset()).?;
+    defer right_change_batch.deinit(allocator);
 
     var output_builder = dida.core.ChangeBatchBuilder.init(allocator);
+    defer output_builder.deinit();
     try left_change_batch.mergeJoin(right_change_batch, key_columns, &output_builder);
-    if (try output_builder.finishAndReset()) |output_change_batch| {
+    if (try output_builder.finishAndReset()) |_output_change_batch| {
+        var output_change_batch = _output_change_batch;
+        defer output_change_batch.deinit(allocator);
         try expectDeepEqual(expected_changes, output_change_batch.changes);
     } else {
         const actual_changes: []dida.core.Change = &[0]dida.core.Change{};
@@ -956,11 +987,7 @@ fn testChangeBatchJoin(
 }
 
 test "test change batch join" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = &arena.allocator;
     try testChangeBatchJoin(
-        a,
         .{
             .{ .{"a"}, .{ 0, 1 }, 2 },
         },
@@ -973,7 +1000,6 @@ test "test change batch join" {
         },
     );
     try testChangeBatchJoin(
-        a,
         .{
             .{ .{"a"}, .{ 0, 1 }, 2 },
         },
@@ -984,7 +1010,6 @@ test "test change batch join" {
         .{},
     );
     try testChangeBatchJoin(
-        a,
         .{
             .{ .{"a"}, .{ 0, 1 }, 2 },
             .{ .{"a"}, .{ 0, 2 }, 5 },
@@ -1002,7 +1027,6 @@ test "test change batch join" {
         },
     );
     try testChangeBatchJoin(
-        a,
         .{
             .{ .{"a"}, .{ 0, 1 }, 2 },
             .{ .{"b"}, .{ 0, 2 }, 5 },
@@ -1026,7 +1050,6 @@ test "test change batch join" {
             .{ .{"e"}, .{0}, 1 },
         };
         try testChangeBatchJoin(
-            a,
             changes,
             changes,
             1,
@@ -1048,7 +1071,6 @@ test "test change batch join" {
             .{ .{ "e", "e" }, .{0}, 1 },
         };
         try testChangeBatchJoin(
-            a,
             changes,
             changes,
             1,
@@ -1067,7 +1089,6 @@ test "test change batch join" {
             },
         );
         try testChangeBatchJoin(
-            a,
             changes,
             changes,
             2,
@@ -1083,16 +1104,19 @@ test "test change batch join" {
 }
 
 pub fn testIndexGetCountForRowAsOf(
-    allocator: *std.mem.Allocator,
     anon_change_batches: anytype,
     anon_row: anytype,
     anon_timestamp: anytype,
     expected_count: isize,
 ) !void {
     var index = dida.core.Index.init(allocator);
+    defer index.deinit();
     const change_batches = dida.sugar.coerceAnonTo(allocator, []dida.core.ChangeBatch, anon_change_batches);
+    defer allocator.free(change_batches);
     const row = dida.sugar.coerceAnonTo(allocator, dida.core.Row, anon_row);
+    defer row.deinit(allocator);
     const timestamp = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_timestamp);
+    defer timestamp.deinit(allocator);
     for (change_batches) |change_batch| {
         try index.addChangeBatch(change_batch);
     }
@@ -1101,9 +1125,6 @@ pub fn testIndexGetCountForRowAsOf(
 }
 
 test "test index get count for row as of" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = &arena.allocator;
     const changes = .{
         .{
             .{ .{"a"}, .{1}, 1 },
@@ -1137,15 +1158,15 @@ test "test index get count for row as of" {
             .{ .{"o"}, .{0}, 1 },
         },
     };
-    try testIndexGetCountForRowAsOf(a, changes, .{"a"}, .{0}, 1);
-    try testIndexGetCountForRowAsOf(a, changes, .{"a"}, .{1}, 2);
-    try testIndexGetCountForRowAsOf(a, changes, .{"a"}, .{2}, 4);
-    try testIndexGetCountForRowAsOf(a, changes, .{"a"}, .{3}, 4);
-    try testIndexGetCountForRowAsOf(a, changes, .{"c"}, .{0}, 3);
-    try testIndexGetCountForRowAsOf(a, changes, .{"c"}, .{1}, 0);
-    try testIndexGetCountForRowAsOf(a, changes, .{"h"}, .{0}, 0);
-    try testIndexGetCountForRowAsOf(a, changes, .{"h"}, .{3}, 1);
-    try testIndexGetCountForRowAsOf(a, changes, .{"z"}, .{3}, 0);
+    try testIndexGetCountForRowAsOf(changes, .{"a"}, .{0}, 1);
+    try testIndexGetCountForRowAsOf(changes, .{"a"}, .{1}, 2);
+    try testIndexGetCountForRowAsOf(changes, .{"a"}, .{2}, 4);
+    try testIndexGetCountForRowAsOf(changes, .{"a"}, .{3}, 4);
+    try testIndexGetCountForRowAsOf(changes, .{"c"}, .{0}, 3);
+    try testIndexGetCountForRowAsOf(changes, .{"c"}, .{1}, 0);
+    try testIndexGetCountForRowAsOf(changes, .{"h"}, .{0}, 0);
+    try testIndexGetCountForRowAsOf(changes, .{"h"}, .{3}, 1);
+    try testIndexGetCountForRowAsOf(changes, .{"z"}, .{3}, 0);
 }
 
 // TODO:

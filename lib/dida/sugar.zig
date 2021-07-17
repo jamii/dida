@@ -300,6 +300,7 @@ pub fn coerceAnonTo(allocator: *Allocator, comptime T: type, anon: anytype) T {
         return slice;
     } else {
         switch (T) {
+            u8 => return anon,
             dida.core.Timestamp => {
                 return .{ .coords = coerceAnonTo(allocator, []usize, anon) };
             },
@@ -312,6 +313,7 @@ pub fn coerceAnonTo(allocator: *Allocator, comptime T: type, anon: anytype) T {
             },
             ?dida.core.ChangeBatch => {
                 const changes = coerceAnonTo(allocator, []dida.core.Change, anon);
+                defer allocator.free(changes);
                 var builder = dida.core.ChangeBatchBuilder.init(allocator);
                 assert_ok(builder.changes.appendSlice(changes));
                 return assert_ok(builder.finishAndReset());
@@ -325,7 +327,7 @@ pub fn coerceAnonTo(allocator: *Allocator, comptime T: type, anon: anytype) T {
             dida.core.Value => {
                 switch (@typeInfo(@TypeOf(anon))) {
                     .Int => return .{ .Number = anon },
-                    .Pointer => return .{ .String = anon },
+                    .Pointer => return .{ .String = coerceAnonTo(allocator, []const u8, anon) },
                     else => compileError("Don't know how to coerce {} to Value", .{@TypeOf(anon)}),
                 }
             },

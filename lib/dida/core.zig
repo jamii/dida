@@ -1,6 +1,9 @@
 //! The core of dida handles all the actual computation.
 //! It exposes an api that is maximally flexible but also verbose and error-prone.
 //! See ./sugar.zig for a friendlier layer on top of the core.
+//!
+//! Assume that all struct parameters are owned unless otherwise stated.
+//! Assume all function arguments are borrowed unless otherwise stated.
 
 usingnamespace @import("./common.zig");
 
@@ -9,15 +12,42 @@ usingnamespace @import("./common.zig");
 // TODO This will eventually be replaced by raw bytes plus an optional type tag, so that users of dida can use whatever values and serde scheme they want.
 pub const Row = struct {
     values: []const Value,
+
+    pub fn deinit(self: Row, allocator: *Allocator) void {
+        for (self.values) |value| value.deinit(allocator);
+        allocator.free(self.values);
+    }
+
+    pub fn clone(self: Row, allocator: *Allocator) !Row {
+        const values = try std.mem.dupe(allocator, Value, self.values);
+        for (values) |*value| value.* = try value.clone(allocator);
+        return Row{ .values = values };
+    }
 };
+
 pub const Value = union(enum) {
     String: []const u8,
     Number: f64,
+
+    pub fn deinit(self: Value, allocator: *Allocator) void {
+        switch (self) {
+            .String => |string| allocator.free(string),
+            .Number => {},
+        }
+    }
+
+    pub fn clone(self: Value, allocator: *Allocator) !Value {
+        return switch (self) {
+            .String => |string| .{ .String = try std.mem.dupe(allocator, u8, string) },
+            .Number => self,
+        };
+    }
 };
 
 /// A [bag](https://en.wikipedia.org/wiki/Multiset) of rows.
 /// The dataflow is a graph of operations, each of which takes one or more bags of rows as inputs and produces a bag of rows as outputs.
 pub const Bag = struct {
+    /// Rows are all borrowed.
     // TODO This should probably be usize? Can it ever be temporarily negative?
     rows: DeepHashMap(Row, isize),
 
@@ -25,6 +55,11 @@ pub const Bag = struct {
         return .{
             .rows = DeepHashMap(Row, isize).init(allocator),
         };
+    }
+
+    pub fn deinit(self: *Bag) void {
+        // rows are all borrowed so no need to free them
+        self.rows.deinit();
     }
 
     pub fn update(self: *Bag, row: Row, diff: isize) !void {
@@ -62,6 +97,14 @@ pub const Timestamp = struct {
         var coords = try allocator.alloc(usize, num_coords);
         for (coords) |*coord| coord.* = 0;
         return Timestamp{ .coords = coords };
+    }
+
+    pub fn deinit(self: Timestamp, allocator: *Allocator) void {
+        allocator.free(self.coords);
+    }
+
+    pub fn clone(self: Timestamp, allocator: *Allocator) !Timestamp {
+        return Timestamp{ .coords = try std.mem.dupe(allocator, usize, self.coords) };
     }
 
     pub fn pushCoord(self: Timestamp, allocator: *Allocator) !Timestamp {
@@ -104,17 +147,6 @@ pub const Timestamp = struct {
         return .none;
     }
 
-    /// Returns the earliest timestamp that is greater than both the inputs (in the causal ordering).
-    pub fn leastUpperBound(allocator: *Allocator, self: Timestamp, other: Timestamp) !Timestamp {
-        assert(self.coords.len == other.coords.len, "Tried to compute leastUpperBound of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
-        var output_coords = try allocator.alloc(usize, self.coords.len);
-        for (self.coords) |self_coord, i| {
-            const other_coord = other.coords[i];
-            output_coords[i] = max(self_coord, other_coord);
-        }
-        return Timestamp{ .coords = output_coords };
-    }
-
     /// A total ordering on timestamps that is compatible with the causal order.
     /// ie If `a.causalOrder(b) != .none` then `a.causalOrder(b) == a.lexicalOrder(b)`.
     /// This is useful if you want to sort Timestamps by causal order - standard sorting algorithms don't always work well on partial orders.
@@ -130,13 +162,24 @@ pub const Timestamp = struct {
         }
         return .eq;
     }
+
+    /// Returns the earliest timestamp that is greater than both the inputs (in the causal ordering).
+    pub fn leastUpperBound(allocator: *Allocator, self: Timestamp, other: Timestamp) !Timestamp {
+        assert(self.coords.len == other.coords.len, "Tried to compute leastUpperBound of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
+        var output_coords = try allocator.alloc(usize, self.coords.len);
+        for (self.coords) |self_coord, i| {
+            const other_coord = other.coords[i];
+            output_coords[i] = max(self_coord, other_coord);
+        }
+        return Timestamp{ .coords = output_coords };
+    }
 };
 
 /// A frontier represents the earliest timestamps in some set of timestamps (by causal order).
 /// It's used to track progress in the dataflow and also to summarize the contents of a change batch.
 pub const Frontier = struct {
     allocator: *Allocator,
-    // Invariant: timestamps don't overlap - for any two timestamps t1 and t2 in timestamps `t1.causalOrder(t2) == .none`
+    /// Invariant: timestamps don't overlap - for any two timestamps t1 and t2 in timestamps `t1.causalOrder(t2) == .none`
     timestamps: DeepHashSet(Timestamp),
 
     pub fn init(allocator: *Allocator) Frontier {
@@ -144,6 +187,16 @@ pub const Frontier = struct {
             .allocator = allocator,
             .timestamps = DeepHashSet(Timestamp).init(allocator),
         };
+    }
+
+    pub fn deinit(self: *Frontier) void {
+        {
+            var iter = self.timestamps.iterator();
+            while (iter.next()) |entry| {
+                entry.key_ptr.deinit(self.allocator);
+            }
+        }
+        self.timestamps.deinit();
     }
 
     /// Compares `timestamp` to `self.timestamps`.
@@ -184,11 +237,11 @@ pub const Frontier = struct {
             }
         }
         // If we got this far, timestamp is being added to the frontier and might also be replacing some other timestamps that are currently on the frontier
-        for (changes_into.items) |change| {
-            _ = self.timestamps.remove(change.timestamp);
+        for (changes_into.items) |frontier_change| {
+            _ = self.timestamps.remove(frontier_change.timestamp);
         }
-        try changes_into.append(.{ .timestamp = timestamp, .diff = 1 });
-        try self.timestamps.put(timestamp, {});
+        try changes_into.append(.{ .timestamp = try timestamp.clone(self.allocator), .diff = 1 });
+        try self.timestamps.put(try timestamp.clone(self.allocator), {});
     }
 };
 
@@ -208,21 +261,40 @@ pub const SupportedFrontier = struct {
         };
     }
 
+    pub fn deinit(self: *SupportedFrontier) void {
+        {
+            var iter = self.support.iterator();
+            while (iter.next()) |entry| entry.key_ptr.deinit(self.allocator);
+        }
+        self.support.deinit();
+        self.frontier.deinit();
+    }
+
     /// Change the count of `timestamp` by `diff`.
     /// Reports any changes to the frontier into `changes_into`.
+    /// Changes are owned by the caller.
     pub fn update(self: *SupportedFrontier, timestamp: Timestamp, diff: isize, changes_into: *ArrayList(FrontierChange)) !void {
-        const support_entry = try self.support.getOrPutValue(timestamp, 0);
+        const support_entry = try self.support.getOrPut(timestamp);
+        if (!support_entry.found_existing) {
+            support_entry.key_ptr.* = try support_entry.key_ptr.clone(self.allocator);
+            support_entry.value_ptr.* = 0;
+        }
         support_entry.value_ptr.* = @intCast(usize, @intCast(isize, support_entry.value_ptr.*) + diff);
 
         if (support_entry.value_ptr.* == 0) {
             // Timestamp was just removed, might have been in frontier
-            _ = self.support.remove(timestamp);
-            if (self.frontier.timestamps.remove(timestamp)) {
+            if (self.support.fetchRemove(timestamp)) |remove_entry| {
+                remove_entry.key.deinit(self.allocator);
+            }
+            if (self.frontier.timestamps.fetchRemove(timestamp)) |remove_entry| {
+                remove_entry.key.deinit(self.allocator);
+
                 // Removed this timestamp from frontier
-                try changes_into.append(.{ .timestamp = timestamp, .diff = -1 });
+                try changes_into.append(.{ .timestamp = try timestamp.clone(self.allocator), .diff = -1 });
 
                 // Find timestamps in support that might now be on the frontier
                 var candidates = ArrayList(Timestamp).init(self.allocator);
+                defer candidates.deinit();
                 var iter = self.support.iterator();
                 while (iter.next()) |entry| {
                     if (timestamp.causalOrder(entry.key_ptr.*) == .lt)
@@ -237,8 +309,8 @@ pub const SupportedFrontier = struct {
                 }.lessThan);
                 for (candidates.items) |candidate| {
                     if (self.frontier.causalOrder(candidate) == .none) {
-                        try self.frontier.timestamps.put(candidate, {});
-                        try changes_into.append(.{ .timestamp = candidate, .diff = 1 });
+                        try self.frontier.timestamps.put(try candidate.clone(self.allocator), {});
+                        try changes_into.append(.{ .timestamp = try candidate.clone(self.allocator), .diff = 1 });
                     }
                 }
             }
@@ -248,11 +320,12 @@ pub const SupportedFrontier = struct {
             // Timestamp was just added, might be in frontier
             if (self.frontier.causalOrder(timestamp) != .lt) {
                 // Add to frontier
-                try self.frontier.timestamps.put(timestamp, {});
-                try changes_into.append(.{ .timestamp = timestamp, .diff = 1 });
+                try self.frontier.timestamps.put(try timestamp.clone(self.allocator), {});
+                try changes_into.append(.{ .timestamp = try timestamp.clone(self.allocator), .diff = 1 });
 
                 // Remove any other timestamp that is greater than the new timestamp
                 var to_remove = ArrayList(Timestamp).init(self.allocator);
+                defer to_remove.deinit();
                 var iter = self.frontier.timestamps.iterator();
                 while (iter.next()) |frontier_entry| {
                     if (frontier_entry.key_ptr.causalOrder(timestamp) == .gt)
@@ -271,6 +344,10 @@ pub const SupportedFrontier = struct {
 pub const FrontierChange = struct {
     timestamp: Timestamp,
     diff: isize,
+
+    pub fn deinit(self: FrontierChange, allocator: *Allocator) void {
+        self.timestamp.deinit(allocator);
+    }
 };
 
 /// Represents a change to some bag in the dataflow.
@@ -279,6 +356,11 @@ pub const Change = struct {
     row: Row,
     timestamp: Timestamp,
     diff: isize,
+
+    pub fn deinit(self: Change, allocator: *Allocator) void {
+        self.row.deinit(allocator);
+        self.timestamp.deinit(allocator);
+    }
 };
 
 /// A batch of changes, conveniently pre-sorted and de-duplicated.
@@ -289,6 +371,12 @@ pub const ChangeBatch = struct {
     // Invariant: sorted by row/timestamp
     // Invariant: no two changes with same row/timestamp
     changes: []Change,
+
+    pub fn deinit(self: *ChangeBatch, allocator: *Allocator) void {
+        for (self.changes) |change| change.deinit(allocator);
+        allocator.free(self.changes);
+        self.lower_bound.deinit();
+    }
 
     /// Find the first row after `from` that starts with `row[0..key_columns]` or, if there is no such row, the position where it would be.
     /// IE returns `ix` such that:
@@ -412,13 +500,15 @@ pub const ChangeBatch = struct {
                         while (ix_other < ix_other_end) : (ix_other += 1) {
                             const change_self = self.changes[ix_self];
                             const change_other = other.changes[ix_other];
+                            var values = try std.mem.concat(into_builder.allocator, Value, &[_][]const Value{
+                                change_self.row.values,
+                                change_other.row.values[key_columns..],
+                            });
+                            for (values) |*value| {
+                                value.* = try value.clone(into_builder.allocator);
+                            }
                             try into_builder.changes.append(.{
-                                .row = .{
-                                    .values = try std.mem.concat(into_builder.allocator, Value, &[_][]const Value{
-                                        change_self.row.values,
-                                        change_other.row.values[key_columns..],
-                                    }),
-                                },
+                                .row = .{ .values = values },
                                 .timestamp = try Timestamp.leastUpperBound(into_builder.allocator, change_self.timestamp, change_other.timestamp),
                                 .diff = change_self.diff * change_other.diff,
                             });
@@ -450,6 +540,11 @@ pub const ChangeBatchBuilder = struct {
         };
     }
 
+    pub fn deinit(self: *ChangeBatchBuilder) void {
+        for (self.changes.items) |*change| change.deinit(self.allocator);
+        self.changes.deinit();
+    }
+
     /// Produce a change batch.
     /// If the batch would have been empty, return null instead.
     /// Resets `self` so that it can be used again.
@@ -468,21 +563,31 @@ pub const ChangeBatchBuilder = struct {
             const prev_change = &self.changes.items[prev_i];
             if (dida.meta.deepEqual(prev_change.row, change.row) and dida.meta.deepEqual(prev_change.timestamp, change.timestamp)) {
                 prev_change.diff += change.diff;
+                change.deinit(self.allocator);
             } else {
                 if (prev_change.diff != 0) {
                     prev_i += 1;
+                } else {
+                    prev_change.deinit(self.allocator);
                 }
                 self.changes.items[prev_i] = change;
             }
         }
-        if (self.changes.items[prev_i].diff != 0) prev_i += 1;
-        self.changes.shrinkAndFree(prev_i);
+        if (self.changes.items[prev_i].diff != 0) {
+            prev_i += 1;
+        } else {
+            self.changes.items[prev_i].deinit(self.allocator);
+        }
+        try self.changes.resize(prev_i);
         if (self.changes.items.len == 0) return null;
 
         var lower_bound = Frontier.init(self.allocator);
+        var changes_into = ArrayList(FrontierChange).init(self.allocator);
+        defer changes_into.deinit();
         for (self.changes.items) |change| {
-            var changes_into = ArrayList(FrontierChange).init(self.allocator);
             try lower_bound.move(.Earlier, change.timestamp, &changes_into);
+            for (changes_into.items) |frontier_change| frontier_change.deinit(self.allocator);
+            try changes_into.resize(0);
         }
 
         return ChangeBatch{
@@ -506,15 +611,30 @@ pub const Index = struct {
         };
     }
 
+    pub fn deinit(self: *Index) void {
+        for (self.change_batches.items) |*change_batch| change_batch.deinit(self.allocator);
+        self.change_batches.deinit();
+    }
+
+    /// Takes ownership of `change_batch`
     // TODO merge incrementally to avoid latency spikes
     pub fn addChangeBatch(self: *Index, change_batch: ChangeBatch) !void {
         try self.change_batches.append(change_batch);
         while (true) {
             const len = self.change_batches.items.len;
             if (len <= 1 or @divFloor(self.change_batches.items[len - 2].changes.len, 2) >= self.change_batches.items[len - 1].changes.len) break;
-            const batch_a = self.change_batches.pop();
-            const batch_b = self.change_batches.pop();
+            var batch_a = self.change_batches.pop();
+            defer {
+                batch_a.lower_bound.deinit();
+                self.allocator.free(batch_a.changes);
+            }
+            var batch_b = self.change_batches.pop();
+            defer {
+                batch_b.lower_bound.deinit();
+                self.allocator.free(batch_b.changes);
+            }
             var builder = ChangeBatchBuilder.init(self.allocator);
+            defer builder.deinit();
             try builder.changes.ensureTotalCapacity(batch_a.changes.len + batch_b.changes.len);
             try builder.changes.appendSlice(batch_a.changes);
             try builder.changes.appendSlice(batch_b.changes);
@@ -546,6 +666,7 @@ pub const Index = struct {
     }
 
     /// Appends every change where `row.values[0..key_columns] == change.row.values[0..key_columns]` into `into_changes`.
+    /// Changes are borrowed from the index.
     pub fn getChangesForKey(self: *Index, row: Row, key_columns: usize, into_changes: *ArrayList(Change)) !void {
         for (self.change_batches.items) |change_batch| {
             var start_ix = change_batch.seekRowStart(0, row, key_columns);
@@ -787,6 +908,59 @@ pub const NodeState = union(enum) {
         };
     }
 
+    pub fn deinit(self: *NodeState, allocator: *Allocator) void {
+        switch (self.*) {
+            .Input => |*input| {
+                input.frontier.deinit();
+                input.unflushed_changes.deinit();
+            },
+            .Index => |*index| {
+                index.index.deinit();
+                for (index.pending_changes.items) |*change| change.deinit(allocator);
+                index.pending_changes.deinit();
+            },
+            .Output => |*output| {
+                for (output.unpopped_change_batches.items) |*change_batch| change_batch.deinit(allocator);
+                output.unpopped_change_batches.deinit();
+            },
+            .Distinct => |*distinct| {
+                distinct.index.deinit();
+                {
+                    var iter = distinct.pending_corrections.iterator();
+                    while (iter.next()) |entry| {
+                        entry.key_ptr.deinit(allocator);
+                        {
+                            var value_iter = entry.value_ptr.iterator();
+                            while (value_iter.next()) |value_entry| {
+                                value_entry.key_ptr.deinit(allocator);
+                            }
+                        }
+                        entry.value_ptr.deinit();
+                    }
+                }
+                distinct.pending_corrections.deinit();
+            },
+            .Reduce => |*reduce| {
+                reduce.index.deinit();
+                {
+                    var iter = reduce.pending_corrections.iterator();
+                    while (iter.next()) |entry| {
+                        entry.key_ptr.deinit(allocator);
+                        {
+                            var value_iter = entry.value_ptr.iterator();
+                            while (value_iter.next()) |value_entry| {
+                                value_entry.key_ptr.deinit(allocator);
+                            }
+                        }
+                        entry.value_ptr.deinit();
+                    }
+                }
+                reduce.pending_corrections.deinit();
+            },
+            .Map, .Join, .TimestampPush, .TimestampIncrement, .TimestampPop, .Union => {},
+        }
+    }
+
     pub fn getIndex(self: *NodeState) ?*Index {
         return switch (self.*) {
             .Index => |*state| &state.index,
@@ -867,6 +1041,15 @@ pub const Graph = struct {
         try self.validate();
 
         return self;
+    }
+
+    pub fn deinit(self: Graph) void {
+        for (self.downstream_node_inputs) |downstream_node_inputs| self.allocator.free(downstream_node_inputs);
+        self.allocator.free(self.downstream_node_inputs);
+        self.allocator.free(self.subgraph_parents);
+        for (self.node_subgraphs) |node_subgraphs| self.allocator.free(node_subgraphs);
+        self.allocator.free(self.node_subgraphs);
+        self.allocator.free(self.node_specs);
     }
 
     /// Assert that the graph obeys all the constraints required to make the progress tracking algorithm work.
@@ -997,6 +1180,12 @@ pub const GraphBuilder = struct {
         };
     }
 
+    pub fn deinit(self: *GraphBuilder) void {
+        self.subgraph_parents.deinit();
+        self.node_subgraphs.deinit();
+        self.node_specs.deinit();
+    }
+
     pub fn addSubgraph(self: *GraphBuilder, parent: Subgraph) !Subgraph {
         try self.subgraph_parents.append(parent);
         return Subgraph{ .id = self.subgraph_parents.items.len };
@@ -1034,6 +1223,7 @@ pub const GraphBuilder = struct {
 /// In a multi-threaded dataflow (TODO) there will be one shard per thread.
 pub const Shard = struct {
     allocator: *Allocator,
+    /// Borrowed from caller of init.
     graph: *const Graph,
     /// For each node, the internal state of that node.
     node_states: []NodeState,
@@ -1053,8 +1243,14 @@ pub const Shard = struct {
 
     const Pointstamp = struct {
         node_input: NodeInput,
+        /// Borrowed from self.graph
         subgraphs: []const Subgraph,
+        /// Owned
         timestamp: Timestamp,
+
+        pub fn deinit(self: Pointstamp, allocator: *Allocator) void {
+            self.timestamp.deinit(allocator);
+        }
     };
 
     pub fn init(allocator: *Allocator, graph: *const Graph) !Shard {
@@ -1084,12 +1280,31 @@ pub const Shard = struct {
             if (node_spec == .Input) {
                 const timestamp = try Timestamp.initLeast(allocator, graph.node_subgraphs[node_id].len);
                 try self.node_states[node_id].Input.frontier.timestamps.put(timestamp, {});
-                _ = try self.applyFrontierUpdate(.{ .id = node_id }, timestamp, 1);
+                _ = try self.applyFrontierUpdate(.{ .id = node_id }, try timestamp.clone(self.allocator), 1);
             }
         }
         while (self.hasWork()) try self.doWork();
 
         return self;
+    }
+
+    pub fn deinit(self: *Shard) void {
+        {
+            var iter = self.unprocessed_frontier_updates.iterator();
+            while (iter.next()) |entry| {
+                entry.key_ptr.deinit(self.allocator);
+            }
+        }
+        self.unprocessed_frontier_updates.deinit();
+        for (self.unprocessed_change_batches.items) |*change_batch_at_node_input| {
+            change_batch_at_node_input.change_batch.deinit(self.allocator);
+        }
+        self.unprocessed_change_batches.deinit();
+        for (self.node_frontiers) |*node_frontier| node_frontier.deinit();
+        self.allocator.free(self.node_frontiers);
+        for (self.node_states) |*node_state| node_state.deinit(self.allocator);
+        self.allocator.free(self.node_states);
+        // self.graph is borrowed
     }
 
     /// Add a new change to an input node.
@@ -1141,14 +1356,16 @@ pub const Shard = struct {
             }
         }
 
-        for (self.graph.downstream_node_inputs[from_node.id]) |to_node_input| {
+        var output_change_batch = change_batch;
+        for (self.graph.downstream_node_inputs[from_node.id]) |i, to_node_input| {
+            if (i != 0) output_change_batch = try output_change_batch.clone(self.allocator);
             try self.unprocessed_change_batches.append(.{
                 .change_batch = change_batch,
                 .node_input = to_node_input,
             });
             var iter = change_batch.lower_bound.timestamps.iterator();
             while (iter.next()) |entry| {
-                try self.queueFrontierUpdate(to_node_input, entry.key_ptr.*, 1);
+                try self.queueFrontierUpdate(to_node_input, try entry.key_ptr.clone(self.allocator), 1);
             }
         }
     }
@@ -1167,7 +1384,7 @@ pub const Shard = struct {
         {
             var iter = change_batch.lower_bound.timestamps.iterator();
             while (iter.next()) |entry| {
-                try self.queueFrontierUpdate(node_input, entry.key_ptr.*, -1);
+                try self.queueFrontierUpdate(node_input, try entry.key_ptr.clone(self.allocator), -1);
             }
         }
 
@@ -1176,13 +1393,17 @@ pub const Shard = struct {
             .Map => |map| {
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 for (change_batch.changes) |change| {
-                    var output_change = change; // copy
-                    output_change.row = try map.mapper.map_fn(map.mapper, change.row);
-                    try output_change_batch_builder.changes.append(output_change);
+                    const output_row = try map.mapper.map_fn(map.mapper, change.row);
+                    try output_change_batch_builder.changes.append(.{
+                        .row = output_row,
+                        .timestamp = try change.timestamp.clone(self.allocator),
+                        .diff = change.diff,
+                    });
                 }
                 if (try output_change_batch_builder.finishAndReset()) |output_change_batch| {
                     try self.emitChangeBatch(node_input.node, output_change_batch);
                 }
+                change_batch.deinit(self.allocator);
             },
             .Index => {
                 // These won't be emitted until the frontier passes them
@@ -1193,9 +1414,11 @@ pub const Shard = struct {
                         "Index received a change that was behind its output frontier. Node {}, timestamp {}.",
                         .{ node, change.timestamp },
                     );
-                    _ = try self.applyFrontierUpdate(node, change.timestamp, 1);
+                    _ = try self.applyFrontierUpdate(node, try change.timestamp.clone(self.allocator), 1);
                 }
                 try node_state.Index.pending_changes.appendSlice(change_batch.changes);
+                change_batch.changes = &[0]Change{};
+                change_batch.deinit(self.allocator);
             },
             .Join => |join| {
                 const index = self.node_states[join.inputs[1 - node_input.input_ix].id].getIndex().?;
@@ -1213,6 +1436,7 @@ pub const Shard = struct {
                 if (try output_change_batch_builder.finishAndReset()) |output_change_batch| {
                     try self.emitChangeBatch(node_input.node, output_change_batch);
                 }
+                change_batch.deinit(self.allocator);
             },
             .Output => {
                 try node_state.Output.unpopped_change_batches.append(change_batch);
@@ -1220,31 +1444,43 @@ pub const Shard = struct {
             .TimestampPush => {
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 for (change_batch.changes) |change| {
-                    var output_change = change; // copy
-                    output_change.timestamp = try change.timestamp.pushCoord(self.allocator);
-                    try output_change_batch_builder.changes.append(output_change);
+                    const output_timestamp = try change.timestamp.pushCoord(self.allocator);
+                    try output_change_batch_builder.changes.append(.{
+                        .row = try change.row.clone(self.allocator),
+                        .timestamp = output_timestamp,
+                        .diff = change.diff,
+                    });
                 }
                 try self.emitChangeBatch(node_input.node, (try output_change_batch_builder.finishAndReset()).?);
+                change_batch.deinit(self.allocator);
             },
             .TimestampIncrement => {
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 for (change_batch.changes) |change| {
-                    var output_change = change; // copy
-                    output_change.timestamp = try change.timestamp.incrementCoord(self.allocator);
-                    try output_change_batch_builder.changes.append(output_change);
+                    const output_timestamp = try change.timestamp.incrementCoord(self.allocator);
+                    try output_change_batch_builder.changes.append(.{
+                        .row = try change.row.clone(self.allocator),
+                        .timestamp = output_timestamp,
+                        .diff = change.diff,
+                    });
                 }
                 try self.emitChangeBatch(node_input.node, (try output_change_batch_builder.finishAndReset()).?);
+                change_batch.deinit(self.allocator);
             },
             .TimestampPop => {
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 for (change_batch.changes) |change| {
-                    var output_change = change; // copy
-                    output_change.timestamp = try change.timestamp.popCoord(self.allocator);
-                    try output_change_batch_builder.changes.append(output_change);
+                    const output_timestamp = try change.timestamp.popCoord(self.allocator);
+                    try output_change_batch_builder.changes.append(.{
+                        .row = try change.row.clone(self.allocator),
+                        .timestamp = output_timestamp,
+                        .diff = change.diff,
+                    });
                 }
                 if (try output_change_batch_builder.finishAndReset()) |output_change_batch| {
                     try self.emitChangeBatch(node_input.node, output_change_batch);
                 }
+                change_batch.deinit(self.allocator);
             },
             .Union => {
                 // Pass straight through
@@ -1264,8 +1500,10 @@ pub const Shard = struct {
                         else => unreachable,
                     };
                     const timestamps_entry = try pending_corrections.getOrPut(key);
-                    if (!timestamps_entry.found_existing)
+                    if (!timestamps_entry.found_existing) {
+                        timestamps_entry.key_ptr.* = try timestamps_entry.key_ptr.clone(self.allocator);
                         timestamps_entry.value_ptr.* = DeepHashSet(Timestamp).init(self.allocator);
+                    }
                     const timestamps = timestamps_entry.value_ptr;
 
                     {
@@ -1274,9 +1512,10 @@ pub const Shard = struct {
 
                         // if was already pending, nothing more to do
                         if (old_entry != null) continue;
+                        old_entry.key_ptr.* = try old_entry.key_ptr.clone(self.allocator);
 
                         // otherwise, update frontier
-                        _ = try self.applyFrontierUpdate(node, change.timestamp, 1);
+                        _ = try self.applyFrontierUpdate(node, try change.timestamp.clone(self.allocator), 1);
                     }
 
                     // for any other pending timestamp on this row, leastUpperBound(change.timestamp, other_timestamp) is pending
@@ -1293,7 +1532,8 @@ pub const Shard = struct {
                     for (buffer.items) |timestamp| {
                         const old_entry = try timestamps.fetchPut(timestamp, {});
                         if (old_entry != null) continue;
-                        _ = try self.applyFrontierUpdate(node, timestamp, 1);
+                        old_entry.key_ptr.* = try old_entry.key_ptr.clone(self.allocator);
+                        _ = try self.applyFrontierUpdate(node, try timestamp.clone(self.allocator), 1);
                     }
                 }
             },
