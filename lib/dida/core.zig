@@ -8,32 +8,16 @@
 usingnamespace @import("./common.zig");
 
 /// The basic unit of data in dida.
-/// Every operation takes rows as inputs and produces rows as outputs.
-// TODO This will eventually be replaced by raw bytes plus an optional type tag, so that users of dida can use whatever values and serde scheme they want.
-pub const Row = struct {
-    values: []const Value,
-
-    pub fn deinit(self: Row, allocator: *Allocator) void {
-        for (self.values) |value| value.deinit(allocator);
-        allocator.free(self.values);
-    }
-
-    pub fn clone(self: Row, allocator: *Allocator) !Row {
-        const values = try std.mem.dupe(allocator, Value, self.values);
-        for (values) |*value| value.* = try value.clone(allocator);
-        return Row{ .values = values };
-    }
-};
-
 pub const Value = union(enum) {
     String: []const u8,
     Number: f64,
 
-    pub fn deinit(self: Value, allocator: *Allocator) void {
-        switch (self) {
+    pub fn deinit(self: *Value, allocator: *Allocator) void {
+        switch (self.*) {
             .String => |string| allocator.free(string),
             .Number => {},
         }
+        self.* = undefined;
     }
 
     pub fn clone(self: Value, allocator: *Allocator) !Value {
@@ -41,6 +25,28 @@ pub const Value = union(enum) {
             .String => |string| .{ .String = try std.mem.dupe(allocator, u8, string) },
             .Number => self,
         };
+    }
+};
+
+/// Every operation takes rows as inputs and produces rows as outputs.
+// TODO This will eventually be replaced by raw bytes plus an optional type tag, so that users of dida can use whatever values and serde scheme they want.
+pub const Row = struct {
+    values: []const Value,
+
+    pub fn deinit(self: *Row, allocator: *Allocator) void {
+        for (self.values) |_value| {
+            // can't deinit through []const
+            var value = _value;
+            value.deinit(allocator);
+        }
+        allocator.free(self.values);
+        self.* = undefined;
+    }
+
+    pub fn clone(self: Row, allocator: *Allocator) !Row {
+        const values = try std.mem.dupe(allocator, Value, self.values);
+        for (values) |*value| value.* = try value.clone(allocator);
+        return Row{ .values = values };
     }
 };
 
@@ -60,6 +66,7 @@ pub const Bag = struct {
     pub fn deinit(self: *Bag) void {
         // rows are all borrowed so no need to free them
         self.rows.deinit();
+        self.* = undefined;
     }
 
     pub fn update(self: *Bag, row: Row, diff: isize) !void {
@@ -99,8 +106,11 @@ pub const Timestamp = struct {
         return Timestamp{ .coords = coords };
     }
 
-    pub fn deinit(self: Timestamp, allocator: *Allocator) void {
+    pub fn deinit(self: *Timestamp, allocator: *Allocator) void {
+        std.debug.print("\n\n\n", .{});
+        std.debug.dumpCurrentStackTrace(null);
         allocator.free(self.coords);
+        self.* = undefined;
     }
 
     pub fn clone(self: Timestamp, allocator: *Allocator) !Timestamp {
@@ -197,6 +207,14 @@ pub const Frontier = struct {
             }
         }
         self.timestamps.deinit();
+        self.* = undefined;
+    }
+
+    pub fn clone(self: Frontier, allocator: *Allocator) !Frontier {
+        return Frontier{
+            .allocator = allocator,
+            .timestamps = try self.timestamps.cloneWithAllocator(allocator),
+        };
     }
 
     /// Compares `timestamp` to `self.timestamps`.
@@ -268,6 +286,7 @@ pub const SupportedFrontier = struct {
         }
         self.support.deinit();
         self.frontier.deinit();
+        self.* = undefined;
     }
 
     /// Change the count of `timestamp` by `diff`.
@@ -283,10 +302,10 @@ pub const SupportedFrontier = struct {
 
         if (support_entry.value_ptr.* == 0) {
             // Timestamp was just removed, might have been in frontier
-            if (self.support.fetchRemove(timestamp)) |remove_entry| {
+            if (self.support.fetchRemove(timestamp)) |*remove_entry| {
                 remove_entry.key.deinit(self.allocator);
             }
-            if (self.frontier.timestamps.fetchRemove(timestamp)) |remove_entry| {
+            if (self.frontier.timestamps.fetchRemove(timestamp)) |*remove_entry| {
                 remove_entry.key.deinit(self.allocator);
 
                 // Removed this timestamp from frontier
@@ -345,8 +364,9 @@ pub const FrontierChange = struct {
     timestamp: Timestamp,
     diff: isize,
 
-    pub fn deinit(self: FrontierChange, allocator: *Allocator) void {
+    pub fn deinit(self: *FrontierChange, allocator: *Allocator) void {
         self.timestamp.deinit(allocator);
+        self.* = undefined;
     }
 };
 
@@ -357,9 +377,18 @@ pub const Change = struct {
     timestamp: Timestamp,
     diff: isize,
 
-    pub fn deinit(self: Change, allocator: *Allocator) void {
+    pub fn deinit(self: *Change, allocator: *Allocator) void {
         self.row.deinit(allocator);
         self.timestamp.deinit(allocator);
+        self.* = undefined;
+    }
+
+    pub fn clone(self: Change, allocator: *Allocator) !Change {
+        return Change{
+            .row = try self.row.clone(allocator),
+            .timestamp = try self.timestamp.clone(allocator),
+            .diff = self.diff,
+        };
     }
 };
 
@@ -373,9 +402,19 @@ pub const ChangeBatch = struct {
     changes: []Change,
 
     pub fn deinit(self: *ChangeBatch, allocator: *Allocator) void {
-        for (self.changes) |change| change.deinit(allocator);
+        for (self.changes) |*change| change.deinit(allocator);
         allocator.free(self.changes);
         self.lower_bound.deinit();
+        self.* = undefined;
+    }
+
+    pub fn clone(self: ChangeBatch, allocator: *Allocator) !ChangeBatch {
+        var changes = try std.mem.dupe(allocator, Change, self.changes);
+        for (self.changes) |*change| change.* = try change.clone(allocator);
+        return ChangeBatch{
+            .lower_bound = try self.lower_bound.clone(allocator),
+            .changes = changes,
+        };
     }
 
     /// Find the first row after `from` that starts with `row[0..key_columns]` or, if there is no such row, the position where it would be.
@@ -543,6 +582,7 @@ pub const ChangeBatchBuilder = struct {
     pub fn deinit(self: *ChangeBatchBuilder) void {
         for (self.changes.items) |*change| change.deinit(self.allocator);
         self.changes.deinit();
+        self.* = undefined;
     }
 
     /// Produce a change batch.
@@ -559,7 +599,7 @@ pub const ChangeBatchBuilder = struct {
 
         // Coalesce changes with identical rows and timestamps
         var prev_i: usize = 0;
-        for (self.changes.items[1..]) |change| {
+        for (self.changes.items[1..]) |*change| {
             const prev_change = &self.changes.items[prev_i];
             if (dida.meta.deepEqual(prev_change.row, change.row) and dida.meta.deepEqual(prev_change.timestamp, change.timestamp)) {
                 prev_change.diff += change.diff;
@@ -570,7 +610,7 @@ pub const ChangeBatchBuilder = struct {
                 } else {
                     prev_change.deinit(self.allocator);
                 }
-                self.changes.items[prev_i] = change;
+                self.changes.items[prev_i] = change.*;
             }
         }
         if (self.changes.items[prev_i].diff != 0) {
@@ -585,8 +625,8 @@ pub const ChangeBatchBuilder = struct {
         var changes_into = ArrayList(FrontierChange).init(self.allocator);
         defer changes_into.deinit();
         for (self.changes.items) |change| {
-            try lower_bound.move(.Earlier, change.timestamp, &changes_into);
-            for (changes_into.items) |frontier_change| frontier_change.deinit(self.allocator);
+            try lower_bound.move(.Earlier, try change.timestamp.clone(self.allocator), &changes_into);
+            for (changes_into.items) |*frontier_change| frontier_change.deinit(self.allocator);
             try changes_into.resize(0);
         }
 
@@ -614,6 +654,7 @@ pub const Index = struct {
     pub fn deinit(self: *Index) void {
         for (self.change_batches.items) |*change_batch| change_batch.deinit(self.allocator);
         self.change_batches.deinit();
+        self.* = undefined;
     }
 
     /// Takes ownership of `change_batch`
@@ -959,6 +1000,7 @@ pub const NodeState = union(enum) {
             },
             .Map, .Join, .TimestampPush, .TimestampIncrement, .TimestampPop, .Union => {},
         }
+        self.* = undefined;
     }
 
     pub fn getIndex(self: *NodeState) ?*Index {
@@ -1043,13 +1085,14 @@ pub const Graph = struct {
         return self;
     }
 
-    pub fn deinit(self: Graph) void {
+    pub fn deinit(self: *Graph) void {
         for (self.downstream_node_inputs) |downstream_node_inputs| self.allocator.free(downstream_node_inputs);
         self.allocator.free(self.downstream_node_inputs);
         self.allocator.free(self.subgraph_parents);
         for (self.node_subgraphs) |node_subgraphs| self.allocator.free(node_subgraphs);
         self.allocator.free(self.node_subgraphs);
         self.allocator.free(self.node_specs);
+        self.* = undefined;
     }
 
     /// Assert that the graph obeys all the constraints required to make the progress tracking algorithm work.
@@ -1184,6 +1227,7 @@ pub const GraphBuilder = struct {
         self.subgraph_parents.deinit();
         self.node_subgraphs.deinit();
         self.node_specs.deinit();
+        self.* = undefined;
     }
 
     pub fn addSubgraph(self: *GraphBuilder, parent: Subgraph) !Subgraph {
@@ -1248,8 +1292,9 @@ pub const Shard = struct {
         /// Owned
         timestamp: Timestamp,
 
-        pub fn deinit(self: Pointstamp, allocator: *Allocator) void {
+        pub fn deinit(self: *Pointstamp, allocator: *Allocator) void {
             self.timestamp.deinit(allocator);
+            self.* = undefined;
         }
     };
 
@@ -1305,6 +1350,7 @@ pub const Shard = struct {
         for (self.node_states) |*node_state| node_state.deinit(self.allocator);
         self.allocator.free(self.node_states);
         // self.graph is borrowed
+        self.* = undefined;
     }
 
     /// Add a new change to an input node.
@@ -1337,7 +1383,7 @@ pub const Shard = struct {
         var changes = ArrayList(FrontierChange).init(self.allocator);
         try self.node_states[node.id].Input.frontier.move(.Later, timestamp, &changes);
         for (changes.items) |change| {
-            _ = try self.applyFrontierUpdate(node, change.timestamp, change.diff);
+            _ = try self.applyFrontierUpdate(node, try change.timestamp.clone(self.allocator), change.diff);
         }
     }
 
@@ -1357,7 +1403,7 @@ pub const Shard = struct {
         }
 
         var output_change_batch = change_batch;
-        for (self.graph.downstream_node_inputs[from_node.id]) |i, to_node_input| {
+        for (self.graph.downstream_node_inputs[from_node.id]) |to_node_input, i| {
             if (i != 0) output_change_batch = try output_change_batch.clone(self.allocator);
             try self.unprocessed_change_batches.append(.{
                 .change_batch = change_batch,
@@ -1374,7 +1420,7 @@ pub const Shard = struct {
     /// This may produce some new change batches at the output for `node_input.node`.
     fn processChangeBatch(self: *Shard) !void {
         const change_batch_at_node_input = self.unprocessed_change_batches.popOrNull() orelse return;
-        const change_batch = change_batch_at_node_input.change_batch;
+        var change_batch = change_batch_at_node_input.change_batch;
         const node_input = change_batch_at_node_input.node_input;
         const node = node_input.node;
         const node_spec = self.graph.node_specs[node.id];
@@ -1508,10 +1554,10 @@ pub const Shard = struct {
 
                     {
                         // change.timestamp is pending
-                        const old_entry = try timestamps.fetchPut(change.timestamp, {});
+                        const old_entry = try timestamps.getOrPut(change.timestamp);
 
                         // if was already pending, nothing more to do
-                        if (old_entry != null) continue;
+                        if (old_entry.found_existing) continue;
                         old_entry.key_ptr.* = try old_entry.key_ptr.clone(self.allocator);
 
                         // otherwise, update frontier
@@ -1530,8 +1576,8 @@ pub const Shard = struct {
                         try buffer.append(timestamp);
                     }
                     for (buffer.items) |timestamp| {
-                        const old_entry = try timestamps.fetchPut(timestamp, {});
-                        if (old_entry != null) continue;
+                        const old_entry = try timestamps.getOrPut(timestamp);
+                        if (old_entry.found_existing) continue;
                         old_entry.key_ptr.* = try old_entry.key_ptr.clone(self.allocator);
                         _ = try self.applyFrontierUpdate(node, try timestamp.clone(self.allocator), 1);
                     }
