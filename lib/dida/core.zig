@@ -107,8 +107,6 @@ pub const Timestamp = struct {
     }
 
     pub fn deinit(self: *Timestamp, allocator: *Allocator) void {
-        std.debug.print("\n\n\n", .{});
-        std.debug.dumpCurrentStackTrace(null);
         allocator.free(self.coords);
         self.* = undefined;
     }
@@ -211,18 +209,24 @@ pub const Frontier = struct {
     }
 
     pub fn clone(self: Frontier, allocator: *Allocator) !Frontier {
+        var timestamps = try self.timestamps.cloneWithAllocator(allocator);
+        var iter = timestamps.iterator();
+        while (iter.next()) |entry| {
+            entry.key_ptr.* = try entry.key_ptr.clone(allocator);
+        }
         return Frontier{
             .allocator = allocator,
-            .timestamps = try self.timestamps.cloneWithAllocator(allocator),
+            .timestamps = timestamps,
         };
     }
 
     /// Compares `timestamp` to `self.timestamps`.
-    /// Since the timestamps in the `self.timestamps` are always mututally incomparable, at most one of them will be comparable to `timestamp`.
     pub fn causalOrder(self: Frontier, timestamp: Timestamp) PartialOrder {
         var iter = self.timestamps.iterator();
         while (iter.next()) |entry| {
             const order = entry.key_ptr.causalOrder(timestamp);
+            // Since the timestamps in `self.timestamps` are always mututally incomparable, we can never have `t1 < timestamp < t2`.
+            // So it's safe to return as soon as we find some comparison.
             switch (order) {
                 .lt => return .lt,
                 .eq => return .eq,
@@ -625,7 +629,7 @@ pub const ChangeBatchBuilder = struct {
         var changes_into = ArrayList(FrontierChange).init(self.allocator);
         defer changes_into.deinit();
         for (self.changes.items) |change| {
-            try lower_bound.move(.Earlier, try change.timestamp.clone(self.allocator), &changes_into);
+            try lower_bound.move(.Earlier, change.timestamp, &changes_into);
             for (changes_into.items) |*frontier_change| frontier_change.deinit(self.allocator);
             try changes_into.resize(0);
         }
@@ -1289,7 +1293,6 @@ pub const Shard = struct {
         node_input: NodeInput,
         /// Borrowed from self.graph
         subgraphs: []const Subgraph,
-        /// Owned
         timestamp: Timestamp,
 
         pub fn deinit(self: *Pointstamp, allocator: *Allocator) void {
@@ -1388,6 +1391,7 @@ pub const Shard = struct {
     }
 
     /// Report that `from_node` produced `change_batch` as an output.
+    /// Takes ownership of `change_batch`.
     fn emitChangeBatch(self: *Shard, from_node: Node, change_batch: ChangeBatch) !void {
         // Check this is legal
         {
@@ -1405,19 +1409,18 @@ pub const Shard = struct {
         var output_change_batch = change_batch;
         for (self.graph.downstream_node_inputs[from_node.id]) |to_node_input, i| {
             if (i != 0) output_change_batch = try output_change_batch.clone(self.allocator);
+            var iter = output_change_batch.lower_bound.timestamps.iterator();
+            while (iter.next()) |entry| {
+                try self.queueFrontierUpdate(to_node_input, try entry.key_ptr.clone(self.allocator), 1);
+            }
             try self.unprocessed_change_batches.append(.{
                 .change_batch = change_batch,
                 .node_input = to_node_input,
             });
-            var iter = change_batch.lower_bound.timestamps.iterator();
-            while (iter.next()) |entry| {
-                try self.queueFrontierUpdate(to_node_input, try entry.key_ptr.clone(self.allocator), 1);
-            }
         }
     }
 
     /// Process one unprocessed change batch from the list.
-    /// This may produce some new change batches at the output for `node_input.node`.
     fn processChangeBatch(self: *Shard) !void {
         const change_batch_at_node_input = self.unprocessed_change_batches.popOrNull() orelse return;
         var change_batch = change_batch_at_node_input.change_batch;

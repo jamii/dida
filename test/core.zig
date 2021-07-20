@@ -1263,6 +1263,7 @@ test "test shard graph reach" {
     const bc = dida.core.Row{ .values = &[_]dida.core.Value{ .{ .String = "b" }, .{ .String = "c" } } };
     const bd = dida.core.Row{ .values = &[_]dida.core.Value{ .{ .String = "b" }, .{ .String = "d" } } };
     const ca = dida.core.Row{ .values = &[_]dida.core.Value{ .{ .String = "c" }, .{ .String = "a" } } };
+
     try shard.pushInput(edges, .{ .row = try ab.clone(allocator), .timestamp = try timestamp0.clone(allocator), .diff = 1 });
     try shard.pushInput(edges, .{ .row = try bc.clone(allocator), .timestamp = try timestamp0.clone(allocator), .diff = 1 });
     try shard.pushInput(edges, .{ .row = try bd.clone(allocator), .timestamp = try timestamp0.clone(allocator), .diff = 1 });
@@ -1270,7 +1271,7 @@ test "test shard graph reach" {
     try shard.pushInput(edges, .{ .row = try bc.clone(allocator), .timestamp = try timestamp1.clone(allocator), .diff = -1 });
     try shard.flushInput(edges);
 
-    try shard.advanceInput(edges, timestamp1);
+    try shard.advanceInput(edges, try timestamp1.clone(allocator));
     while (shard.hasWork()) {
         // dida.common.dump(shard);
         try shard.doWork();
@@ -1285,7 +1286,7 @@ test "test shard graph reach" {
 
     std.debug.print("Advancing!\n", .{});
 
-    try shard.advanceInput(edges, timestamp2);
+    try shard.advanceInput(edges, try timestamp2.clone(allocator));
     while (shard.hasWork()) {
         // dida.common.dump(shard);
         try shard.doWork();
