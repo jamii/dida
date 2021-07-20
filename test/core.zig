@@ -1185,8 +1185,8 @@ test "test shard graph reach" {
         .map_fn = (struct {
             fn swap(_: *dida.core.NodeSpec.MapSpec.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
                 var output_values = try allocator.alloc(dida.core.Value, 2);
-                output_values[0] = input.values[1];
-                output_values[1] = input.values[0];
+                output_values[0] = try input.values[1].clone(allocator);
+                output_values[1] = try input.values[0].clone(allocator);
                 return dida.core.Row{ .values = output_values };
             }
         }).swap,
@@ -1211,8 +1211,8 @@ test "test shard graph reach" {
         .map_fn = (struct {
             fn drop_middle(_: *dida.core.NodeSpec.MapSpec.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
                 var output_values = try allocator.alloc(dida.core.Value, 2);
-                output_values[0] = input.values[2];
-                output_values[1] = input.values[1];
+                output_values[0] = try input.values[2].clone(allocator);
+                output_values[1] = try input.values[1].clone(allocator);
                 return dida.core.Row{ .values = output_values };
             }
         }).drop_middle,

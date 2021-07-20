@@ -1411,10 +1411,10 @@ pub const Shard = struct {
             if (i != 0) output_change_batch = try output_change_batch.clone(self.allocator);
             var iter = output_change_batch.lower_bound.timestamps.iterator();
             while (iter.next()) |entry| {
-                try self.queueFrontierUpdate(to_node_input, try entry.key_ptr.clone(self.allocator), 1);
+                try self.queueFrontierUpdate(to_node_input, entry.key_ptr.*, 1);
             }
             try self.unprocessed_change_batches.append(.{
-                .change_batch = change_batch,
+                .change_batch = output_change_batch,
                 .node_input = to_node_input,
             });
         }
@@ -1433,7 +1433,7 @@ pub const Shard = struct {
         {
             var iter = change_batch.lower_bound.timestamps.iterator();
             while (iter.next()) |entry| {
-                try self.queueFrontierUpdate(node_input, try entry.key_ptr.clone(self.allocator), -1);
+                try self.queueFrontierUpdate(node_input, entry.key_ptr.*, -1);
             }
         }
 
@@ -1597,7 +1597,7 @@ pub const Shard = struct {
         var entry = try self.unprocessed_frontier_updates.getOrPutValue(.{
             .node_input = node_input,
             .subgraphs = self.graph.node_subgraphs[input_node.id],
-            .timestamp = timestamp,
+            .timestamp = try timestamp.clone(self.allocator),
         }, 0);
         entry.value_ptr.* += diff;
         _ = if (entry.value_ptr.* == 0) self.unprocessed_frontier_updates.remove(entry.key_ptr.*);
@@ -1607,11 +1607,13 @@ pub const Shard = struct {
     // TODO name is misleading, rename -> applyFrontierSupportChange
     fn applyFrontierUpdate(self: *Shard, node: Node, timestamp: Timestamp, diff: isize) !enum { Updated, NotUpdated } {
         var frontier_changes = ArrayList(FrontierChange).init(self.allocator);
+        defer frontier_changes.deinit();
         try self.node_frontiers[node.id].update(timestamp, diff, &frontier_changes);
-        for (frontier_changes.items) |frontier_change| {
+        for (frontier_changes.items) |*frontier_change| {
             for (self.graph.downstream_node_inputs[node.id]) |downstream_node_input| {
                 try self.queueFrontierUpdate(downstream_node_input, frontier_change.timestamp, frontier_change.diff);
             }
+            frontier_change.deinit(self.allocator);
         }
         return if (frontier_changes.items.len > 0) .Updated else .NotUpdated;
     }
@@ -1688,6 +1690,7 @@ pub const Shard = struct {
                 // Might be able to produce an output batch now that the frontier has moved later
                 var change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 var pending_changes = ArrayList(Change).init(self.allocator);
+                defer pending_changes.deinit();
                 const input_frontier = self.node_frontiers[node_spec.Index.input.id];
                 for (node_state.Index.pending_changes.items) |change| {
                     if (input_frontier.frontier.causalOrder(change.timestamp) == .gt) {
@@ -1696,9 +1699,9 @@ pub const Shard = struct {
                         try pending_changes.append(change);
                     }
                 }
-                node_state.Index.pending_changes = pending_changes;
+                std.mem.swap(ArrayList(Change), &node_state.Index.pending_changes, &pending_changes);
                 if (try change_batch_builder.finishAndReset()) |change_batch| {
-                    try node_state.Index.index.addChangeBatch(change_batch);
+                    try node_state.Index.index.addChangeBatch(try change_batch.clone(self.allocator));
                     try self.emitChangeBatch(node, change_batch);
                     for (change_batch.changes) |change| {
                         _ = try self.applyFrontierUpdate(node, change.timestamp, -1);
