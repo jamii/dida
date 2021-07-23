@@ -607,21 +607,13 @@ pub const ChangeBatchBuilder = struct {
             const prev_change = &self.changes.items[prev_i];
             if (dida.meta.deepEqual(prev_change.row, change.row) and dida.meta.deepEqual(prev_change.timestamp, change.timestamp)) {
                 prev_change.diff += change.diff;
-                change.deinit(self.allocator);
             } else {
-                if (prev_change.diff != 0) {
-                    prev_i += 1;
-                } else {
-                    prev_change.deinit(self.allocator);
-                }
-                self.changes.items[prev_i] = change.*;
+                if (prev_change.diff != 0) prev_i += 1;
+                std.mem.swap(Change, &self.changes.items[prev_i], change);
             }
         }
-        if (self.changes.items[prev_i].diff != 0) {
-            prev_i += 1;
-        } else {
-            self.changes.items[prev_i].deinit(self.allocator);
-        }
+        if (self.changes.items[prev_i].diff != 0) prev_i += 1;
+        for (self.changes.items[prev_i..]) |*change| change.deinit(self.allocator);
         try self.changes.resize(prev_i);
         if (self.changes.items.len == 0) return null;
 
@@ -1658,7 +1650,7 @@ pub const Shard = struct {
                     min_entry = entry;
             }
             const node = min_entry.key_ptr.node_input.node;
-            const input_timestamp = min_entry.key_ptr.timestamp;
+            var input_timestamp = min_entry.key_ptr.timestamp;
             const diff = min_entry.value_ptr.*;
             _ = self.unprocessed_frontier_updates.remove(min_entry.key_ptr.*);
 
@@ -1666,12 +1658,17 @@ pub const Shard = struct {
             try updated_nodes.put(node, {});
 
             // Work out how this node changes the timestamp
-            const output_timestamp = switch (self.graph.node_specs[node.id]) {
+            var output_timestamp = switch (self.graph.node_specs[node.id]) {
                 .TimestampPush => try input_timestamp.pushCoord(self.allocator),
                 .TimestampIncrement => try input_timestamp.incrementCoord(self.allocator),
                 .TimestampPop => try input_timestamp.popCoord(self.allocator),
                 else => input_timestamp,
             };
+            switch (self.graph.node_specs[node.id]) {
+                .TimestampPush, .TimestampIncrement, .TimestampPop => input_timestamp.deinit(self.allocator),
+                else => {},
+            }
+            defer output_timestamp.deinit(self.allocator);
 
             // Apply change to frontier
             const updated = try self.applyFrontierUpdate(node, output_timestamp, diff);
@@ -1716,8 +1713,15 @@ pub const Shard = struct {
                 const input_frontier = self.node_frontiers[input_node.id];
                 const input_index = self.node_states[input_node.id].getIndex().?;
                 const output_index = node_state.getIndex().?;
+
                 var change_batch_builder = ChangeBatchBuilder.init(self.allocator);
+                defer change_batch_builder.deinit();
+
                 var frontier_support_changes = ArrayList(FrontierChange).init(self.allocator);
+                defer {
+                    for (frontier_support_changes.items) |*frontier_support_change| frontier_support_change.deinit(self.allocator);
+                    frontier_support_changes.deinit();
+                }
 
                 const pending_corrections = switch (node_state.*) {
                     .Distinct => |*state| &state.pending_corrections,
@@ -1731,12 +1735,16 @@ pub const Shard = struct {
 
                     // Going to check any pending timestamp that is before the new input frontier
                     var timestamps_to_check = ArrayList(Timestamp).init(self.allocator);
+                    defer {
+                        for (timestamps_to_check.items) |*timestamp_to_check| timestamp_to_check.deinit(self.allocator);
+                        timestamps_to_check.deinit();
+                    }
                     {
                         var timestamp_iter = timestamps.iterator();
                         while (timestamp_iter.next()) |timestamp_entry| {
                             const timestamp = timestamp_entry.key_ptr.*;
                             if (input_frontier.frontier.causalOrder(timestamp) == .gt) {
-                                try timestamps_to_check.append(timestamp);
+                                try timestamps_to_check.append(try timestamp.clone(self.allocator));
                                 try frontier_support_changes.append(.{ .timestamp = timestamp, .diff = -1 });
                             }
                         }
@@ -1755,11 +1763,13 @@ pub const Shard = struct {
                     // Get past inputs for this key
                     // TODO a sorted iterator would be nicer for this
                     var input_changes = ArrayList(Change).init(self.allocator);
+                    defer input_changes.deinit();
                     try input_index.getChangesForKey(key, key.values.len, &input_changes);
 
                     // Figure out correction for each timestamp
                     // TODO instead of having these separate corrections, would be much nicer to just add them to the index and have it produce a change at the end
                     var new_output_changes = ArrayList(Change).init(self.allocator);
+                    defer new_output_changes.deinit();
                     for (timestamps_to_check.items) |timestamp_to_check| {
                         switch (node_spec) {
                             .Distinct => {
@@ -1783,8 +1793,8 @@ pub const Shard = struct {
                                 const diff = correct_output_count - output_count;
                                 if (diff != 0) {
                                     try new_output_changes.append(.{
-                                        .row = key,
-                                        .timestamp = timestamp_to_check,
+                                        .row = try key.clone(self.allocator),
+                                        .timestamp = try timestamp_to_check.clone(self.allocator),
                                         .diff = diff,
                                     });
                                 }
@@ -1799,6 +1809,7 @@ pub const Shard = struct {
 
                                 // Reduce fn might not be commutative, so it has to process changes in some well-defined order
                                 var sorted_input_changes = ArrayList(Change).init(self.allocator);
+                                defer sorted_input_changes.deinit();
                                 var input_bag_iter = input_bag.rows.iterator();
                                 while (input_bag_iter.next()) |input_bag_entry|
                                     try sorted_input_changes.append(.{
@@ -1813,19 +1824,22 @@ pub const Shard = struct {
                                 }).lessThan);
 
                                 // Calculate the correct reduced value
-                                var input_value = spec.init_value;
+                                var input_value = try spec.init_value.clone(self.allocator);
                                 for (sorted_input_changes.items) |input_change| {
                                     assert(
                                         input_change.diff > 0,
                                         "Reduce should never see negative input counts at any timestamp: {}",
                                         .{input_change},
                                     );
-                                    input_value = try spec.reducer.reduce_fn(spec.reducer, input_value, input_change.row, @intCast(usize, input_change.diff));
+                                    const new_input_value = try spec.reducer.reduce_fn(spec.reducer, input_value, input_change.row, @intCast(usize, input_change.diff));
+                                    input_value.deinit(self.allocator);
+                                    input_value = new_input_value;
                                 }
 
                                 // Cancel all previous outputs for this key
                                 // TODO if we don't coalesce these, we're going to generate a lot of junk that the builder has to clean up
                                 var output_changes = ArrayList(Change).init(self.allocator);
+                                defer output_changes.deinit();
                                 try output_index.getChangesForKey(key, key.values.len, &output_changes);
                                 for (new_output_changes.items) |output_change| {
                                     if (output_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
@@ -1833,21 +1847,21 @@ pub const Shard = struct {
                                 }
                                 for (output_changes.items) |output_change| {
                                     try new_output_changes.append(.{
-                                        .row = output_change.row,
-                                        .timestamp = timestamp_to_check,
+                                        .row = try output_change.row.clone(self.allocator),
+                                        .timestamp = try timestamp_to_check.clone(self.allocator),
                                         .diff = -output_change.diff,
                                     });
                                 }
 
                                 // Add the new output
+                                var values = try std.mem.concat(self.allocator, Value, &[_][]const Value{
+                                    key.values,
+                                    &[_]Value{input_value},
+                                });
+                                for (values[0..key.values.len]) |*value| value.* = try value.clone(self.allocator);
                                 try new_output_changes.append(.{
-                                    .row = Row{
-                                        .values = try std.mem.concat(self.allocator, Value, &[_][]const Value{
-                                            key.values,
-                                            &[_]Value{input_value},
-                                        }),
-                                    },
-                                    .timestamp = timestamp_to_check,
+                                    .row = Row{ .values = values },
+                                    .timestamp = try timestamp_to_check.clone(self.allocator),
                                     .diff = 1,
                                 });
                             },
@@ -1861,7 +1875,7 @@ pub const Shard = struct {
 
                 // Emit changes
                 if (try change_batch_builder.finishAndReset()) |change_batch| {
-                    try output_index.addChangeBatch(change_batch);
+                    try output_index.addChangeBatch(try change_batch.clone(self.allocator));
                     try self.emitChangeBatch(node, change_batch);
                 }
 
