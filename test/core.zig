@@ -15,9 +15,9 @@ fn testTimestampOrder(
     anon_b: anytype,
     order: dida.core.PartialOrder,
 ) !void {
-    const a = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_a);
+    var a = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_a);
     defer a.deinit(allocator);
-    const b = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_b);
+    var b = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_b);
     defer b.deinit(allocator);
     try std.testing.expectEqual(order, a.causalOrder(b));
     const reverse_order: dida.core.PartialOrder = switch (order) {
@@ -36,7 +36,7 @@ fn testTimestampOrder(
     if (order != .none) {
         try std.testing.expectEqual(total_order, a.lexicalOrder(b));
     }
-    const lub = try dida.core.Timestamp.leastUpperBound(allocator, a, b);
+    var lub = try dida.core.Timestamp.leastUpperBound(allocator, a, b);
     defer lub.deinit(allocator);
     try std.testing.expect(a.causalOrder(lub).isLessThanOrEqual());
     try std.testing.expect(b.causalOrder(lub).isLessThanOrEqual());
@@ -59,13 +59,13 @@ fn testTimestampLub(
     anon_b: anytype,
     anon_lub: anytype,
 ) !void {
-    const a = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_a);
+    var a = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_a);
     defer a.deinit(allocator);
-    const b = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_b);
+    var b = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_b);
     defer b.deinit(allocator);
-    const expected_lub = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_lub);
+    var expected_lub = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_lub);
     defer expected_lub.deinit(allocator);
-    const actual_lub = try dida.core.Timestamp.leastUpperBound(allocator, a, b);
+    var actual_lub = try dida.core.Timestamp.leastUpperBound(allocator, a, b);
     defer actual_lub.deinit(allocator);
     try std.testing.expectEqualSlices(usize, expected_lub.coords, actual_lub.coords);
 }
@@ -90,7 +90,7 @@ fn testChangeBatchBuilder(
     defer allocator.free(input_changes);
     const expected_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_expected_changes);
     defer {
-        for (expected_changes) |expected_change| expected_change.deinit(allocator);
+        for (expected_changes) |*expected_change| expected_change.deinit(allocator);
         allocator.free(expected_changes);
     }
     var builder = dida.core.ChangeBatchBuilder.init(allocator);
@@ -199,7 +199,7 @@ fn testFrontierMove(
 ) !void {
     const frontier_timestamps = dida.sugar.coerceAnonTo(allocator, []dida.core.Timestamp, anon_frontier);
     defer {
-        for (frontier_timestamps) |frontier_timestamp| frontier_timestamp.deinit(allocator);
+        for (frontier_timestamps) |*frontier_timestamp| frontier_timestamp.deinit(allocator);
         allocator.free(frontier_timestamps);
     }
     var frontier = dida.core.Frontier.init(allocator);
@@ -208,24 +208,24 @@ fn testFrontierMove(
     defer changes_into.deinit();
     for (frontier_timestamps) |frontier_timestamp| {
         try frontier.move(.Later, frontier_timestamp, &changes_into);
-        for (changes_into.items) |change| change.deinit(allocator);
+        for (changes_into.items) |*change| change.deinit(allocator);
         try changes_into.resize(0);
     }
-    const timestamp = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_timestamp);
+    var timestamp = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_timestamp);
     defer timestamp.deinit(allocator);
     const expected_frontier_timestamps = dida.sugar.coerceAnonTo(allocator, []dida.core.Timestamp, anon_expected_frontier);
     defer {
-        for (expected_frontier_timestamps) |expected_frontier_timestamp| expected_frontier_timestamp.deinit(allocator);
+        for (expected_frontier_timestamps) |*expected_frontier_timestamp| expected_frontier_timestamp.deinit(allocator);
         allocator.free(expected_frontier_timestamps);
     }
     const expected_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.FrontierChange, anon_expected_changes);
     defer {
-        for (expected_changes) |expected_change| expected_change.deinit(allocator);
+        for (expected_changes) |*expected_change| expected_change.deinit(allocator);
         allocator.free(expected_changes);
     }
     var actual_changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
     defer {
-        for (actual_changes_into.items) |change| change.deinit(allocator);
+        for (actual_changes_into.items) |*change| change.deinit(allocator);
         actual_changes_into.deinit();
     }
     try frontier.move(direction, timestamp, &actual_changes_into);
@@ -328,7 +328,7 @@ fn testFrontierOrder(
 ) !void {
     const frontier_timestamps = dida.sugar.coerceAnonTo(allocator, []dida.core.Timestamp, anon_frontier);
     defer {
-        for (frontier_timestamps) |frontier_timestamp| frontier_timestamp.deinit(allocator);
+        for (frontier_timestamps) |*frontier_timestamp| frontier_timestamp.deinit(allocator);
         allocator.free(frontier_timestamps);
     }
     var frontier = dida.core.Frontier.init(allocator);
@@ -337,10 +337,10 @@ fn testFrontierOrder(
     defer changes_into.deinit();
     for (frontier_timestamps) |frontier_timestamp| {
         try frontier.move(.Later, frontier_timestamp, &changes_into);
-        for (changes_into.items) |change| change.deinit(allocator);
+        for (changes_into.items) |*change| change.deinit(allocator);
         try changes_into.resize(0);
     }
-    const timestamp = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_timestamp);
+    var timestamp = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_timestamp);
     defer timestamp.deinit(allocator);
     try std.testing.expectEqual(expected_order, frontier.causalOrder(timestamp));
 }
@@ -413,7 +413,7 @@ fn testSupportFrontierUpdate(
 ) !void {
     const support = dida.sugar.coerceAnonTo(allocator, []dida.core.FrontierChange, anon_support);
     defer {
-        for (support) |frontier_change| frontier_change.deinit(allocator);
+        for (support) |*frontier_change| frontier_change.deinit(allocator);
         allocator.free(support);
     }
     var frontier = try dida.core.SupportedFrontier.init(allocator);
@@ -422,24 +422,24 @@ fn testSupportFrontierUpdate(
     defer changes_into.deinit();
     for (support) |change| {
         try frontier.update(change.timestamp, change.diff, &changes_into);
-        for (changes_into.items) |frontier_change| frontier_change.deinit(allocator);
+        for (changes_into.items) |*frontier_change| frontier_change.deinit(allocator);
         try changes_into.resize(0);
     }
-    const update = dida.sugar.coerceAnonTo(allocator, dida.core.FrontierChange, anon_update);
+    var update = dida.sugar.coerceAnonTo(allocator, dida.core.FrontierChange, anon_update);
     defer update.deinit(allocator);
     const expected_frontier_timestamps = dida.sugar.coerceAnonTo(allocator, []dida.core.Timestamp, anon_expected_frontier);
     defer {
-        for (expected_frontier_timestamps) |expected_frontier_timestamp| expected_frontier_timestamp.deinit(allocator);
+        for (expected_frontier_timestamps) |*expected_frontier_timestamp| expected_frontier_timestamp.deinit(allocator);
         allocator.free(expected_frontier_timestamps);
     }
     const expected_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.FrontierChange, anon_expected_changes);
     defer {
-        for (expected_changes) |expected_change| expected_change.deinit(allocator);
+        for (expected_changes) |*expected_change| expected_change.deinit(allocator);
         allocator.free(expected_changes);
     }
     var actual_changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
     defer {
-        for (actual_changes_into.items) |change| change.deinit(allocator);
+        for (actual_changes_into.items) |*change| change.deinit(allocator);
         actual_changes_into.deinit();
     }
     try frontier.update(update.timestamp, update.diff, &actual_changes_into);
@@ -567,7 +567,7 @@ pub fn testIndexAdd(
     const expected_changess = dida.sugar.coerceAnonTo(allocator, [][]dida.core.Change, anon_expected_changess);
     defer {
         for (expected_changess) |expected_changes| {
-            for (expected_changes) |expected_change| {
+            for (expected_changes) |*expected_change| {
                 expected_change.deinit(allocator);
             }
             allocator.free(expected_changes);
@@ -758,7 +758,7 @@ fn testChangeBatchSeekRowStart(
 ) !void {
     const changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_changes);
     defer allocator.free(changes);
-    const row = dida.sugar.coerceAnonTo(allocator, dida.core.Row, anon_row);
+    var row = dida.sugar.coerceAnonTo(allocator, dida.core.Row, anon_row);
     defer row.deinit(allocator);
 
     var builder = dida.core.ChangeBatchBuilder.init(allocator);
@@ -834,7 +834,7 @@ fn testChangeBatchSeekRowEnd(
 ) !void {
     const changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_changes);
     defer allocator.free(changes);
-    const row = dida.sugar.coerceAnonTo(allocator, dida.core.Row, anon_row);
+    var row = dida.sugar.coerceAnonTo(allocator, dida.core.Row, anon_row);
     defer row.deinit(allocator);
 
     var builder = dida.core.ChangeBatchBuilder.init(allocator);
@@ -953,7 +953,7 @@ fn testChangeBatchJoin(
     defer allocator.free(right_changes);
     const expected_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_expected_changes);
     defer {
-        for (expected_changes) |change| change.deinit(allocator);
+        for (expected_changes) |*change| change.deinit(allocator);
         allocator.free(expected_changes);
     }
 
@@ -1113,9 +1113,9 @@ pub fn testIndexGetCountForRowAsOf(
     defer index.deinit();
     const change_batches = dida.sugar.coerceAnonTo(allocator, []dida.core.ChangeBatch, anon_change_batches);
     defer allocator.free(change_batches);
-    const row = dida.sugar.coerceAnonTo(allocator, dida.core.Row, anon_row);
+    var row = dida.sugar.coerceAnonTo(allocator, dida.core.Row, anon_row);
     defer row.deinit(allocator);
-    const timestamp = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_timestamp);
+    var timestamp = dida.sugar.coerceAnonTo(allocator, dida.core.Timestamp, anon_timestamp);
     defer timestamp.deinit(allocator);
     for (change_batches) |change_batch| {
         try index.addChangeBatch(change_batch);
@@ -1277,10 +1277,10 @@ test "test shard graph reach" {
         try shard.doWork();
 
         while (shard.popOutput(reach_out)) |change_batch| {
-            dida.common.dump(change_batch);
+            //dida.common.dump(change_batch);
         }
         while (shard.popOutput(reach_summary_out)) |change_batch| {
-            dida.common.dump(change_batch);
+            //dida.common.dump(change_batch);
         }
     }
 
@@ -1292,10 +1292,10 @@ test "test shard graph reach" {
         try shard.doWork();
 
         while (shard.popOutput(reach_out)) |change_batch| {
-            dida.common.dump(change_batch);
+            //dida.common.dump(change_batch);
         }
         while (shard.popOutput(reach_summary_out)) |change_batch| {
-            dida.common.dump(change_batch);
+            //dida.common.dump(change_batch);
         }
     }
 }
