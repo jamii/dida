@@ -1276,11 +1276,13 @@ test "test shard graph reach" {
         // dida.common.dump(shard);
         try shard.doWork();
 
-        while (shard.popOutput(reach_out)) |change_batch| {
+        while (shard.popOutput(reach_out)) |*change_batch| {
             //dida.common.dump(change_batch);
+            change_batch.deinit(allocator);
         }
-        while (shard.popOutput(reach_summary_out)) |change_batch| {
+        while (shard.popOutput(reach_summary_out)) |*change_batch| {
             //dida.common.dump(change_batch);
+            change_batch.deinit(allocator);
         }
     }
 
@@ -1291,11 +1293,13 @@ test "test shard graph reach" {
         // dida.common.dump(shard);
         try shard.doWork();
 
-        while (shard.popOutput(reach_out)) |change_batch| {
+        while (shard.popOutput(reach_out)) |*change_batch| {
             //dida.common.dump(change_batch);
+            change_batch.deinit(allocator);
         }
-        while (shard.popOutput(reach_summary_out)) |change_batch| {
+        while (shard.popOutput(reach_summary_out)) |*change_batch| {
             //dida.common.dump(change_batch);
+            change_batch.deinit(allocator);
         }
     }
 }

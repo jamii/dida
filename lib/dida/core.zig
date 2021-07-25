@@ -1320,7 +1320,7 @@ pub const Shard = struct {
             if (node_spec == .Input) {
                 const timestamp = try Timestamp.initLeast(allocator, graph.node_subgraphs[node_id].len);
                 try self.node_states[node_id].Input.frontier.timestamps.put(timestamp, {});
-                _ = try self.applyFrontierUpdate(.{ .id = node_id }, try timestamp.clone(self.allocator), 1);
+                _ = try self.applyFrontierUpdate(.{ .id = node_id }, timestamp, 1);
             }
         }
         while (self.hasWork()) try self.doWork();
@@ -1378,7 +1378,7 @@ pub const Shard = struct {
         var changes = ArrayList(FrontierChange).init(self.allocator);
         try self.node_states[node.id].Input.frontier.move(.Later, timestamp, &changes);
         for (changes.items) |change| {
-            _ = try self.applyFrontierUpdate(node, try change.timestamp.clone(self.allocator), change.diff);
+            _ = try self.applyFrontierUpdate(node, change.timestamp, change.diff);
         }
     }
 
@@ -1455,7 +1455,7 @@ pub const Shard = struct {
                         "Index received a change that was behind its output frontier. Node {}, timestamp {}.",
                         .{ node, change.timestamp },
                     );
-                    _ = try self.applyFrontierUpdate(node, try change.timestamp.clone(self.allocator), 1);
+                    _ = try self.applyFrontierUpdate(node, change.timestamp, 1);
                 }
                 try node_state.Index.pending_changes.appendSlice(change_batch.changes);
                 change_batch.changes = &[0]Change{};
@@ -1556,7 +1556,7 @@ pub const Shard = struct {
                         old_entry.key_ptr.* = try old_entry.key_ptr.clone(self.allocator);
 
                         // otherwise, update frontier
-                        _ = try self.applyFrontierUpdate(node, try change.timestamp.clone(self.allocator), 1);
+                        _ = try self.applyFrontierUpdate(node, change.timestamp, 1);
                     }
 
                     // for any other pending timestamp on this row, leastUpperBound(change.timestamp, other_timestamp) is pending
@@ -1574,7 +1574,7 @@ pub const Shard = struct {
                         const old_entry = try timestamps.getOrPut(timestamp);
                         if (old_entry.found_existing) continue;
                         old_entry.key_ptr.* = try old_entry.key_ptr.clone(self.allocator);
-                        _ = try self.applyFrontierUpdate(node, try timestamp.clone(self.allocator), 1);
+                        _ = try self.applyFrontierUpdate(node, timestamp, 1);
                     }
                 }
             },
