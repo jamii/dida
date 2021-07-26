@@ -1405,7 +1405,7 @@ pub const Shard = struct {
     /// Report that `from_node` produced `change_batch` as an output.
     /// Takes ownership of `change_batch`.
     fn emitChangeBatch(self: *Shard, from_node: Node, change_batch: ChangeBatch) !void {
-        // Check this is legal
+        // Check that this emission is legal
         {
             const output_frontier = self.node_frontiers[from_node.id];
             var iter = change_batch.lower_bound.timestamps.iterator();
@@ -1722,6 +1722,11 @@ pub const Shard = struct {
             // Index-specific stuff
             if (node_spec == .Index) {
                 // Might be able to produce an output batch now that the frontier has moved later
+                var timestamps_to_remove = ArrayList(Timestamp).init(self.allocator);
+                defer {
+                    for (timestamps_to_remove.items) |*timestamp| timestamp.deinit(self.allocator);
+                    timestamps_to_remove.deinit();
+                }
                 var change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 defer change_batch_builder.deinit();
                 var pending_changes = ArrayList(Change).init(self.allocator);
@@ -1729,6 +1734,8 @@ pub const Shard = struct {
                 const input_frontier = self.node_frontiers[node_spec.Index.input.id];
                 for (node_state.Index.pending_changes.items) |change| {
                     if (input_frontier.frontier.causalOrder(change.timestamp) == .gt) {
+                        // Have to store the timestamps separately, because we need access to all of them after the change_batch may have coalesced and freed some of them
+                        try timestamps_to_remove.append(try change.timestamp.clone(self.allocator));
                         try change_batch_builder.changes.append(change);
                     } else {
                         try pending_changes.append(change);
@@ -1738,9 +1745,9 @@ pub const Shard = struct {
                 if (try change_batch_builder.finishAndReset()) |change_batch| {
                     try node_state.Index.index.addChangeBatch(try change_batch.clone(self.allocator));
                     try self.emitChangeBatch(node, change_batch);
-                    for (change_batch.changes) |change| {
-                        _ = try self.applyFrontierUpdate(node, change.timestamp, -1);
-                    }
+                }
+                for (timestamps_to_remove.items) |timestamp| {
+                    _ = try self.applyFrontierUpdate(node, timestamp, -1);
                 }
             }
 
