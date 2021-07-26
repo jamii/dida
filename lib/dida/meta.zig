@@ -401,6 +401,13 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
                             try std.fmt.format(writer, "{}", .{thing});
                         }
                     },
+                    .Optional => {
+                        if (thing == null) {
+                            try writer.writeAll("null");
+                        } else {
+                            try dumpInto(writer, indent, thing.?);
+                        }
+                    },
                     else => {
                         // bail
                         try std.fmt.format(writer, "{any}", .{thing});
