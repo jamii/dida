@@ -1271,7 +1271,7 @@ test "test shard graph reach" {
     try shard.pushInput(edges, .{ .row = try bc.clone(allocator), .timestamp = try timestamp1.clone(allocator), .diff = -1 });
     try shard.flushInput(edges);
 
-    try shard.advanceInput(edges, try timestamp1.clone(allocator));
+    try shard.advanceInput(edges, timestamp1);
     while (shard.hasWork()) {
         // dida.common.dump(shard);
         try shard.doWork();
@@ -1288,7 +1288,7 @@ test "test shard graph reach" {
 
     std.debug.print("Advancing!\n", .{});
 
-    try shard.advanceInput(edges, try timestamp2.clone(allocator));
+    try shard.advanceInput(edges, timestamp2);
     while (shard.hasWork()) {
         // dida.common.dump(shard);
         try shard.doWork();

@@ -1053,6 +1053,7 @@ pub const Graph = struct {
         var node_subgraphs = try allocator.alloc([]Subgraph, num_nodes);
         for (node_immediate_subgraphs) |immediate_subgraph, node_id| {
             var subgraphs = ArrayList(Subgraph).init(allocator);
+            defer subgraphs.deinit();
             var subgraph = immediate_subgraph;
             while (true) {
                 try subgraphs.append(subgraph);
@@ -1065,6 +1066,7 @@ pub const Graph = struct {
 
         // Collect downstream nodes
         var downstream_node_inputs = try allocator.alloc(ArrayList(NodeInput), num_nodes);
+        defer allocator.free(downstream_node_inputs);
         for (node_specs) |_, node_id| {
             downstream_node_inputs[node_id] = ArrayList(NodeInput).init(allocator);
         }
@@ -1177,7 +1179,9 @@ pub const Graph = struct {
         }
 
         var earliest_subgraph_pops = DeepHashMap(Subgraph, Node).init(self.allocator);
+        defer earliest_subgraph_pops.deinit();
         var latest_subgraph_pushes = DeepHashMap(Subgraph, Node).init(self.allocator);
+        defer latest_subgraph_pushes.deinit();
         for (self.node_specs) |node_spec, node_id| {
             switch (node_spec) {
                 .TimestampPush => |spec| {
@@ -1359,6 +1363,7 @@ pub const Shard = struct {
 
     /// Add a new change to an input node.
     /// These changes will not be processed by `hasWork`/`doWork` until `flushInput` is called.
+    /// Takes ownership of `change`.
     pub fn pushInput(self: *Shard, node: Node, change: Change) !void {
         assert(
             self.node_states[node.id].Input.frontier.causalOrder(change.timestamp).isLessThanOrEqual(),
@@ -1385,9 +1390,11 @@ pub const Shard = struct {
         try self.flushInput(node);
 
         var changes = ArrayList(FrontierChange).init(self.allocator);
+        defer changes.deinit();
         try self.node_states[node.id].Input.frontier.move(.Later, timestamp, &changes);
-        for (changes.items) |change| {
+        for (changes.items) |*change| {
             _ = try self.applyFrontierUpdate(node, change.timestamp, change.diff);
+            change.deinit(self.allocator);
         }
     }
 
@@ -1570,6 +1577,7 @@ pub const Shard = struct {
 
                     // for any other pending timestamp on this row, leastUpperBound(change.timestamp, other_timestamp) is pending
                     var buffer = ArrayList(Timestamp).init(self.allocator);
+                    defer buffer.deinit();
                     var iter = timestamps.iterator();
                     while (iter.next()) |entry| {
                         const timestamp = try Timestamp.leastUpperBound(
@@ -1579,11 +1587,13 @@ pub const Shard = struct {
                         );
                         try buffer.append(timestamp);
                     }
-                    for (buffer.items) |timestamp| {
-                        const old_entry = try timestamps.getOrPut(timestamp);
-                        if (old_entry.found_existing) continue;
-                        old_entry.key_ptr.* = try old_entry.key_ptr.clone(self.allocator);
-                        _ = try self.applyFrontierUpdate(node, timestamp, 1);
+                    for (buffer.items) |*timestamp| {
+                        const old_entry = try timestamps.getOrPut(timestamp.*);
+                        if (old_entry.found_existing) {
+                            timestamp.deinit(self.allocator);
+                        } else {
+                            _ = try self.applyFrontierUpdate(node, timestamp.*, 1);
+                        }
                     }
                 }
             },
@@ -1651,6 +1661,7 @@ pub const Shard = struct {
         // Nodes whose input frontiers have changed
         // TODO is it worth tracking the actual changes? might catch cases where the total diff is zero
         var updated_nodes = DeepHashSet(Node).init(self.allocator);
+        defer updated_nodes.deinit();
 
         // Process frontier updates
         // NOTE We have to process all of these before doing anything else - the intermediate states can be invalid
@@ -1702,6 +1713,7 @@ pub const Shard = struct {
             if (node_spec == .Index) {
                 // Might be able to produce an output batch now that the frontier has moved later
                 var change_batch_builder = ChangeBatchBuilder.init(self.allocator);
+                defer change_batch_builder.deinit();
                 var pending_changes = ArrayList(Change).init(self.allocator);
                 defer pending_changes.deinit();
                 const input_frontier = self.node_frontiers[node_spec.Index.input.id];
@@ -1818,6 +1830,7 @@ pub const Shard = struct {
                             .Reduce => |spec| {
                                 // Coalesce inputs so reduce_fn only has to deal with positive diffs
                                 var input_bag = Bag.init(self.allocator);
+                                defer input_bag.deinit();
                                 for (input_changes.items) |input_change| {
                                     if (input_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
                                         try input_bag.update(input_change.row, input_change.diff);
