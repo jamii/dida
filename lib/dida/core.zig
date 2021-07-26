@@ -398,12 +398,21 @@ pub const Change = struct {
 
 /// A batch of changes, conveniently pre-sorted and de-duplicated.
 pub const ChangeBatch = struct {
-    // Invariant: for every change in changes, lower_bound.causalOrder(change).isLessThanOrEqual()
+    /// Invariant: for every change in changes, lower_bound.causalOrder(change).isLessThanOrEqual()
     lower_bound: Frontier,
-    // Invariant: non-empty,
-    // Invariant: sorted by row/timestamp
-    // Invariant: no two changes with same row/timestamp
+    /// Invariant: non-empty,
+    /// Invariant: sorted by row/timestamp
+    /// Invariant: no two changes with same row/timestamp
+    // TODO should be `[]const Change`?
     changes: []Change,
+
+    pub fn empty(allocator: *Allocator) ChangeBatch {
+        var empty_changes = [0]Change{};
+        return ChangeBatch{
+            .lower_bound = Frontier.init(allocator),
+            .changes = &empty_changes,
+        };
+    }
 
     pub fn deinit(self: *ChangeBatch, allocator: *Allocator) void {
         for (self.changes) |*change| change.deinit(allocator);
@@ -1416,6 +1425,7 @@ pub const Shard = struct {
     fn processChangeBatch(self: *Shard) !void {
         const change_batch_at_node_input = self.unprocessed_change_batches.popOrNull() orelse return;
         var change_batch = change_batch_at_node_input.change_batch;
+        defer change_batch.deinit(self.allocator);
         const node_input = change_batch_at_node_input.node_input;
         const node = node_input.node;
         const node_spec = self.graph.node_specs[node.id];
@@ -1444,7 +1454,6 @@ pub const Shard = struct {
                 if (try output_change_batch_builder.finishAndReset()) |output_change_batch| {
                     try self.emitChangeBatch(node_input.node, output_change_batch);
                 }
-                change_batch.deinit(self.allocator);
             },
             .Index => {
                 // These won't be emitted until the frontier passes them
@@ -1458,8 +1467,8 @@ pub const Shard = struct {
                     _ = try self.applyFrontierUpdate(node, change.timestamp, 1);
                 }
                 try node_state.Index.pending_changes.appendSlice(change_batch.changes);
+                // took ownership of changes, so don't deinit them
                 change_batch.changes = &[0]Change{};
-                change_batch.deinit(self.allocator);
             },
             .Join => |join| {
                 const index = self.node_states[join.inputs[1 - node_input.input_ix].id].getIndex().?;
@@ -1477,10 +1486,11 @@ pub const Shard = struct {
                 if (try output_change_batch_builder.finishAndReset()) |output_change_batch| {
                     try self.emitChangeBatch(node_input.node, output_change_batch);
                 }
-                change_batch.deinit(self.allocator);
             },
             .Output => {
                 try node_state.Output.unpopped_change_batches.append(change_batch);
+                // Took ownership of change_batch so don't deinit it
+                change_batch = ChangeBatch.empty(self.allocator);
             },
             .TimestampPush => {
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
@@ -1493,7 +1503,6 @@ pub const Shard = struct {
                     });
                 }
                 try self.emitChangeBatch(node_input.node, (try output_change_batch_builder.finishAndReset()).?);
-                change_batch.deinit(self.allocator);
             },
             .TimestampIncrement => {
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
@@ -1506,7 +1515,6 @@ pub const Shard = struct {
                     });
                 }
                 try self.emitChangeBatch(node_input.node, (try output_change_batch_builder.finishAndReset()).?);
-                change_batch.deinit(self.allocator);
             },
             .TimestampPop => {
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
@@ -1521,11 +1529,12 @@ pub const Shard = struct {
                 if (try output_change_batch_builder.finishAndReset()) |output_change_batch| {
                     try self.emitChangeBatch(node_input.node, output_change_batch);
                 }
-                change_batch.deinit(self.allocator);
             },
             .Union => {
                 // Pass straight through
                 try self.emitChangeBatch(node_input.node, change_batch);
+                // Took ownership of change_batch so don't deinit it
+                change_batch = ChangeBatch.empty(self.allocator);
             },
             .Distinct, .Reduce => {
                 // Figure out which new rows/timestamps might need later corrections
