@@ -217,19 +217,37 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
     } else if (comptime std.mem.startsWith(u8, @typeName(T), "std.array_list.ArrayList")) {
         try dumpInto(writer, indent, thing.items);
     } else if (comptime std.mem.startsWith(u8, @typeName(T), "std.hash_map.HashMap")) {
-        try writer.writeAll("HashMap(\n");
         var iter = thing.iterator();
+        const is_set = @TypeOf(iter.next().?.value_ptr.*) == void;
+        try writer.writeAll(if (is_set) "HashSet(\n" else "HashMap(\n");
         while (iter.next()) |entry| {
             try writer.writeByteNTimes(' ', indent + 4);
-            try dumpInto(writer, indent + 8, entry.key_ptr.*);
-            try writer.writeAll(" => ");
-            try dumpInto(writer, indent + 8, entry.value_ptr.*);
+            try dumpInto(writer, indent + 4, entry.key_ptr.*);
+            if (!is_set) {
+                try writer.writeAll(" => ");
+                try dumpInto(writer, indent + 4, entry.value_ptr.*);
+            }
             try writer.writeAll(",\n");
         }
         try writer.writeByteNTimes(' ', indent);
         try writer.writeAll(")");
     } else {
         switch (T) {
+            dida.core.Value => {
+                switch (thing) {
+                    .Number => |number| try dida.meta.dumpInto(writer, indent + 4, number),
+                    .String => |string| try dida.meta.dumpInto(writer, indent + 4, string),
+                }
+            },
+            dida.core.Row => {
+                try writer.writeAll("Row[");
+                for (thing.values) |value, i| {
+                    try std.fmt.format(writer, "{}", .{value});
+                    if (i != thing.values.len - 1)
+                        try writer.writeAll(", ");
+                }
+                try writer.writeAll("]");
+            },
             dida.core.Timestamp => {
                 try writer.writeAll("T[");
                 for (thing.coords) |coord, i| {
@@ -239,26 +257,40 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
                 }
                 try writer.writeAll("]");
             },
+            dida.core.Frontier => {
+                try dida.meta.dumpInto(writer, indent, thing.timestamps);
+            },
             dida.core.NodeState.DistinctState => {
                 try writer.writeAll("DistinctState{\n");
 
                 try writer.writeByteNTimes(' ', indent + 4);
-                try writer.writeAll("index:");
-                try dida.meta.dumpInto(writer, indent + 8, thing.index);
+                try writer.writeAll("index: ");
+                try dida.meta.dumpInto(writer, indent + 4, thing.index);
                 try writer.writeAll(",\n");
 
                 try writer.writeByteNTimes(' ', indent + 4);
-                try writer.writeAll("pending_timestamps: [\n");
-                {
-                    var iter = thing.pending_timestamps.iterator();
-                    while (iter.next()) |entry| {
-                        try writer.writeByteNTimes(' ', indent + 8);
-                        try dida.meta.dumpInto(writer, indent + 12, entry.key_ptr.*);
-                        try writer.writeAll(",\n");
-                    }
-                }
+                try writer.writeAll("pending_corrections: ");
+                try dida.meta.dumpInto(writer, indent + 4, thing.pending_corrections);
+
+                try writer.writeAll("\n");
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll("}");
+            },
+            dida.core.NodeState.ReduceState => {
+                try writer.writeAll("ReduceState{\n");
+
                 try writer.writeByteNTimes(' ', indent + 4);
-                try writer.writeAll("],\n");
+                try writer.writeAll("index: ");
+                try dida.meta.dumpInto(writer, indent + 4, thing.index);
+                try writer.writeAll(",\n");
+
+                try writer.writeByteNTimes(' ', indent + 4);
+                try writer.writeAll("pending_corrections: ");
+                try dida.meta.dumpInto(writer, indent + 4, thing.pending_corrections);
+
+                try writer.writeAll("\n");
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll("}");
             },
             dida.core.Shard => {
                 try writer.writeAll("Shard{\n");
@@ -278,30 +310,9 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
                     try writer.writeAll(",\n");
 
                     try writer.writeByteNTimes(' ', indent + 8);
-                    try writer.writeAll("support: {\n");
-                    {
-                        var iter = thing.node_frontiers[node_id].support.iterator();
-                        while (iter.next()) |entry| {
-                            try writer.writeByteNTimes(' ', indent + 12);
-                            try dida.meta.dumpInto(writer, indent + 12, entry.key_ptr.*);
-                            try std.fmt.format(writer, ": {},\n", .{entry.value_ptr.*});
-                        }
-                    }
-                    try writer.writeByteNTimes(' ', indent + 8);
-                    try writer.writeAll("},\n");
-
-                    try writer.writeByteNTimes(' ', indent + 8);
-                    try writer.writeAll("frontier: {\n");
-                    {
-                        var iter = thing.node_frontiers[node_id].frontier.timestamps.iterator();
-                        while (iter.next()) |entry| {
-                            try writer.writeByteNTimes(' ', indent + 12);
-                            try dida.meta.dumpInto(writer, indent + 12, entry.key_ptr.*);
-                            try writer.writeAll(",\n");
-                        }
-                    }
-                    try writer.writeByteNTimes(' ', indent + 8);
-                    try writer.writeAll("},\n");
+                    try writer.writeAll("frontier: ");
+                    try dida.meta.dumpInto(writer, indent + 8, thing.node_frontiers[node_id]);
+                    try writer.writeAll(",\n");
 
                     try writer.writeByteNTimes(' ', indent + 8);
                     try writer.writeAll("unprocessed_change_batches: [\n");
