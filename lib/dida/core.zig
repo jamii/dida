@@ -1040,6 +1040,7 @@ pub const Graph = struct {
     /// For each ndoe, the nodes that are immediately downstream (ie have this node as an input).
     downstream_node_inputs: []const []const NodeInput,
 
+    /// Takes ownership of `node_specs` and `subgraph_parents`. 
     pub fn init(allocator: *Allocator, node_specs: []const NodeSpec, node_immediate_subgraphs: []const Subgraph, subgraph_parents: []const Subgraph) !Graph {
         const num_nodes = node_specs.len;
         const num_subgraphs = subgraph_parents.len + 1; // +1 because subgraph 0 has no parent
@@ -1262,10 +1263,12 @@ pub const GraphBuilder = struct {
     /// Produce the final graph.
     /// Resets `self` so it can be used again.
     pub fn finishAndReset(self: *GraphBuilder) !Graph {
+        const node_subgraphs = self.node_subgraphs.toOwnedSlice();
+        defer self.allocator.free(node_subgraphs);
         return Graph.init(
             self.allocator,
             self.node_specs.toOwnedSlice(),
-            self.node_subgraphs.toOwnedSlice(),
+            node_subgraphs,
             self.subgraph_parents.toOwnedSlice(),
         );
     }
@@ -1450,6 +1453,7 @@ pub const Shard = struct {
             .Input => panic("Input nodes should not have work pending on their input", .{}),
             .Map => |map| {
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
+                defer output_change_batch_builder.deinit();
                 for (change_batch.changes) |change| {
                     const output_row = try map.mapper.map_fn(map.mapper, change.row);
                     try output_change_batch_builder.changes.append(.{
@@ -1474,12 +1478,14 @@ pub const Shard = struct {
                     _ = try self.applyFrontierUpdate(node, change.timestamp, 1);
                 }
                 try node_state.Index.pending_changes.appendSlice(change_batch.changes);
-                // took ownership of changes, so don't deinit them
+                // took ownership of rows in changes, so don't deinit them
+                self.allocator.free(change_batch.changes);
                 change_batch.changes = &[0]Change{};
             },
             .Join => |join| {
                 const index = self.node_states[join.inputs[1 - node_input.input_ix].id].getIndex().?;
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
+                defer output_change_batch_builder.deinit();
                 try index.mergeJoin(
                     change_batch,
                     join.key_columns,
@@ -1501,6 +1507,7 @@ pub const Shard = struct {
             },
             .TimestampPush => {
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
+                defer output_change_batch_builder.deinit();
                 for (change_batch.changes) |change| {
                     const output_timestamp = try change.timestamp.pushCoord(self.allocator);
                     try output_change_batch_builder.changes.append(.{
@@ -1513,6 +1520,7 @@ pub const Shard = struct {
             },
             .TimestampIncrement => {
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
+                defer output_change_batch_builder.deinit();
                 for (change_batch.changes) |change| {
                     const output_timestamp = try change.timestamp.incrementCoord(self.allocator);
                     try output_change_batch_builder.changes.append(.{
@@ -1525,6 +1533,7 @@ pub const Shard = struct {
             },
             .TimestampPop => {
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
+                defer output_change_batch_builder.deinit();
                 for (change_batch.changes) |change| {
                     const output_timestamp = try change.timestamp.popCoord(self.allocator);
                     try output_change_batch_builder.changes.append(.{
