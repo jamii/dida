@@ -1847,49 +1847,42 @@ pub const Shard = struct {
                                 }
 
                                 // Reduce fn might not be commutative, so it has to process changes in some well-defined order
-                                var sorted_input_changes = ArrayList(Change).init(self.allocator);
-                                defer sorted_input_changes.deinit();
+                                const RowAndCount = struct { row: Row, count: usize };
+                                var sorted_inputs = ArrayList(RowAndCount).init(self.allocator);
+                                defer sorted_inputs.deinit();
                                 var input_bag_iter = input_bag.rows.iterator();
                                 while (input_bag_iter.next()) |input_bag_entry|
-                                    try sorted_input_changes.append(.{
+                                    try sorted_inputs.append(.{
                                         .row = input_bag_entry.key_ptr.*,
-                                        .timestamp = timestamp_to_check,
-                                        .diff = input_bag_entry.value_ptr.*,
+                                        .count = @intCast(usize, input_bag_entry.value_ptr.*),
                                     });
-                                std.sort.sort(Change, sorted_input_changes.items, {}, (struct {
-                                    fn lessThan(_: void, a: Change, b: Change) bool {
+                                std.sort.sort(RowAndCount, sorted_inputs.items, {}, (struct {
+                                    fn lessThan(_: void, a: RowAndCount, b: RowAndCount) bool {
                                         return dida.meta.deepOrder(a, b) == .lt;
                                     }
                                 }).lessThan);
 
                                 // Calculate the correct reduced value
                                 var input_value = try spec.init_value.clone(self.allocator);
-                                for (sorted_input_changes.items) |input_change| {
-                                    assert(
-                                        input_change.diff > 0,
-                                        "Reduce should never see negative input counts at any timestamp: {}",
-                                        .{input_change},
-                                    );
-                                    const new_input_value = try spec.reducer.reduce_fn(spec.reducer, input_value, input_change.row, @intCast(usize, input_change.diff));
+                                for (sorted_inputs.items) |input| {
+                                    const new_input_value = try spec.reducer.reduce_fn(spec.reducer, input_value, input.row, input.count);
                                     input_value.deinit(self.allocator);
                                     input_value = new_input_value;
                                 }
 
                                 // Cancel all previous outputs for this key
                                 // TODO if we don't coalesce these, we're going to generate a lot of junk that the builder has to clean up
-                                var output_changes = ArrayList(Change).init(self.allocator);
-                                defer output_changes.deinit();
-                                try output_index.getChangesForKey(key, key.values.len, &output_changes);
-                                for (new_output_changes.items) |output_change| {
-                                    if (output_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
-                                        try output_changes.append(output_change);
-                                }
-                                for (output_changes.items) |output_change| {
-                                    try new_output_changes.append(.{
-                                        .row = try output_change.row.clone(self.allocator),
-                                        .timestamp = try timestamp_to_check.clone(self.allocator),
-                                        .diff = -output_change.diff,
-                                    });
+                                var candidate_output_changes = ArrayList(Change).init(self.allocator);
+                                defer candidate_output_changes.deinit();
+                                try output_index.getChangesForKey(key, key.values.len, &candidate_output_changes);
+                                try candidate_output_changes.appendSlice(new_output_changes.items);
+                                for (candidate_output_changes.items) |candidate_output_change| {
+                                    if (candidate_output_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
+                                        try new_output_changes.append(.{
+                                            .row = try candidate_output_change.row.clone(self.allocator),
+                                            .timestamp = try timestamp_to_check.clone(self.allocator),
+                                            .diff = -candidate_output_change.diff,
+                                        });
                                 }
 
                                 // Add the new output
