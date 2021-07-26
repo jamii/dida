@@ -1327,9 +1327,9 @@ pub const Shard = struct {
         // Init input frontiers
         for (graph.node_specs) |node_spec, node_id| {
             if (node_spec == .Input) {
-                const timestamp = try Timestamp.initLeast(allocator, graph.node_subgraphs[node_id].len);
-                try self.node_states[node_id].Input.frontier.timestamps.put(timestamp, {});
+                var timestamp = try Timestamp.initLeast(allocator, graph.node_subgraphs[node_id].len);
                 _ = try self.applyFrontierUpdate(.{ .id = node_id }, timestamp, 1);
+                try self.node_states[node_id].Input.frontier.timestamps.put(timestamp, {});
             }
         }
         while (self.hasWork()) try self.doWork();
@@ -1595,13 +1595,20 @@ pub const Shard = struct {
     fn queueFrontierUpdate(self: *Shard, node_input: NodeInput, timestamp: Timestamp, diff: isize) !void {
         const node_spec = self.graph.node_specs[node_input.node.id];
         const input_node = node_spec.getInputs()[node_input.input_ix];
-        var entry = try self.unprocessed_frontier_updates.getOrPutValue(.{
+        var entry = try self.unprocessed_frontier_updates.getOrPut(.{
             .node_input = node_input,
             .subgraphs = self.graph.node_subgraphs[input_node.id],
-            .timestamp = try timestamp.clone(self.allocator),
-        }, 0);
+            .timestamp = timestamp,
+        });
+        if (!entry.found_existing) {
+            entry.key_ptr.timestamp = try entry.key_ptr.timestamp.clone(self.allocator);
+            entry.value_ptr.* = 0;
+        }
         entry.value_ptr.* += diff;
-        _ = if (entry.value_ptr.* == 0) self.unprocessed_frontier_updates.remove(entry.key_ptr.*);
+        if (entry.value_ptr.* == 0) {
+            var removed = self.unprocessed_frontier_updates.fetchRemove(entry.key_ptr.*).?;
+            removed.key.deinit(self.allocator);
+        }
     }
 
     /// Change the output frontier at `node` and report the change to any downstream nodes.
