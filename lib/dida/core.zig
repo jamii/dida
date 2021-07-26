@@ -889,7 +889,7 @@ pub const NodeState = union(enum) {
     };
 
     pub const OutputState = struct {
-        unpopped_change_batches: ArrayList(ChangeBatch),
+        unpopped_change_batches: Queue(ChangeBatch),
     };
 
     pub const DistinctState = struct {
@@ -932,7 +932,7 @@ pub const NodeState = union(enum) {
             .Join => .Join,
             .Output => .{
                 .Output = .{
-                    .unpopped_change_batches = ArrayList(ChangeBatch).init(allocator),
+                    .unpopped_change_batches = Queue(ChangeBatch).init(allocator),
                 },
             },
             .TimestampPush => .TimestampPush,
@@ -966,7 +966,8 @@ pub const NodeState = union(enum) {
                 index.pending_changes.deinit();
             },
             .Output => |*output| {
-                for (output.unpopped_change_batches.items) |*change_batch| change_batch.deinit(allocator);
+                for (output.unpopped_change_batches.in.items) |*change_batch| change_batch.deinit(allocator);
+                for (output.unpopped_change_batches.out.items) |*change_batch| change_batch.deinit(allocator);
                 output.unpopped_change_batches.deinit();
             },
             .Distinct => |*distinct| {
@@ -1501,7 +1502,7 @@ pub const Shard = struct {
                 }
             },
             .Output => {
-                try node_state.Output.unpopped_change_batches.append(change_batch);
+                try node_state.Output.unpopped_change_batches.push(change_batch);
                 // Took ownership of change_batch so don't deinit it
                 change_batch = ChangeBatch.empty(self.allocator);
             },
@@ -1941,6 +1942,7 @@ pub const Shard = struct {
     }
 
     /// Pop a change batch from an output node.
+    /// Caller takes ownership of the result.
     pub fn popOutput(self: *Shard, node: Node) ?ChangeBatch {
         return self.node_states[node.id].Output.unpopped_change_batches.popOrNull();
     }

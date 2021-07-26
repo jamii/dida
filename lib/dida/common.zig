@@ -72,3 +72,36 @@ pub fn dump(thing: anytype) void {
     dida.meta.dumpInto(my_stderr, 0, thing) catch return;
     my_stderr.writeAll("\n") catch return;
 }
+
+pub fn Queue(comptime T: type) type {
+    return struct {
+        in: ArrayList(T),
+        out: ArrayList(T),
+
+        const Self = @This();
+
+        pub fn init(allocator: *Allocator) Self {
+            return .{
+                .in = ArrayList(T).init(allocator),
+                .out = ArrayList(T).init(allocator),
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.in.deinit();
+            self.out.deinit();
+            self.* = undefined;
+        }
+
+        pub fn push(self: *Self, item: T) !void {
+            try self.in.append(item);
+        }
+
+        pub fn popOrNull(self: *Self) ?T {
+            if (self.out.popOrNull()) |item| return item;
+            std.mem.swap(ArrayList(T), &self.in, &self.out);
+            std.mem.reverse(T, self.out.items);
+            return self.out.popOrNull();
+        }
+    };
+}

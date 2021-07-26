@@ -1169,6 +1169,21 @@ test "test index get count for row as of" {
     try testIndexGetCountForRowAsOf(changes, .{"z"}, .{3}, 0);
 }
 
+fn testNodeOutput(shard: *dida.core.Shard, node: dida.core.Node, anon_expected_change_batches: anytype) !void {
+    const expected_change_batches = dida.sugar.coerceAnonTo(allocator, []dida.core.ChangeBatch, anon_expected_change_batches);
+    defer {
+        for (expected_change_batches) |*expected_change_batch| expected_change_batch.deinit(allocator);
+        allocator.free(expected_change_batches);
+    }
+    for (expected_change_batches) |expected_change_batch| {
+        var actual_change_batch = shard.popOutput(node);
+        try std.testing.expect(actual_change_batch != null);
+        defer actual_change_batch.?.deinit(allocator);
+        try expectDeepEqual(expected_change_batch.changes, actual_change_batch.?.changes);
+    }
+    try std.testing.expect(shard.popOutput(node) == null);
+}
+
 test "test shard graph reach" {
     var graph_builder = dida.core.GraphBuilder.init(allocator);
     defer graph_builder.deinit();
@@ -1272,36 +1287,90 @@ test "test shard graph reach" {
     try shard.flushInput(edges);
 
     try shard.advanceInput(edges, timestamp1);
-    while (shard.hasWork()) {
-        // dida.common.dump(shard);
-        try shard.doWork();
+    while (shard.hasWork()) try shard.doWork();
 
-        while (shard.popOutput(reach_out)) |*change_batch| {
-            //dida.common.dump(change_batch);
-            change_batch.deinit(allocator);
-        }
-        while (shard.popOutput(reach_summary_out)) |*change_batch| {
-            //dida.common.dump(change_batch);
-            change_batch.deinit(allocator);
-        }
-    }
-
-    std.debug.print("Advancing!\n", .{});
+    try testNodeOutput(&shard, reach_out, .{
+        .{
+            .{ .{ "a", "b" }, .{0}, 1 },
+            .{ .{ "b", "c" }, .{0}, 1 },
+            .{ .{ "b", "d" }, .{0}, 1 },
+            .{ .{ "c", "a" }, .{0}, 1 },
+        },
+        .{
+            .{ .{ "a", "c" }, .{0}, 1 },
+            .{ .{ "a", "d" }, .{0}, 1 },
+            .{ .{ "b", "a" }, .{0}, 1 },
+            .{ .{ "c", "b" }, .{0}, 1 },
+        },
+        .{
+            .{ .{ "a", "a" }, .{0}, 1 },
+            .{ .{ "b", "b" }, .{0}, 1 },
+            .{ .{ "c", "c" }, .{0}, 1 },
+            .{ .{ "c", "d" }, .{0}, 1 },
+        },
+    });
+    try testNodeOutput(&shard, reach_summary_out, .{
+        .{
+            .{ .{ "a", "b" }, .{ 0, 1 }, 1 },
+            .{ .{ "b", "cd" }, .{ 0, 1 }, 1 },
+            .{ .{ "c", "a" }, .{ 0, 1 }, 1 },
+        },
+        .{
+            .{ .{ "a", "b" }, .{ 0, 2 }, -1 },
+            .{ .{ "b", "cd" }, .{ 0, 2 }, -1 },
+            .{ .{ "c", "a" }, .{ 0, 2 }, -1 },
+            .{ .{ "a", "bcd" }, .{ 0, 2 }, 1 },
+            .{ .{ "b", "acd" }, .{ 0, 2 }, 1 },
+            .{ .{ "c", "ab" }, .{ 0, 2 }, 1 },
+        },
+        .{
+            .{ .{ "a", "bcd" }, .{ 0, 3 }, -1 },
+            .{ .{ "b", "acd" }, .{ 0, 3 }, -1 },
+            .{ .{ "c", "ab" }, .{ 0, 3 }, -1 },
+            .{ .{ "a", "abcd" }, .{ 0, 3 }, 1 },
+            .{ .{ "b", "abcd" }, .{ 0, 3 }, 1 },
+            .{ .{ "c", "abcd" }, .{ 0, 3 }, 1 },
+        },
+    });
 
     try shard.advanceInput(edges, timestamp2);
-    while (shard.hasWork()) {
-        // dida.common.dump(shard);
-        try shard.doWork();
+    while (shard.hasWork()) try shard.doWork();
 
-        while (shard.popOutput(reach_out)) |*change_batch| {
-            //dida.common.dump(change_batch);
-            change_batch.deinit(allocator);
-        }
-        while (shard.popOutput(reach_summary_out)) |*change_batch| {
-            //dida.common.dump(change_batch);
-            change_batch.deinit(allocator);
-        }
-    }
+    try testNodeOutput(&shard, reach_out, .{
+        .{
+            .{ .{ "b", "c" }, .{1}, -1 },
+        },
+        .{
+            .{ .{ "a", "c" }, .{1}, -1 },
+            .{ .{ "b", "a" }, .{1}, -1 },
+        },
+        .{
+            .{ .{ "a", "a" }, .{1}, -1 },
+            .{ .{ "b", "b" }, .{1}, -1 },
+            .{ .{ "c", "c" }, .{1}, -1 },
+        },
+    });
+    // TODO debug this
+    //try testNodeOutput(&shard, reach_summary_out, .{
+    //.{
+    //.{ .{ "b", "cd" }, .{ 1, 1 }, -1 },
+    //.{ .{ "b", "d" }, .{ 1, 1 }, 1 },
+    //},
+    //.{
+    //.{ .{ "a", "bcd" }, .{ 1, 2 }, -1 },
+    //.{ .{ "b", "cd" }, .{ 1, 2 }, 1 },
+    //.{ .{ "b", "acd" }, .{ 1, 2 }, -1 },
+    //.{ .{ "a", "bd" }, .{ 1, 2 }, 1 },
+    //},
+    //.{
+    //.{ .{ "a", "bcd" }, .{ 1, 3 }, 1 },
+    //.{ .{ "b", "acd" }, .{ 1, 3 }, 1 },
+    //.{ .{ "a", "abcd" }, .{ 1, 3 }, -1 },
+    //.{ .{ "b", "abcd" }, .{ 1, 3 }, -1 },
+    //.{ .{ "c", "abcd" }, .{ 1, 3 }, -1 },
+    //.{ .{ "c", "abd" }, .{ 1, 3 }, -1 },
+    //},
+    //});
 }
 
 // TODO:
