@@ -121,6 +121,7 @@ Compared to differential dataflow, dida aims to:
     * [x] Basic sketch
     * [ ] Automatically add Push/Pop nodes as needed
     * [ ] Add index wrappers for indexes behind Push/Pop
+    * [ ] Memory management
   * [ ] Wasm
   * [ ] Node
 * [ ] Debuggers / visualization
