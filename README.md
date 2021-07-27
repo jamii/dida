@@ -81,7 +81,7 @@ Compared to differential dataflow, dida aims to:
   * [x] Single-threaded cooperative worker
   * [ ] Multi-threaded workers
     * [ ] Expose as state machine for easy simulation
-  * [ ] Memory management
+  * [x] Memory management
 * [ ] Testing
   * [ ] Unit test
     * [x] Timestamp ordering / lub
@@ -99,7 +99,7 @@ Compared to differential dataflow, dida aims to:
   * [ ] Test that random reorderings of inputs to dataflows have same final result
   * [ ] Add debug-mode validation to progress tracker, shard
   * [ ] Integration test against problems with known results (eg TPC)
-  * [ ] Enable double free, use after free and memory leak detection for all tests
+  * [x] Enable double free, use after free and memory leak detection for all tests
   * [ ] Figure out how to test bindings
     * [ ] Wasm
     * [ ] Node
