@@ -326,7 +326,7 @@ pub fn coerceAnonTo(allocator: *Allocator, comptime T: type, anon: anytype) T {
             },
             dida.core.Value => {
                 switch (@typeInfo(@TypeOf(anon))) {
-                    .Int => return .{ .Number = anon },
+                    .Int, .ComptimeInt => return .{ .Number = @intCast(u64, anon) },
                     .Pointer => return .{ .String = coerceAnonTo(allocator, []const u8, anon) },
                     else => compileError("Don't know how to coerce {} to Value", .{@TypeOf(anon)}),
                 }

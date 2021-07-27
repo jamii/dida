@@ -64,6 +64,7 @@ Compared to differential dataflow, dida aims to:
     * [x] Reduce
       * [x] Basic logic
       * [ ] Efficient implementation using better index structure
+      * [ ] Should reduce take a separate input for keys?
     * [ ] ReduceAbelian
     * [ ] Exchange
   * [x] Graph
