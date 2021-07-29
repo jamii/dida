@@ -1279,7 +1279,7 @@ test "test shard graph reach" {
     var graph = try graph_builder.finishAndReset();
     defer graph.deinit();
 
-    var shard = try dida.core.Shard.init(allocator, &graph);
+    var shard = try dida.core.Shard.init(allocator, &graph, .{});
     defer shard.deinit();
 
     const timestamp0 = dida.core.Timestamp{ .coords = &[_]u64{0} };
@@ -1483,7 +1483,7 @@ test "test shard total balance" {
     var graph = try graph_builder.finishAndReset();
     defer graph.deinit();
 
-    var shard = try dida.core.Shard.init(allocator, &graph);
+    var shard = try dida.core.Shard.init(allocator, &graph, .{});
     defer shard.deinit();
 
     while (shard.hasWork()) try shard.doWork();
