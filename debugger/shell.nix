@@ -1,4 +1,4 @@
-with (import ../../dependencies.nix);
+with (import ../dependencies.nix);
 
 pkgs.mkShell rec {
     buildInputs = [

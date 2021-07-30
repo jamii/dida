@@ -1169,7 +1169,7 @@ test "test index get count for row as of" {
     try testIndexGetCountForRowAsOf(changes, .{"z"}, .{3}, 0);
 }
 
-fn testNodeOutput(shard: *dida.core.Shard, node: dida.core.Node, anon_expected_change_batches: anytype) !void {
+pub fn testNodeOutput(shard: *dida.core.Shard, node: dida.core.Node, anon_expected_change_batches: anytype) !void {
     const expected_change_batches = dida.sugar.coerceAnonTo(allocator, []dida.core.ChangeBatch, anon_expected_change_batches);
     defer {
         for (expected_change_batches) |*expected_change_batch| expected_change_batch.deinit(allocator);
@@ -1485,8 +1485,6 @@ test "test shard total balance" {
 
     var shard = try dida.core.Shard.init(allocator, &graph);
     defer shard.deinit();
-
-    while (shard.hasWork()) try shard.doWork();
 
     // TODO this is a hack to get around the fact that empty reduces don't return any results, which makes the join not work out
     var account: usize = 0;

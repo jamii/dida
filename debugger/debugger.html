@@ -9,12 +9,14 @@
     async function run() {
         const abi = await Abi("./zig-out/lib/debugger.wasm");
         const the_debugger = new Debugger(abi);
-        alert(the_debugger.frame());
+        const debugger_div = document.getElementById("debugger");
+        debugger_div.innerHTML = the_debugger.frame();
     }
     run();
   </script>
 </head>
 
 <body>
+  <div id="debugger"></div>
 </body>
 </html>
