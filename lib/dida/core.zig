@@ -1289,7 +1289,7 @@ pub const Shard = struct {
     config: ShardConfig,
     /// For each node, the internal state of that node.
     node_states: []NodeState,
-    /// For each ndoe, the frontier for the nodes output.
+    /// For each node, the frontier for the nodes output.
     /// Invariant: any change emitted from a node has a timestamp that is not earlier than the frontier: node_frontiers[node.id].frontier.causalOrder(change.timestamp).isLessThanOrEqual()
     node_frontiers: []SupportedFrontier,
     /// An unordered list of change batches that have not yet been processed by some node.
