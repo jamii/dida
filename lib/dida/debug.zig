@@ -49,39 +49,18 @@ pub const DebugEvent = union(enum) {
     DoWork,
 };
 
-pub const DebugEventHandler = struct {
-    handle: fn (self: *DebugEventHandler, shard: *const dida.core.Shard, event: DebugEvent) void,
-};
+pub fn emitDebugEvent(shard: *const dida.core.Shard, debug_event: DebugEvent) void {
+    const root = @import("root");
+    if (@import("builtin").is_test) {
+        // Uncomment this for debugging tests
+        // dumpDebugEvent(shard, debug_event);
+    } else if (@hasDecl(root, "emitDebugEvent"))
+        // You can add a handler to your root file eg
+        // pub const emitDebugEvent = dida.debug.dumpDebugEvent;
+        root.emitDebugEvent(shard, debug_event);
+}
 
-pub const Dumper = struct {
-    debug_event_handler: DebugEventHandler = .{ .handle = handle },
-
-    pub fn handle(debug_event_handler: *DebugEventHandler, shard: *const dida.core.Shard, event: DebugEvent) void {
-        //dida.common.dump(shard);
-        dida.common.dump(event);
-    }
-};
-
-pub var dumper = Dumper{};
-
-pub const Logger = struct {
-    file: std.fs.File,
-    debug_event_handler: DebugEventHandler = .{ .handle = handle },
-
-    pub fn initTempFile() Logger {
-        const tmp_dir = std.testing.tmpDir(.{});
-        const file = tmp_dir.dir.createFile("debug_events.json", .{}) catch |err|
-            panic("Failed to open debug_events.json: {}", .{err});
-        std.debug.print("Logging debug events to zig-cache/tmp/{s}/debug_events.json\n", .{tmp_dir.sub_path});
-        return Logger{ .file = file };
-    }
-
-    pub fn handle(debug_event_handler: *DebugEventHandler, shard: *const dida.core.Shard, event: DebugEvent) void {
-        const self = @fieldParentPtr(Logger, "debug_event_handler", debug_event_handler);
-        const writer = self.file.writer();
-        // TODO would prefer json for loading into debugger
-        dida.meta.dumpInto(writer, 0, event) catch |err| panic("Failed to write to debug_events.json: {}", .{err});
-        writer.writeAll("\n") catch |err| panic("Failed to write to debug_events.json: {}", .{err});
-        std.os.fsync(self.file.handle) catch |err| panic("Error in debug.Logger: {}", .{err});
-    }
-};
+pub fn dumpDebugEvent(shard: *const dida.core.Shard, debug_event: DebugEvent) void {
+    dida.common.dump(shard);
+    dida.common.dump(debug_event);
+}

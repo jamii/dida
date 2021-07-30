@@ -32,7 +32,7 @@ pub const Sugar = struct {
     pub fn build(self: *Sugar) void {
         const graph = assert_ok(self.allocator.create(dida.core.Graph));
         graph.* = assert_ok(self.state.Building.finishAndReset());
-        self.state = .{ .Running = assert_ok(dida.core.Shard.init(self.allocator, graph, .{})) };
+        self.state = .{ .Running = assert_ok(dida.core.Shard.init(self.allocator, graph)) };
     }
 
     pub fn doAllWork(self: *Sugar) !void {

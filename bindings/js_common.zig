@@ -23,7 +23,7 @@ pub fn Graph_init(node_specs: []const dida.core.NodeSpec, node_immediate_subgrap
 }
 
 pub fn Shard_init(graph: *const dida.core.Graph) !dida.core.Shard {
-    return dida.core.Shard.init(allocator, graph, .{});
+    return dida.core.Shard.init(allocator, graph);
 }
 
 // --- serde ---

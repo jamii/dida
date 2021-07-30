@@ -1275,10 +1275,6 @@ pub const GraphBuilder = struct {
     }
 };
 
-pub const ShardConfig = struct {
-    debug_event_handler: ?*dida.debug.DebugEventHandler = null,
-};
-
 /// Part of a running dataflow.
 /// In a single-threaded dataflow there will be only one shard.
 /// In a multi-threaded dataflow (TODO) there will be one shard per thread.
@@ -1286,7 +1282,6 @@ pub const Shard = struct {
     allocator: *Allocator,
     /// Borrowed from caller of init.
     graph: *const Graph,
-    config: ShardConfig,
     /// For each node, the internal state of that node.
     node_states: []NodeState,
     /// For each node, the frontier for the nodes output.
@@ -1315,7 +1310,7 @@ pub const Shard = struct {
         }
     };
 
-    pub fn init(allocator: *Allocator, graph: *const Graph, config: ShardConfig) !Shard {
+    pub fn init(allocator: *Allocator, graph: *const Graph) !Shard {
         const num_nodes = graph.node_specs.len;
 
         var node_states = try allocator.alloc(NodeState, num_nodes);
@@ -1331,7 +1326,6 @@ pub const Shard = struct {
         var self = Shard{
             .allocator = allocator,
             .graph = graph,
-            .config = config,
             .node_states = node_states,
             .node_frontiers = node_frontiers,
             .unprocessed_change_batches = ArrayList(ChangeBatchAtNodeInput).init(allocator),
@@ -1371,16 +1365,11 @@ pub const Shard = struct {
         self.* = undefined;
     }
 
-    pub fn emitDebugEvent(self: *Shard, debug_event: dida.debug.DebugEvent) void {
-        if (self.config.debug_event_handler) |debug_event_handler|
-            debug_event_handler.handle(debug_event_handler, self, debug_event);
-    }
-
     /// Add a new change to an input node.
     /// These changes will not be processed by `hasWork`/`doWork` until `flushInput` is called.
     /// Takes ownership of `change`.
     pub fn pushInput(self: *Shard, node: Node, change: Change) !void {
-        self.emitDebugEvent(.{ .PushInput = .{ .node = node, .change = change } });
+        dida.debug.emitDebugEvent(self, .{ .PushInput = .{ .node = node, .change = change } });
 
         assert(
             self.node_states[node.id].Input.frontier.causalOrder(change.timestamp).isLessThanOrEqual(),
@@ -1392,7 +1381,7 @@ pub const Shard = struct {
 
     /// Flush all of the changes at an input node into a change batch.
     pub fn flushInput(self: *Shard, node: Node) !void {
-        self.emitDebugEvent(.{ .FlushInput = .{ .node = node } });
+        dida.debug.emitDebugEvent(self, .{ .FlushInput = .{ .node = node } });
 
         var unflushed_changes = &self.node_states[node.id].Input.unflushed_changes;
         if (try unflushed_changes.finishAndReset()) |change_batch| {
@@ -1405,7 +1394,7 @@ pub const Shard = struct {
     /// (This also implicitly flushes `node`.)
     // TODO Is advance the best verb? Would prefer to stay consistent with Earlier/Later used elsewhere.
     pub fn advanceInput(self: *Shard, node: Node, timestamp: Timestamp) !void {
-        self.emitDebugEvent(.{ .AdvanceInput = .{ .node = node, .timestamp = timestamp } });
+        dida.debug.emitDebugEvent(self, .{ .AdvanceInput = .{ .node = node, .timestamp = timestamp } });
 
         // Have to flush input so that there aren't any pending changes with timestamps less than the new frontier
         try self.flushInput(node);
@@ -1422,7 +1411,7 @@ pub const Shard = struct {
     /// Report that `from_node` produced `change_batch` as an output.
     /// Takes ownership of `change_batch`.
     fn emitChangeBatch(self: *Shard, from_node: Node, change_batch: ChangeBatch) !void {
-        self.emitDebugEvent(.{ .EmitChangeBatch = .{ .from_node = from_node, .change_batch = change_batch } });
+        dida.debug.emitDebugEvent(self, .{ .EmitChangeBatch = .{ .from_node = from_node, .change_batch = change_batch } });
 
         // Check that this emission is legal
         {
@@ -1461,7 +1450,7 @@ pub const Shard = struct {
         const node_spec = self.graph.node_specs[node.id];
         const node_state = &self.node_states[node.id];
 
-        self.emitDebugEvent(.{ .ProcessChangeBatch = .{ .node_input = node_input, .change_batch = change_batch } });
+        dida.debug.emitDebugEvent(self, .{ .ProcessChangeBatch = .{ .node_input = node_input, .change_batch = change_batch } });
 
         // Remove change_batch from progress tracking
         {
@@ -1634,7 +1623,7 @@ pub const Shard = struct {
     /// Report that the input frontier at `node_input` has changed, so the output frontier might need updating.
     // TODO rename -> queueFrontierSupportChange
     fn queueFrontierUpdate(self: *Shard, node_input: NodeInput, timestamp: Timestamp, diff: isize) !void {
-        self.emitDebugEvent(.{ .QueueFrontierUpdate = .{ .node_input = node_input, .timestamp = timestamp, .diff = diff } });
+        dida.debug.emitDebugEvent(self, .{ .QueueFrontierUpdate = .{ .node_input = node_input, .timestamp = timestamp, .diff = diff } });
 
         const node_spec = self.graph.node_specs[node_input.node.id];
         const input_node = node_spec.getInputs()[node_input.input_ix];
@@ -1657,7 +1646,7 @@ pub const Shard = struct {
     /// Change the output frontier at `node` and report the change to any downstream nodes.
     // TODO name is misleading, rename -> applyFrontierSupportChange
     fn applyFrontierUpdate(self: *Shard, node: Node, timestamp: Timestamp, diff: isize) !enum { Updated, NotUpdated } {
-        self.emitDebugEvent(.{ .ApplyFrontierUpdate = .{ .node = node, .timestamp = timestamp, .diff = diff } });
+        dida.debug.emitDebugEvent(self, .{ .ApplyFrontierUpdate = .{ .node = node, .timestamp = timestamp, .diff = diff } });
 
         var frontier_changes = ArrayList(FrontierChange).init(self.allocator);
         defer frontier_changes.deinit();
@@ -1693,7 +1682,7 @@ pub const Shard = struct {
 
     /// Process all unprocessed frontier updates.
     fn processFrontierUpdates(self: *Shard) !void {
-        self.emitDebugEvent(.ProcessFrontierUpdates);
+        dida.debug.emitDebugEvent(self, .ProcessFrontierUpdates);
 
         // Nodes whose input frontiers have changed
         // TODO is it worth tracking the actual changes? might catch cases where the total diff is zero
@@ -1718,7 +1707,7 @@ pub const Shard = struct {
             const diff = min_entry.value_ptr.*;
             _ = self.unprocessed_frontier_updates.remove(min_entry.key_ptr.*);
 
-            self.emitDebugEvent(.{ .ProcessFrontierUpdate = .{ .node = node, .input_timestamp = input_timestamp, .diff = diff } });
+            dida.debug.emitDebugEvent(self, .{ .ProcessFrontierUpdate = .{ .node = node, .input_timestamp = input_timestamp, .diff = diff } });
 
             // An input frontier for this node changed, so we may need to take some action on it later
             try updated_nodes.put(node, {});
@@ -1748,7 +1737,7 @@ pub const Shard = struct {
             const node_spec = self.graph.node_specs[node.id];
             const node_state = &self.node_states[node.id];
 
-            self.emitDebugEvent(.{ .ProcessFrontierUpdateReaction = .{ .node = node } });
+            dida.debug.emitDebugEvent(self, .{ .ProcessFrontierUpdateReaction = .{ .node = node } });
 
             // Index-specific stuff
             if (node_spec == .Index) {
@@ -1965,7 +1954,7 @@ pub const Shard = struct {
     /// Do some work.
     // TODO ideally the runtime of this function would be roughly bounded, so that dida can run cooperatively inside other event loops.
     pub fn doWork(self: *Shard) !void {
-        self.emitDebugEvent(.DoWork);
+        dida.debug.emitDebugEvent(self, .DoWork);
 
         if (self.unprocessed_change_batches.items.len > 0) {
             try self.processChangeBatch();
@@ -1979,7 +1968,7 @@ pub const Shard = struct {
     pub fn popOutput(self: *Shard, node: Node) ?ChangeBatch {
         const change_batch = self.node_states[node.id].Output.unpopped_change_batches.popOrNull();
 
-        self.emitDebugEvent(.{ .PopOutput = .{ .node = node, .change_batch = change_batch } });
+        dida.debug.emitDebugEvent(self, .{ .PopOutput = .{ .node = node, .change_batch = change_batch } });
 
         return change_batch;
     }
