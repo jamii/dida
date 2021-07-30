@@ -85,47 +85,47 @@ comptime {
     dida.common.comptimeAssert(@bitSizeOf(*c_void) == 32, "Expect wasm to have 32 bit addresses", .{});
 }
 
-pub fn jsTypeOf(env: Env, value: Value) JsType {
+pub fn jsTypeOf(_: Env, value: Value) JsType {
     return @intToEnum(JsType, @intCast(u3, js.jsTypeOf(value)));
 }
 
-pub fn createUndefined(env: Env) Value {
+pub fn createUndefined(_: Env) Value {
     return js.createUndefined();
 }
 
-pub fn createBoolean(env: Env, b: bool) Value {
+pub fn createBoolean(_: Env, b: bool) Value {
     return js.createBool(b);
 }
 
-pub fn createU32(env: Env, int: u32) Value {
+pub fn createU32(_: Env, int: u32) Value {
     return js.createU32(int);
 }
 
-pub fn createI32(env: Env, int: i32) Value {
+pub fn createI32(_: Env, int: i32) Value {
     return js.createI32(int);
 }
 
-pub fn createI64(env: Env, int: i64) Value {
+pub fn createI64(_: Env, int: i64) Value {
     return js.createI64(int);
 }
 
-pub fn createF64(env: Env, int: f64) Value {
+pub fn createF64(_: Env, int: f64) Value {
     return js.createF64(int);
 }
 
-pub fn createString(env: Env, string: []const u8) Value {
+pub fn createString(_: Env, string: []const u8) Value {
     return js.createString(@as(u32, @ptrToInt(@ptrCast([*c]const u8, string))), @as(u32, string.len));
 }
 
-pub fn createObject(env: Env) Value {
+pub fn createObject(_: Env) Value {
     return js.createObject();
 }
 
-pub fn createArray(env: Env, len: usize) Value {
+pub fn createArray(_: Env, len: usize) Value {
     return js.createArray(len);
 }
 
-pub fn createRefCounted(env: Env, value: Value, refcount: u32) RefCounted {
+pub fn createRefCounted(_: Env, value: Value, refcount: u32) RefCounted {
     return js.createRefCounted(value, refcount);
 }
 
@@ -134,19 +134,19 @@ pub fn createExternal(env: Env, pointer: *c_void) Value {
     return createU32(env, address);
 }
 
-pub fn getU32(env: Env, value: Value) u32 {
+pub fn getU32(_: Env, value: Value) u32 {
     return js.getU32(value);
 }
 
-pub fn getI32(env: Env, value: Value) i32 {
+pub fn getI32(_: Env, value: Value) i32 {
     return js.getI32(value);
 }
 
-pub fn getI64(env: Env, value: Value) i64 {
+pub fn getI64(_: Env, value: Value) i64 {
     return js.getI64(value);
 }
 
-pub fn getF64(env: Env, value: Value) f64 {
+pub fn getF64(_: Env, value: Value) f64 {
     return js.getF64(value);
 }
 
@@ -156,37 +156,37 @@ pub fn getString(env: Env, value: Value) ![]const u8 {
     return getStringInto(env, value, buffer);
 }
 
-pub fn getStringInto(env: Env, value: Value, buffer: []u8) []const u8 {
+pub fn getStringInto(_: Env, value: Value, buffer: []u8) []const u8 {
     const len = js.getStringInto(value, @as(u32, @ptrToInt(@ptrCast([*c]u8, buffer))), buffer.len);
     return buffer[0..len];
 }
 
-pub fn getExternal(env: Env, external: Value) *c_void {
+pub fn getExternal(_: Env, external: Value) *c_void {
     const address = getU32({}, external);
     return @intToPtr(*c_void, @as(usize, address));
 }
 
-pub fn getRefCounted(env: Env, ref: RefCounted) Value {
+pub fn getRefCounted(_: Env, ref: RefCounted) Value {
     return js.getRefCounted(ref);
 }
 
-pub fn getArrayLength(env: Env, array: Value) u32 {
+pub fn getArrayLength(_: Env, array: Value) u32 {
     return js.getArrayLength(array);
 }
 
-pub fn getElement(env: Env, array: Value, index: u32) Value {
+pub fn getElement(_: Env, array: Value, index: u32) Value {
     return js.getElement(array, index);
 }
 
-pub fn setElement(env: Env, array: Value, index: u32, value: Value) void {
+pub fn setElement(_: Env, array: Value, index: u32, value: Value) void {
     js.setElement(array, index, value);
 }
 
-pub fn getProperty(env: Env, object: Value, name: Value) Value {
+pub fn getProperty(_: Env, object: Value, name: Value) Value {
     return js.getProperty(object, name);
 }
 
-pub fn setProperty(env: Env, object: Value, name: Value, value: Value) void {
+pub fn setProperty(_: Env, object: Value, name: Value, value: Value) void {
     return js.setProperty(object, name, value);
 }
 

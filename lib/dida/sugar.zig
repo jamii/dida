@@ -135,7 +135,7 @@ pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
             };
         }
 
-        pub usingnamespace if (comptime tag.hasIndex()) struct {
+        pub usingnamespace if (tag.hasIndex()) struct {
             pub fn distinct(self: Self) Node(.Distinct) {
                 const builder = &self.sugar.state.Building;
                 const subgraph = builder.node_subgraphs.items[self.inner.id];
@@ -254,7 +254,7 @@ pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
             };
         }
 
-        pub usingnamespace if (comptime tag == .Input) struct {
+        pub usingnamespace if (tag == .Input) struct {
             pub fn push(self: Self, change: anytype) !void {
                 // TODO self.pushInner won't compile here - circular reference?
                 try pushInner(self, coerceAnonTo(self.sugar.allocator, dida.core.Change, change));

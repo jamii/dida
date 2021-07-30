@@ -702,7 +702,6 @@ pub const Index = struct {
         concat_order: enum { LeftThenRight, RightThenLeft },
         into_builder: *ChangeBatchBuilder,
     ) !void {
-        const change_batch_a = change_batch;
         for (self.change_batches.items) |self_change_batch| {
             switch (concat_order) {
                 .LeftThenRight => try self_change_batch.mergeJoin(change_batch, key_columns, into_builder),
@@ -916,7 +915,7 @@ pub const NodeState = union(enum) {
 
     pub fn init(allocator: *Allocator, node_spec: NodeSpec) NodeState {
         return switch (node_spec) {
-            .Input => |input_spec| .{
+            .Input => .{
                 .Input = .{
                     .frontier = Frontier.init(allocator),
                     .unflushed_changes = ChangeBatchBuilder.init(allocator),
@@ -1044,7 +1043,6 @@ pub const Graph = struct {
     /// Takes ownership of `node_specs` and `subgraph_parents`. 
     pub fn init(allocator: *Allocator, node_specs: []const NodeSpec, node_immediate_subgraphs: []const Subgraph, subgraph_parents: []const Subgraph) !Graph {
         const num_nodes = node_specs.len;
-        const num_subgraphs = subgraph_parents.len + 1; // +1 because subgraph 0 has no parent
         assert(
             node_immediate_subgraphs.len == num_nodes,
             "node_specs and node_immediate_subgraphs should have same length, got {} vs {}",
@@ -1117,7 +1115,7 @@ pub const Graph = struct {
         }
 
         for (self.node_specs) |node_spec, node_id| {
-            for (node_spec.getInputs()) |input_node, input_ix| {
+            for (node_spec.getInputs()) |input_node| {
                 assert(input_node.id < num_nodes, "All input nodes must exist", .{});
                 if (node_spec == .TimestampIncrement) {
                     assert(
@@ -1186,7 +1184,7 @@ pub const Graph = struct {
         defer latest_subgraph_pushes.deinit();
         for (self.node_specs) |node_spec, node_id| {
             switch (node_spec) {
-                .TimestampPush => |spec| {
+                .TimestampPush => {
                     const subgraph = last(Subgraph, self.node_subgraphs[node_id]);
                     const entry = try latest_subgraph_pushes.getOrPutValue(subgraph, .{ .id = node_id });
                     entry.value_ptr.id = max(entry.value_ptr.id, node_id);
@@ -1318,7 +1316,7 @@ pub const Shard = struct {
             node_state.* = NodeState.init(allocator, graph.node_specs[node_id]);
 
         var node_frontiers = try allocator.alloc(SupportedFrontier, num_nodes);
-        for (node_frontiers) |*node_frontier, node_id|
+        for (node_frontiers) |*node_frontier|
             node_frontier.* = try SupportedFrontier.init(allocator);
 
         var unprocessed_frontier_updates = DeepHashMap(Pointstamp, isize).init(allocator);
@@ -1727,7 +1725,7 @@ pub const Shard = struct {
             defer output_timestamp.deinit(self.allocator);
 
             // Apply change to frontier
-            const updated = try self.applyFrontierUpdate(node, output_timestamp, diff);
+            _ = try self.applyFrontierUpdate(node, output_timestamp, diff);
         }
 
         // Trigger special actions at nodes whose frontier has changed.

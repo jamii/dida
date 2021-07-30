@@ -5,10 +5,10 @@ pub const dida_test = @import("../test/core.zig");
 
 var debug_events = std.ArrayList(dida.debug.DebugEvent).init(allocator);
 
-pub fn emitDebugEvent(shard: *const dida.core.Shard, debug_event: dida.debug.DebugEvent) void {
-    const cloned_debug_event = debug_event.clone(allocator) catch |_|
+pub fn emitDebugEvent(_: *const dida.core.Shard, debug_event: dida.debug.DebugEvent) void {
+    const cloned_debug_event = debug_event.clone(allocator) catch
         dida.common.panic("OOM", .{});
-    debug_events.append(cloned_debug_event) catch |_|
+    debug_events.append(cloned_debug_event) catch
         dida.common.panic("OOM", .{});
 }
 
@@ -17,8 +17,9 @@ comptime {
         const name = "frame";
         const function = frame;
         const num_args = @typeInfo(@TypeOf(function)).Fn.args.len;
+        const exported_function = abi.handleAbiForFunction(num_args, handleSerdeForFunction(function));
         @export(
-            abi.handleAbiForFunction(num_args, handleSerdeForFunction(function)),
+            exported_function,
             .{
                 .name = name,
                 .linkage = .Strong,
@@ -141,39 +142,43 @@ fn run_test() !void {
     var shard = try dida.core.Shard.init(allocator, &graph);
     defer shard.deinit();
 
-    //// TODO this is a hack to get around the fact that empty reduces don't return any results, which makes the join not work out
-    //var account: usize = 0;
-    //while (account < std.math.maxInt(u4)) : (account += 1) {
-    //const row = dida.core.Row{ .values = &[_]dida.core.Value{
-    //.{ .Number = @intToFloat(f64, account) },
-    //.{ .Number = @intToFloat(f64, account) },
-    //.{ .Number = @intToFloat(f64, 0) },
-    //} };
-    //const timestamp = dida.core.Timestamp{ .coords = &[_]usize{0} };
-    //try shard.pushInput(transactions, .{ .row = try row.clone(allocator), .timestamp = try timestamp.clone(allocator), .diff = 1 });
-    //}
-    //try shard.advanceInput(transactions, .{ .coords = &[_]usize{1} });
-    //
-    //while (shard.hasWork()) try shard.doWork();
-    ////try dida_test.testNodeOutput(&shard, total_balance_out, .{.{.{ .{0}, .{0}, 1 }}});
-    //
-    //var rng = std.rand.DefaultPrng.init(0);
-    //var time: usize = 1;
-    //// TODO this test actually fails for larger values of time
-    //while (time < 10) : (time += 1) {
-    //const from_account = rng.random.int(u4);
-    //const to_account = rng.random.int(u4);
-    //const amount = rng.random.int(u8);
-    //const skew = @intCast(usize, 0); // TODO rng.random.int(u2);
-    //const row = dida.core.Row{ .values = &[_]dida.core.Value{
-    //.{ .Number = @intToFloat(f64, from_account) },
-    //.{ .Number = @intToFloat(f64, to_account) },
-    //.{ .Number = @intToFloat(f64, amount) },
-    //} };
-    //const timestamp = dida.core.Timestamp{ .coords = &[_]usize{time + @as(usize, skew)} };
-    //try shard.pushInput(transactions, .{ .row = try row.clone(allocator), .timestamp = try timestamp.clone(allocator), .diff = 1 });
-    //try shard.advanceInput(transactions, .{ .coords = &[_]usize{time + 1} });
-    //while (shard.hasWork()) try shard.doWork();
-    ////try dida_test.testNodeOutput(&shard, total_balance_out, .{});
-    //}
+    // TODO this is a hack to get around the fact that empty reduces don't return any results, which makes the join not work out
+    var account: usize = 0;
+    while (account < std.math.maxInt(u4)) : (account += 1) {
+        const row = dida.core.Row{ .values = &[_]dida.core.Value{
+            .{ .Number = @intToFloat(f64, account) },
+            .{ .Number = @intToFloat(f64, account) },
+            .{ .Number = @intToFloat(f64, 0) },
+        } };
+        const timestamp = dida.core.Timestamp{ .coords = &[_]usize{0} };
+        try shard.pushInput(transactions, .{ .row = try row.clone(allocator), .timestamp = try timestamp.clone(allocator), .diff = 1 });
+    }
+    try shard.advanceInput(transactions, .{ .coords = &[_]usize{1} });
+
+    while (shard.hasWork()) try shard.doWork();
+
+    _ = total_balance_out;
+    //try dida_test.testNodeOutput(&shard, total_balance_out, .{.{.{ .{0}, .{0}, 1 }}});
+
+    var rng = std.rand.DefaultPrng.init(0);
+    var time: usize = 1;
+    // TODO this test actually fails for larger values of time
+    while (time < 10) : (time += 1) {
+        const from_account = rng.random.int(u4);
+        const to_account = rng.random.int(u4);
+        const amount = rng.random.int(u8);
+        const skew = @intCast(usize, 0); // TODO rng.random.int(u2);
+        const row = dida.core.Row{ .values = &[_]dida.core.Value{
+            .{ .Number = @intToFloat(f64, from_account) },
+            .{ .Number = @intToFloat(f64, to_account) },
+            .{ .Number = @intToFloat(f64, amount) },
+        } };
+        const timestamp = dida.core.Timestamp{ .coords = &[_]usize{time + @as(usize, skew)} };
+        try shard.pushInput(transactions, .{ .row = try row.clone(allocator), .timestamp = try timestamp.clone(allocator), .diff = 1 });
+        try shard.advanceInput(transactions, .{ .coords = &[_]usize{time + 1} });
+        while (shard.hasWork()) try shard.doWork();
+
+        _ = total_balance_out;
+        //try dida_test.testNodeOutput(&shard, total_balance_out, .{});
+    }
 }

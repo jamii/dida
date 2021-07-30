@@ -303,7 +303,7 @@ fn serializeValue(env: abi.Env, value: anytype) abi.Value {
                 const result = abi.createObject(env);
                 const tag = std.meta.activeTag(value);
                 abi.setProperty(env, result, abi.createString(env, "tag"), abi.createString(env, @tagName(tag)));
-                inline for (@typeInfo(tag_type).Enum.fields) |enum_field_info, i| {
+                inline for (@typeInfo(tag_type).Enum.fields) |enum_field_info| {
                     if (@enumToInt(tag) == enum_field_info.value) {
                         const payload = @field(value, enum_field_info.name);
                         const js_payload = serializeValue(env, payload);
@@ -547,7 +547,7 @@ fn deserializeValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) R
 
 // --- abi types ---
 
-pub const JsType = enum {
+pub const JsType = enum(u8) {
     Undefined = 0,
     Null = 1,
     Boolean = 2,

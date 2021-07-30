@@ -51,7 +51,7 @@ pub const DebugEvent = union(enum) {
     pub fn clone(self: DebugEvent, allocator: *Allocator) !DebugEvent {
         var result: DebugEvent = undefined;
         const tag = @enumToInt(std.meta.activeTag(self));
-        inline for (@typeInfo(@typeInfo(DebugEvent).Union.tag_type.?).Enum.fields) |eti, i| {
+        inline for (@typeInfo(@typeInfo(DebugEvent).Union.tag_type.?).Enum.fields) |eti| {
             if (tag == eti.value) {
                 const self_payload = @field(self, eti.name);
                 const PayloadType = @TypeOf(self_payload);

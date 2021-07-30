@@ -13,11 +13,11 @@ fn napiCall(comptime napi_fn: anytype, args: anytype, comptime ReturnType: type)
     if (ReturnType != void) {
         var result: ReturnType = undefined;
         const status: c.napi_status = @call(.{}, napi_fn, args ++ .{&result});
-        dida.common.assert(status == .napi_ok, "Call returned status {}", .{status});
+        dida.common.assert(status == c.napi_ok, "Call returned status {}", .{status});
         return result;
     } else {
         const status: c.napi_status = @call(.{}, napi_fn, args);
-        dida.common.assert(status == .napi_ok, "Call returned status {}", .{status});
+        dida.common.assert(status == c.napi_ok, "Call returned status {}", .{status});
     }
 }
 
@@ -63,13 +63,13 @@ pub const RefCounted = c.napi_ref;
 pub fn jsTypeOf(env: Env, value: Value) JsType {
     const napi_type = napiCall(c.napi_typeof, .{ env, value }, c.napi_valuetype);
     return switch (napi_type) {
-        .napi_undefined => .Undefined,
-        .napi_null => .Null,
-        .napi_boolean => .Boolean,
-        .napi_number => .Number,
-        .napi_string => .String,
-        .napi_object => .Object,
-        .napi_function => .Function,
+        c.napi_undefined => .Undefined,
+        c.napi_null => .Null,
+        c.napi_boolean => .Boolean,
+        c.napi_number => .Number,
+        c.napi_string => .String,
+        c.napi_object => .Object,
+        c.napi_function => .Function,
         else => dida.common.panic("Don't know how to handle this napi_valuetype: {}", .{napi_type}),
     };
 }

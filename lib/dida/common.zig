@@ -17,7 +17,7 @@ pub fn panic(comptime message: []const u8, args: anytype) noreturn {
     // TODO should we preallocate memory for panics?
     var buf = ArrayList(u8).init(std.heap.page_allocator);
     var writer = buf.writer();
-    std.fmt.format(writer, message, args) catch |_|
+    std.fmt.format(writer, message, args) catch
         std.mem.copy(u8, buf.items[buf.items.len - 3 .. buf.items.len], "OOM");
     @panic(buf.toOwnedSlice());
 }

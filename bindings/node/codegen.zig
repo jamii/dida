@@ -86,7 +86,7 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                     try writer.writeAll("}\n\n");
                 },
                 .Union => |union_info| {
-                    if (union_info.tag_type) |tag_type| {
+                    if (union_info.tag_type) |_| {
                         // TODO name payload args instead of using `arguments[i]`
                         try std.fmt.format(writer, "const {s} = {{\n", .{Type});
                         inline for (union_info.fields) |field_info| {
