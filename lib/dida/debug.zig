@@ -65,7 +65,7 @@ pub const DebugEvent = union(enum) {
                         };
                     }
                 }
-                @field(result, eti.name) = result_payload;
+                result = @unionInit(DebugEvent, eti.name, result_payload);
             }
         }
         return result;
