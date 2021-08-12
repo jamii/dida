@@ -47,29 +47,6 @@ pub const DebugEvent = union(enum) {
         change_batch: ?dida.core.ChangeBatch,
     },
     DoWork,
-
-    pub fn clone(self: DebugEvent, allocator: *Allocator) !DebugEvent {
-        var result: DebugEvent = undefined;
-        const tag = @enumToInt(std.meta.activeTag(self));
-        inline for (@typeInfo(@typeInfo(DebugEvent).Union.tag_type.?).Enum.fields) |eti| {
-            if (tag == eti.value) {
-                const self_payload = @field(self, eti.name);
-                const PayloadType = @TypeOf(self_payload);
-                var result_payload: PayloadType = undefined;
-                if (PayloadType != void) {
-                    inline for (@typeInfo(PayloadType).Struct.fields) |sti| {
-                        @field(result_payload, sti.name) = switch (sti.field_type) {
-                            isize, dida.core.Node, dida.core.NodeInput => @field(self_payload, sti.name),
-                            ?dida.core.ChangeBatch => if (@field(self_payload, sti.name)) |change_batch| try change_batch.clone(allocator) else null,
-                            else => try @field(self_payload, sti.name).clone(allocator),
-                        };
-                    }
-                }
-                result = @unionInit(DebugEvent, eti.name, result_payload);
-            }
-        }
-        return result;
-    }
 };
 
 pub fn emitDebugEvent(shard: *const dida.core.Shard, debug_event: DebugEvent) void {

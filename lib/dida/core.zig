@@ -19,13 +19,6 @@ pub const Value = union(enum) {
         }
         self.* = undefined;
     }
-
-    pub fn clone(self: Value, allocator: *Allocator) !Value {
-        return switch (self) {
-            .String => |string| .{ .String = try std.mem.dupe(allocator, u8, string) },
-            .Number => self,
-        };
-    }
 };
 
 /// Every operation takes rows as inputs and produces rows as outputs.
@@ -41,12 +34,6 @@ pub const Row = struct {
         }
         allocator.free(self.values);
         self.* = undefined;
-    }
-
-    pub fn clone(self: Row, allocator: *Allocator) !Row {
-        const values = try std.mem.dupe(allocator, Value, self.values);
-        for (values) |*value| value.* = try value.clone(allocator);
-        return Row{ .values = values };
     }
 };
 
@@ -109,10 +96,6 @@ pub const Timestamp = struct {
     pub fn deinit(self: *Timestamp, allocator: *Allocator) void {
         allocator.free(self.coords);
         self.* = undefined;
-    }
-
-    pub fn clone(self: Timestamp, allocator: *Allocator) !Timestamp {
-        return Timestamp{ .coords = try std.mem.dupe(allocator, usize, self.coords) };
     }
 
     pub fn pushCoord(self: Timestamp, allocator: *Allocator) !Timestamp {
@@ -208,18 +191,6 @@ pub const Frontier = struct {
         self.* = undefined;
     }
 
-    pub fn clone(self: Frontier, allocator: *Allocator) !Frontier {
-        var timestamps = try self.timestamps.cloneWithAllocator(allocator);
-        var iter = timestamps.iterator();
-        while (iter.next()) |entry| {
-            entry.key_ptr.* = try entry.key_ptr.clone(allocator);
-        }
-        return Frontier{
-            .allocator = allocator,
-            .timestamps = timestamps,
-        };
-    }
-
     /// Compares `timestamp` to `self.timestamps`.
     pub fn causalOrder(self: Frontier, timestamp: Timestamp) PartialOrder {
         var iter = self.timestamps.iterator();
@@ -262,8 +233,8 @@ pub const Frontier = struct {
         for (changes_into.items) |frontier_change| {
             _ = self.timestamps.remove(frontier_change.timestamp);
         }
-        try changes_into.append(.{ .timestamp = try timestamp.clone(self.allocator), .diff = 1 });
-        try self.timestamps.put(try timestamp.clone(self.allocator), {});
+        try changes_into.append(.{ .timestamp = try dida.meta.deepClone(timestamp, self.allocator), .diff = 1 });
+        try self.timestamps.put(try dida.meta.deepClone(timestamp, self.allocator), {});
     }
 };
 
@@ -299,7 +270,7 @@ pub const SupportedFrontier = struct {
     pub fn update(self: *SupportedFrontier, timestamp: Timestamp, diff: isize, changes_into: *ArrayList(FrontierChange)) !void {
         const support_entry = try self.support.getOrPut(timestamp);
         if (!support_entry.found_existing) {
-            support_entry.key_ptr.* = try support_entry.key_ptr.clone(self.allocator);
+            support_entry.key_ptr.* = try dida.meta.deepClone(support_entry.key_ptr.*, self.allocator);
             support_entry.value_ptr.* = 0;
         }
         support_entry.value_ptr.* = @intCast(usize, @intCast(isize, support_entry.value_ptr.*) + diff);
@@ -313,7 +284,7 @@ pub const SupportedFrontier = struct {
                 remove_entry.key.deinit(self.allocator);
 
                 // Removed this timestamp from frontier
-                try changes_into.append(.{ .timestamp = try timestamp.clone(self.allocator), .diff = -1 });
+                try changes_into.append(.{ .timestamp = try dida.meta.deepClone(timestamp, self.allocator), .diff = -1 });
 
                 // Find timestamps in support that might now be on the frontier
                 var candidates = ArrayList(Timestamp).init(self.allocator);
@@ -332,8 +303,8 @@ pub const SupportedFrontier = struct {
                 }.lessThan);
                 for (candidates.items) |candidate| {
                     if (self.frontier.causalOrder(candidate) == .none) {
-                        try self.frontier.timestamps.put(try candidate.clone(self.allocator), {});
-                        try changes_into.append(.{ .timestamp = try candidate.clone(self.allocator), .diff = 1 });
+                        try self.frontier.timestamps.put(try dida.meta.deepClone(candidate, self.allocator), {});
+                        try changes_into.append(.{ .timestamp = try dida.meta.deepClone(candidate, self.allocator), .diff = 1 });
                     }
                 }
             }
@@ -343,8 +314,8 @@ pub const SupportedFrontier = struct {
             // Timestamp was just added, might be in frontier
             if (self.frontier.causalOrder(timestamp) != .lt) {
                 // Add to frontier
-                try self.frontier.timestamps.put(try timestamp.clone(self.allocator), {});
-                try changes_into.append(.{ .timestamp = try timestamp.clone(self.allocator), .diff = 1 });
+                try self.frontier.timestamps.put(try dida.meta.deepClone(timestamp, self.allocator), {});
+                try changes_into.append(.{ .timestamp = try dida.meta.deepClone(timestamp, self.allocator), .diff = 1 });
 
                 // Remove any other timestamp that is greater than the new timestamp
                 var to_remove = ArrayList(Timestamp).init(self.allocator);
@@ -386,14 +357,6 @@ pub const Change = struct {
         self.timestamp.deinit(allocator);
         self.* = undefined;
     }
-
-    pub fn clone(self: Change, allocator: *Allocator) !Change {
-        return Change{
-            .row = try self.row.clone(allocator),
-            .timestamp = try self.timestamp.clone(allocator),
-            .diff = self.diff,
-        };
-    }
 };
 
 /// A batch of changes, conveniently pre-sorted and de-duplicated.
@@ -419,15 +382,6 @@ pub const ChangeBatch = struct {
         allocator.free(self.changes);
         self.lower_bound.deinit();
         self.* = undefined;
-    }
-
-    pub fn clone(self: ChangeBatch, allocator: *Allocator) !ChangeBatch {
-        var changes = try std.mem.dupe(allocator, Change, self.changes);
-        for (self.changes) |*change| change.* = try change.clone(allocator);
-        return ChangeBatch{
-            .lower_bound = try self.lower_bound.clone(allocator),
-            .changes = changes,
-        };
     }
 
     /// Find the first row after `from` that starts with `row[0..key_columns]` or, if there is no such row, the position where it would be.
@@ -557,7 +511,7 @@ pub const ChangeBatch = struct {
                                 change_other.row.values[key_columns..],
                             });
                             for (values) |*value| {
-                                value.* = try value.clone(into_builder.allocator);
+                                value.* = try dida.meta.deepClone(value.*, into_builder.allocator);
                             }
                             try into_builder.changes.append(.{
                                 .row = .{ .values = values },
@@ -1426,7 +1380,7 @@ pub const Shard = struct {
 
         var output_change_batch = change_batch;
         for (self.graph.downstream_node_inputs[from_node.id]) |to_node_input, i| {
-            if (i != 0) output_change_batch = try output_change_batch.clone(self.allocator);
+            if (i != 0) output_change_batch = try dida.meta.deepClone(output_change_batch, self.allocator);
             var iter = output_change_batch.lower_bound.timestamps.iterator();
             while (iter.next()) |entry| {
                 try self.queueFrontierUpdate(to_node_input, entry.key_ptr.*, 1);
@@ -1467,7 +1421,7 @@ pub const Shard = struct {
                     const output_row = try map.mapper.map_fn(map.mapper, change.row);
                     try output_change_batch_builder.changes.append(.{
                         .row = output_row,
-                        .timestamp = try change.timestamp.clone(self.allocator),
+                        .timestamp = try dida.meta.deepClone(change.timestamp, self.allocator),
                         .diff = change.diff,
                     });
                 }
@@ -1521,7 +1475,7 @@ pub const Shard = struct {
                 for (change_batch.changes) |change| {
                     const output_timestamp = try change.timestamp.pushCoord(self.allocator);
                     try output_change_batch_builder.changes.append(.{
-                        .row = try change.row.clone(self.allocator),
+                        .row = try dida.meta.deepClone(change.row, self.allocator),
                         .timestamp = output_timestamp,
                         .diff = change.diff,
                     });
@@ -1534,7 +1488,7 @@ pub const Shard = struct {
                 for (change_batch.changes) |change| {
                     const output_timestamp = try change.timestamp.incrementCoord(self.allocator);
                     try output_change_batch_builder.changes.append(.{
-                        .row = try change.row.clone(self.allocator),
+                        .row = try dida.meta.deepClone(change.row, self.allocator),
                         .timestamp = output_timestamp,
                         .diff = change.diff,
                     });
@@ -1547,7 +1501,7 @@ pub const Shard = struct {
                 for (change_batch.changes) |change| {
                     const output_timestamp = try change.timestamp.popCoord(self.allocator);
                     try output_change_batch_builder.changes.append(.{
-                        .row = try change.row.clone(self.allocator),
+                        .row = try dida.meta.deepClone(change.row, self.allocator),
                         .timestamp = output_timestamp,
                         .diff = change.diff,
                     });
@@ -1577,7 +1531,7 @@ pub const Shard = struct {
                     };
                     const timestamps_entry = try pending_corrections.getOrPut(key);
                     if (!timestamps_entry.found_existing) {
-                        timestamps_entry.key_ptr.* = try timestamps_entry.key_ptr.clone(self.allocator);
+                        timestamps_entry.key_ptr.* = try dida.meta.deepClone(timestamps_entry.key_ptr.*, self.allocator);
                         timestamps_entry.value_ptr.* = DeepHashSet(Timestamp).init(self.allocator);
                     }
                     const timestamps = timestamps_entry.value_ptr;
@@ -1588,7 +1542,7 @@ pub const Shard = struct {
 
                         // if was already pending, nothing more to do
                         if (old_entry.found_existing) continue;
-                        old_entry.key_ptr.* = try old_entry.key_ptr.clone(self.allocator);
+                        old_entry.key_ptr.* = try dida.meta.deepClone(old_entry.key_ptr.*, self.allocator);
 
                         // otherwise, update frontier
                         _ = try self.applyFrontierUpdate(node, change.timestamp, 1);
@@ -1632,7 +1586,7 @@ pub const Shard = struct {
             .timestamp = timestamp,
         });
         if (!entry.found_existing) {
-            entry.key_ptr.timestamp = try entry.key_ptr.timestamp.clone(self.allocator);
+            entry.key_ptr.timestamp = try dida.meta.deepClone(entry.key_ptr.timestamp, self.allocator);
             entry.value_ptr.* = 0;
         }
         entry.value_ptr.* += diff;
@@ -1754,7 +1708,7 @@ pub const Shard = struct {
                 for (node_state.Index.pending_changes.items) |change| {
                     if (input_frontier.frontier.causalOrder(change.timestamp) == .gt) {
                         // Have to store the timestamps separately, because we need access to all of them after the change_batch may have coalesced and freed some of them
-                        try timestamps_to_remove.append(try change.timestamp.clone(self.allocator));
+                        try timestamps_to_remove.append(try dida.meta.deepClone(change.timestamp, self.allocator));
                         try change_batch_builder.changes.append(change);
                     } else {
                         try pending_changes.append(change);
@@ -1762,7 +1716,7 @@ pub const Shard = struct {
                 }
                 std.mem.swap(ArrayList(Change), &node_state.Index.pending_changes, &pending_changes);
                 if (try change_batch_builder.finishAndReset()) |change_batch| {
-                    try node_state.Index.index.addChangeBatch(try change_batch.clone(self.allocator));
+                    try node_state.Index.index.addChangeBatch(try dida.meta.deepClone(change_batch, self.allocator));
                     try self.emitChangeBatch(node, change_batch);
                 }
                 for (timestamps_to_remove.items) |timestamp| {
@@ -1808,7 +1762,7 @@ pub const Shard = struct {
                         while (timestamp_iter.next()) |timestamp_entry| {
                             const timestamp = timestamp_entry.key_ptr.*;
                             if (input_frontier.frontier.causalOrder(timestamp) == .gt) {
-                                try timestamps_to_check.append(try timestamp.clone(self.allocator));
+                                try timestamps_to_check.append(try dida.meta.deepClone(timestamp, self.allocator));
                                 try frontier_support_changes.append(.{ .timestamp = timestamp, .diff = -1 });
                             }
                         }
@@ -1857,8 +1811,8 @@ pub const Shard = struct {
                                 const diff = correct_output_count - output_count;
                                 if (diff != 0) {
                                     try new_output_changes.append(.{
-                                        .row = try key.clone(self.allocator),
-                                        .timestamp = try timestamp_to_check.clone(self.allocator),
+                                        .row = try dida.meta.deepClone(key, self.allocator),
+                                        .timestamp = try dida.meta.deepClone(timestamp_to_check, self.allocator),
                                         .diff = diff,
                                     });
                                 }
@@ -1889,7 +1843,7 @@ pub const Shard = struct {
                                 }).lessThan);
 
                                 // Calculate the correct reduced value
-                                var input_value = try spec.init_value.clone(self.allocator);
+                                var input_value = try dida.meta.deepClone(spec.init_value, self.allocator);
                                 for (sorted_inputs.items) |input| {
                                     const new_input_value = try spec.reducer.reduce_fn(spec.reducer, input_value, input.row, input.count);
                                     input_value.deinit(self.allocator);
@@ -1905,8 +1859,8 @@ pub const Shard = struct {
                                 for (candidate_output_changes.items) |candidate_output_change| {
                                     if (candidate_output_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
                                         try new_output_changes.append(.{
-                                            .row = try candidate_output_change.row.clone(self.allocator),
-                                            .timestamp = try timestamp_to_check.clone(self.allocator),
+                                            .row = try dida.meta.deepClone(candidate_output_change.row, self.allocator),
+                                            .timestamp = try dida.meta.deepClone(timestamp_to_check, self.allocator),
                                             .diff = -candidate_output_change.diff,
                                         });
                                 }
@@ -1916,10 +1870,10 @@ pub const Shard = struct {
                                     key.values,
                                     &[_]Value{input_value},
                                 });
-                                for (values[0..key.values.len]) |*value| value.* = try value.clone(self.allocator);
+                                for (values[0..key.values.len]) |*value| value.* = try dida.meta.deepClone(value.*, self.allocator);
                                 try new_output_changes.append(.{
                                     .row = Row{ .values = values },
-                                    .timestamp = try timestamp_to_check.clone(self.allocator),
+                                    .timestamp = try dida.meta.deepClone(timestamp_to_check, self.allocator),
                                     .diff = 1,
                                 });
                             },
@@ -1933,7 +1887,7 @@ pub const Shard = struct {
 
                 // Emit changes
                 if (try change_batch_builder.finishAndReset()) |change_batch| {
-                    try output_index.addChangeBatch(try change_batch.clone(self.allocator));
+                    try output_index.addChangeBatch(try dida.meta.deepClone(change_batch, self.allocator));
                     try self.emitChangeBatch(node, change_batch);
                 }
 

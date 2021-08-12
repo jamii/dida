@@ -428,3 +428,75 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
         }
     }
 }
+
+// TODO this can be error-prone - maybe should explicitly list allowed types?
+pub fn deepClone(thing: anytype, allocator: *Allocator) error{OutOfMemory}!@TypeOf(thing) {
+    const T = @TypeOf(thing);
+    const ti = @typeInfo(T);
+    if (T == *std.mem.Allocator) return allocator;
+
+    if (comptime std.mem.startsWith(u8, @typeName(T), "std.array_list.ArrayList")) {
+        var cloned = try ArrayList(@TypeOf(thing.items[0])).initCapacity(thing.items.len);
+        cloned.appendSliceAssumeCapacity(thing.items);
+        for (cloned.items) |*item| item.* = deepClone(item.*, allocator);
+        return cloned;
+    }
+
+    if (comptime std.mem.startsWith(u8, @typeName(T), "std.hash_map.HashMap")) {
+        var cloned = try thing.cloneWithAllocator(allocator);
+        var iter = thing.iterator();
+        while (iter.next()) |entry| {
+            entry.key_ptr.* = try deepClone(entry.key_ptr.*, allocator);
+            entry.value_ptr.* = try deepClone(entry.value_ptr.*, allocator);
+        }
+        return cloned;
+    }
+
+    switch (ti) {
+        .Bool, .Int, .Float, .Enum, .Void => return thing,
+        .Pointer => |pti| {
+            switch (pti.size) {
+                .One => {
+                    const cloned = try allocator.create(T);
+                    cloned.* = try deepClone(cloned.*, allocator);
+                    return cloned;
+                },
+                .Slice => {
+                    const cloned = try std.mem.dupe(allocator, pti.child, thing);
+                    for (cloned) |*item| item.* = try deepClone(item.*, allocator);
+                    return cloned;
+                },
+                .Many, .C => compileError("Cannot deepClone {}", .{T}),
+            }
+        },
+        .Array => {
+            var cloned = thing;
+            for (cloned) |*item| item.* = try deepClone(item.*, allocator);
+            return cloned;
+        },
+        .Optional => {
+            return if (thing == null) null else try deepClone(thing.?, allocator);
+        },
+        .Struct => |sti| {
+            var cloned = thing;
+            inline for (sti.fields) |fti| {
+                @field(cloned, fti.name) = try deepClone(@field(cloned, fti.name), allocator);
+            }
+            return cloned;
+        },
+        .Union => |uti| {
+            if (uti.tag_type) |tag_type| {
+                const tag = @enumToInt(@as(tag_type, thing));
+                inline for (@typeInfo(tag_type).Enum.fields) |fti| {
+                    if (tag == fti.value) {
+                        return @unionInit(T, fti.name, try deepClone(@field(thing, fti.name), allocator));
+                    }
+                }
+                unreachable;
+            } else {
+                compileError("Cannot deepClone {}", .{T});
+            }
+        },
+        else => compileError("Cannot deepClone {}", .{T}),
+    }
+}

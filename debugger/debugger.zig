@@ -5,8 +5,9 @@ pub const dida_test = @import("../test/core.zig");
 
 var debug_events = std.ArrayList(dida.debug.DebugEvent).init(allocator);
 
+// Called from dida.debug
 pub fn emitDebugEvent(_: *const dida.core.Shard, debug_event: dida.debug.DebugEvent) void {
-    const cloned_debug_event = debug_event.clone(allocator) catch
+    const cloned_debug_event = dida.meta.deepClone(debug_event, allocator) catch
         dida.common.panic("OOM", .{});
     debug_events.append(cloned_debug_event) catch
         dida.common.panic("OOM", .{});
@@ -33,8 +34,6 @@ pub const panic = @import("../bindings/wasm/runtime.zig").panic;
 fn frame() []const u8 {
     run_test() catch |err| dida.common.panic("{}", .{err});
 
-    debug_events.append(.{ .FlushInput = .{ .node = .{ .id = 3 } } }) catch unreachable;
-
     var string = std.ArrayList(u8).init(allocator);
     dida.meta.dumpInto(string.writer(), 0, debug_events.items) catch |err| dida.common.panic("{}", .{err});
     return string.items;
@@ -54,8 +53,8 @@ fn run_test() !void {
             fn map(_: *dida.core.NodeSpec.MapSpec.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
                 // (to, amount)
                 var output_values = try allocator.alloc(dida.core.Value, 2);
-                output_values[0] = try input.values[1].clone(allocator);
-                output_values[1] = try input.values[2].clone(allocator);
+                output_values[0] = try dida.meta.deepClone(input.values[1], allocator);
+                output_values[1] = try dida.meta.deepClone(input.values[2], allocator);
                 return dida.core.Row{ .values = output_values };
             }
         }).map,
@@ -71,8 +70,8 @@ fn run_test() !void {
             fn map(_: *dida.core.NodeSpec.MapSpec.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
                 // (from, amount)
                 var output_values = try allocator.alloc(dida.core.Value, 2);
-                output_values[0] = try input.values[0].clone(allocator);
-                output_values[1] = try input.values[2].clone(allocator);
+                output_values[0] = try dida.meta.deepClone(input.values[0], allocator);
+                output_values[1] = try dida.meta.deepClone(input.values[2], allocator);
                 return dida.core.Row{ .values = output_values };
             }
         }).map,
@@ -116,7 +115,7 @@ fn run_test() !void {
             fn map(_: *dida.core.NodeSpec.MapSpec.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
                 // (account, credit - debit)
                 var output_values = try allocator.alloc(dida.core.Value, 2);
-                output_values[0] = try input.values[0].clone(allocator);
+                output_values[0] = try dida.meta.deepClone(input.values[0], allocator);
                 output_values[1] = .{ .Number = input.values[1].Number - input.values[2].Number };
                 return dida.core.Row{ .values = output_values };
             }
@@ -151,7 +150,7 @@ fn run_test() !void {
             .{ .Number = @intToFloat(f64, 0) },
         } };
         const timestamp = dida.core.Timestamp{ .coords = &[_]usize{0} };
-        try shard.pushInput(transactions, .{ .row = try row.clone(allocator), .timestamp = try timestamp.clone(allocator), .diff = 1 });
+        try shard.pushInput(transactions, .{ .row = try dida.meta.deepClone(row, allocator), .timestamp = try dida.meta.deepClone(timestamp, allocator), .diff = 1 });
     }
     try shard.advanceInput(transactions, .{ .coords = &[_]usize{1} });
 
@@ -160,25 +159,25 @@ fn run_test() !void {
     _ = total_balance_out;
     //try dida_test.testNodeOutput(&shard, total_balance_out, .{.{.{ .{0}, .{0}, 1 }}});
 
-    var rng = std.rand.DefaultPrng.init(0);
-    var time: usize = 1;
+    //var rng = std.rand.DefaultPrng.init(0);
+    //var time: usize = 1;
     // TODO this test actually fails for larger values of time
-    while (time < 10) : (time += 1) {
-        const from_account = rng.random.int(u4);
-        const to_account = rng.random.int(u4);
-        const amount = rng.random.int(u8);
-        const skew = @intCast(usize, 0); // TODO rng.random.int(u2);
-        const row = dida.core.Row{ .values = &[_]dida.core.Value{
-            .{ .Number = @intToFloat(f64, from_account) },
-            .{ .Number = @intToFloat(f64, to_account) },
-            .{ .Number = @intToFloat(f64, amount) },
-        } };
-        const timestamp = dida.core.Timestamp{ .coords = &[_]usize{time + @as(usize, skew)} };
-        try shard.pushInput(transactions, .{ .row = try row.clone(allocator), .timestamp = try timestamp.clone(allocator), .diff = 1 });
-        try shard.advanceInput(transactions, .{ .coords = &[_]usize{time + 1} });
-        while (shard.hasWork()) try shard.doWork();
-
-        _ = total_balance_out;
-        //try dida_test.testNodeOutput(&shard, total_balance_out, .{});
-    }
+    //while (time < 10) : (time += 1) {
+    //const from_account = rng.random.int(u4);
+    //const to_account = rng.random.int(u4);
+    //const amount = rng.random.int(u8);
+    //const skew = @intCast(usize, 0); // TODO rng.random.int(u2);
+    //const row = dida.core.Row{ .values = &[_]dida.core.Value{
+    //.{ .Number = @intToFloat(f64, from_account) },
+    //.{ .Number = @intToFloat(f64, to_account) },
+    //.{ .Number = @intToFloat(f64, amount) },
+    //} };
+    //const timestamp = dida.core.Timestamp{ .coords = &[_]usize{time + @as(usize, skew)} };
+    //try shard.pushInput(transactions, .{ .row = try dida.meta.deepClone(row,allocator), .timestamp = try dida.meta.deepClone(timestamp.clone, allocator), .diff = 1 });
+    //try shard.advanceInput(transactions, .{ .coords = &[_]usize{time + 1} });
+    //while (shard.hasWork()) try shard.doWork();
+    //
+    //_ = total_balance_out;
+    ////try dida_test.testNodeOutput(&shard, total_balance_out, .{});
+    //}
 }

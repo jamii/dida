@@ -1209,8 +1209,8 @@ test "test shard graph reach" {
         .map_fn = (struct {
             fn swap(_: *dida.core.NodeSpec.MapSpec.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
                 var output_values = try allocator.alloc(dida.core.Value, 2);
-                output_values[0] = try input.values[1].clone(allocator);
-                output_values[1] = try input.values[0].clone(allocator);
+                output_values[0] = try dida.meta.deepClone(input.values[1], allocator);
+                output_values[1] = try dida.meta.deepClone(input.values[0], allocator);
                 return dida.core.Row{ .values = output_values };
             }
         }).swap,
@@ -1235,8 +1235,8 @@ test "test shard graph reach" {
         .map_fn = (struct {
             fn drop_middle(_: *dida.core.NodeSpec.MapSpec.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
                 var output_values = try allocator.alloc(dida.core.Value, 2);
-                output_values[0] = try input.values[2].clone(allocator);
-                output_values[1] = try input.values[1].clone(allocator);
+                output_values[0] = try dida.meta.deepClone(input.values[2], allocator);
+                output_values[1] = try dida.meta.deepClone(input.values[1], allocator);
                 return dida.core.Row{ .values = output_values };
             }
         }).drop_middle,
@@ -1288,11 +1288,11 @@ test "test shard graph reach" {
     const bd = dida.core.Row{ .values = &[_]dida.core.Value{ .{ .String = "b" }, .{ .String = "d" } } };
     const ca = dida.core.Row{ .values = &[_]dida.core.Value{ .{ .String = "c" }, .{ .String = "a" } } };
 
-    try shard.pushInput(edges, .{ .row = try ab.clone(allocator), .timestamp = try timestamp0.clone(allocator), .diff = 1 });
-    try shard.pushInput(edges, .{ .row = try bc.clone(allocator), .timestamp = try timestamp0.clone(allocator), .diff = 1 });
-    try shard.pushInput(edges, .{ .row = try bd.clone(allocator), .timestamp = try timestamp0.clone(allocator), .diff = 1 });
-    try shard.pushInput(edges, .{ .row = try ca.clone(allocator), .timestamp = try timestamp0.clone(allocator), .diff = 1 });
-    try shard.pushInput(edges, .{ .row = try bc.clone(allocator), .timestamp = try timestamp1.clone(allocator), .diff = -1 });
+    try shard.pushInput(edges, .{ .row = try dida.meta.deepClone(ab, allocator), .timestamp = try dida.meta.deepClone(timestamp0, allocator), .diff = 1 });
+    try shard.pushInput(edges, .{ .row = try dida.meta.deepClone(bc, allocator), .timestamp = try dida.meta.deepClone(timestamp0, allocator), .diff = 1 });
+    try shard.pushInput(edges, .{ .row = try dida.meta.deepClone(bd, allocator), .timestamp = try dida.meta.deepClone(timestamp0, allocator), .diff = 1 });
+    try shard.pushInput(edges, .{ .row = try dida.meta.deepClone(ca, allocator), .timestamp = try dida.meta.deepClone(timestamp0, allocator), .diff = 1 });
+    try shard.pushInput(edges, .{ .row = try dida.meta.deepClone(bc, allocator), .timestamp = try dida.meta.deepClone(timestamp1, allocator), .diff = -1 });
     try shard.flushInput(edges);
 
     try shard.advanceInput(edges, timestamp1);
@@ -1395,8 +1395,8 @@ test "test shard total balance" {
             fn map(_: *dida.core.NodeSpec.MapSpec.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
                 // (to, amount)
                 var output_values = try allocator.alloc(dida.core.Value, 2);
-                output_values[0] = try input.values[1].clone(allocator);
-                output_values[1] = try input.values[2].clone(allocator);
+                output_values[0] = try dida.meta.deepClone(input.values[1], allocator);
+                output_values[1] = try dida.meta.deepClone(input.values[2], allocator);
                 return dida.core.Row{ .values = output_values };
             }
         }).map,
@@ -1412,8 +1412,8 @@ test "test shard total balance" {
             fn map(_: *dida.core.NodeSpec.MapSpec.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
                 // (from, amount)
                 var output_values = try allocator.alloc(dida.core.Value, 2);
-                output_values[0] = try input.values[0].clone(allocator);
-                output_values[1] = try input.values[2].clone(allocator);
+                output_values[0] = try dida.meta.deepClone(input.values[0], allocator);
+                output_values[1] = try dida.meta.deepClone(input.values[2], allocator);
                 return dida.core.Row{ .values = output_values };
             }
         }).map,
@@ -1457,7 +1457,7 @@ test "test shard total balance" {
             fn map(_: *dida.core.NodeSpec.MapSpec.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
                 // (account, credit - debit)
                 var output_values = try allocator.alloc(dida.core.Value, 2);
-                output_values[0] = try input.values[0].clone(allocator);
+                output_values[0] = try dida.meta.deepClone(input.values[0], allocator);
                 output_values[1] = .{ .Number = input.values[1].Number - input.values[2].Number };
                 return dida.core.Row{ .values = output_values };
             }
@@ -1492,7 +1492,7 @@ test "test shard total balance" {
             .{ .Number = @intToFloat(f64, 0) },
         } };
         const timestamp = dida.core.Timestamp{ .coords = &[_]u64{0} };
-        try shard.pushInput(transactions, .{ .row = try row.clone(allocator), .timestamp = try timestamp.clone(allocator), .diff = 1 });
+        try shard.pushInput(transactions, .{ .row = try dida.meta.deepClone(row, allocator), .timestamp = try dida.meta.deepClone(timestamp, allocator), .diff = 1 });
     }
     try shard.advanceInput(transactions, .{ .coords = &[_]u64{1} });
 
@@ -1513,7 +1513,7 @@ test "test shard total balance" {
     //.{ .Number = @intToFloat(f64, amount) },
     //} };
     //const timestamp = dida.core.Timestamp{ .coords = &[_]u64{time + @as(usize, skew)} };
-    //try shard.pushInput(transactions, .{ .row = try row.clone(allocator), .timestamp = try timestamp.clone(allocator), .diff = 1 });
+    //try shard.pushInput(transactions, .{ .row = try dida.meta.deepClone(row,allocator), .timestamp = try dida.meta.deepClone(timestamp,allocator), .diff = 1 });
     //try shard.advanceInput(transactions, .{ .coords = &[_]u64{time + 1} });
     //while (shard.hasWork()) try shard.doWork();
     //try testNodeOutput(&shard, total_balance_out, .{});
