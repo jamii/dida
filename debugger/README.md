@@ -1,5 +1,3 @@
-Currently blocked on wasm miscompilation :(
-
 TODO:
 
 * do UI from inside zig, spit out html
