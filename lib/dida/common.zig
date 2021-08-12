@@ -60,19 +60,6 @@ pub fn last(comptime T: type, slice: []const T) T {
     return slice[slice.len - 1];
 }
 
-pub fn TODO() noreturn {
-    panic("TODO", .{});
-}
-
-// This is only for debugging
-pub fn dump(thing: anytype) void {
-    const held = std.debug.getStderrMutex().acquire();
-    defer held.release();
-    const my_stderr = std.io.getStdErr().writer();
-    dida.meta.dumpInto(my_stderr, 0, thing) catch return;
-    my_stderr.writeAll("\n") catch return;
-}
-
 pub fn Queue(comptime T: type) type {
     return struct {
         in: ArrayList(T),
@@ -104,4 +91,17 @@ pub fn Queue(comptime T: type) type {
             return self.out.popOrNull();
         }
     };
+}
+
+pub fn TODO() noreturn {
+    panic("TODO", .{});
+}
+
+// This is only for debugging
+pub fn dump(thing: anytype) void {
+    const held = std.debug.getStderrMutex().acquire();
+    defer held.release();
+    const my_stderr = std.io.getStdErr().writer();
+    dida.debug.dumpInto(my_stderr, 0, thing) catch return;
+    my_stderr.writeAll("\n") catch return;
 }

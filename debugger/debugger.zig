@@ -3,14 +3,18 @@ pub const abi = @import("../bindings/wasm/abi.zig");
 
 pub const dida_test = @import("../test/core.zig");
 
+var shards = std.ArrayList(dida.core.Shard).init(allocator);
 var debug_events = std.ArrayList(dida.debug.DebugEvent).init(allocator);
 
 // Called from dida.debug
-pub fn emitDebugEvent(_: *const dida.core.Shard, debug_event: dida.debug.DebugEvent) void {
-    const cloned_debug_event = dida.meta.deepClone(debug_event, allocator) catch
+pub fn emitDebugEvent(shard: *const dida.core.Shard, debug_event: dida.debug.DebugEvent) void {
+    abi.js.consoleLog(abi.createString({}, "emit"));
+    tryEmitDebugEvent(shard, debug_event) catch
         dida.common.panic("OOM", .{});
-    debug_events.append(cloned_debug_event) catch
-        dida.common.panic("OOM", .{});
+}
+pub fn tryEmitDebugEvent(shard: *const dida.core.Shard, debug_event: dida.debug.DebugEvent) error{OutOfMemory}!void {
+    try shards.append(try dida.meta.deepClone(shard.*, allocator));
+    try debug_events.append(try dida.meta.deepClone(debug_event, allocator));
 }
 
 comptime {
@@ -35,7 +39,8 @@ fn frame() []const u8 {
     run_test() catch |err| dida.common.panic("{}", .{err});
 
     var string = std.ArrayList(u8).init(allocator);
-    dida.meta.dumpInto(string.writer(), 0, debug_events.items) catch |err| dida.common.panic("{}", .{err});
+    dida.debug.dumpInto(string.writer(), 0, debug_events.items) catch |err| dida.common.panic("{}", .{err});
+    dida.debug.dumpInto(string.writer(), 0, shards.items) catch |err| dida.common.panic("{}", .{err});
     return string.items;
 }
 

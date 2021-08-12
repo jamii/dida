@@ -209,236 +209,18 @@ pub fn DeepHashContext(comptime K: type) type {
     };
 }
 
-// This is only for debugging
-pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
-    const T = @TypeOf(thing);
-    if (comptime std.mem.startsWith(u8, @typeName(T), "Allocator")) {
-        try writer.writeAll("Allocator{}");
-    } else if (comptime std.mem.startsWith(u8, @typeName(T), "std.array_list.ArrayList")) {
-        try dumpInto(writer, indent, thing.items);
-    } else if (comptime std.mem.startsWith(u8, @typeName(T), "std.hash_map.HashMap")) {
-        var iter = thing.iterator();
-        const is_set = @TypeOf(iter.next().?.value_ptr.*) == void;
-        try writer.writeAll(if (is_set) "HashSet(\n" else "HashMap(\n");
-        while (iter.next()) |entry| {
-            try writer.writeByteNTimes(' ', indent + 4);
-            try dumpInto(writer, indent + 4, entry.key_ptr.*);
-            if (!is_set) {
-                try writer.writeAll(" => ");
-                try dumpInto(writer, indent + 4, entry.value_ptr.*);
-            }
-            try writer.writeAll(",\n");
-        }
-        try writer.writeByteNTimes(' ', indent);
-        try writer.writeAll(")");
-    } else {
-        switch (T) {
-            dida.core.Value => {
-                switch (thing) {
-                    .Number => |number| try dida.meta.dumpInto(writer, indent + 4, number),
-                    .String => |string| try dida.meta.dumpInto(writer, indent + 4, string),
-                }
-            },
-            dida.core.Row => {
-                try writer.writeAll("Row[");
-                for (thing.values) |value, i| {
-                    try std.fmt.format(writer, "{}", .{value});
-                    if (i != thing.values.len - 1)
-                        try writer.writeAll(", ");
-                }
-                try writer.writeAll("]");
-            },
-            dida.core.Timestamp => {
-                try writer.writeAll("T[");
-                for (thing.coords) |coord, i| {
-                    try std.fmt.format(writer, "{}", .{coord});
-                    if (i != thing.coords.len - 1)
-                        try writer.writeAll(", ");
-                }
-                try writer.writeAll("]");
-            },
-            dida.core.Frontier => {
-                try dida.meta.dumpInto(writer, indent, thing.timestamps);
-            },
-            dida.core.NodeState.DistinctState => {
-                try writer.writeAll("DistinctState{\n");
-
-                try writer.writeByteNTimes(' ', indent + 4);
-                try writer.writeAll("index: ");
-                try dida.meta.dumpInto(writer, indent + 4, thing.index);
-                try writer.writeAll(",\n");
-
-                try writer.writeByteNTimes(' ', indent + 4);
-                try writer.writeAll("pending_corrections: ");
-                try dida.meta.dumpInto(writer, indent + 4, thing.pending_corrections);
-
-                try writer.writeAll("\n");
-                try writer.writeByteNTimes(' ', indent);
-                try writer.writeAll("}");
-            },
-            dida.core.NodeState.ReduceState => {
-                try writer.writeAll("ReduceState{\n");
-
-                try writer.writeByteNTimes(' ', indent + 4);
-                try writer.writeAll("index: ");
-                try dida.meta.dumpInto(writer, indent + 4, thing.index);
-                try writer.writeAll(",\n");
-
-                try writer.writeByteNTimes(' ', indent + 4);
-                try writer.writeAll("pending_corrections: ");
-                try dida.meta.dumpInto(writer, indent + 4, thing.pending_corrections);
-
-                try writer.writeAll("\n");
-                try writer.writeByteNTimes(' ', indent);
-                try writer.writeAll("}");
-            },
-            dida.core.Shard => {
-                try writer.writeAll("Shard{\n");
-
-                for (thing.graph.node_specs) |node_spec, node_id| {
-                    try writer.writeByteNTimes(' ', indent + 4);
-                    try std.fmt.format(writer, "{}: {{\n", .{node_id});
-
-                    try writer.writeByteNTimes(' ', indent + 8);
-                    try writer.writeAll("spec: ");
-                    try dida.meta.dumpInto(writer, indent + 8, node_spec);
-                    try writer.writeAll(",\n");
-
-                    try writer.writeByteNTimes(' ', indent + 8);
-                    try writer.writeAll("state: ");
-                    try dida.meta.dumpInto(writer, indent + 8, thing.node_states[node_id]);
-                    try writer.writeAll(",\n");
-
-                    try writer.writeByteNTimes(' ', indent + 8);
-                    try writer.writeAll("frontier: ");
-                    try dida.meta.dumpInto(writer, indent + 8, thing.node_frontiers[node_id]);
-                    try writer.writeAll(",\n");
-
-                    try writer.writeByteNTimes(' ', indent + 8);
-                    try writer.writeAll("unprocessed_change_batches: [\n");
-                    {
-                        for (thing.unprocessed_change_batches.items) |change_batch_at_node_input| {
-                            if (change_batch_at_node_input.node_input.node.id == node_id) {
-                                try writer.writeByteNTimes(' ', indent + 12);
-                                try dida.meta.dumpInto(writer, indent + 12, change_batch_at_node_input.change_batch);
-                                try writer.writeAll(",\n");
-                            }
-                        }
-                    }
-                    try writer.writeByteNTimes(' ', indent + 8);
-                    try writer.writeAll("],\n");
-
-                    try writer.writeByteNTimes(' ', indent + 4);
-                    try writer.writeAll("},\n");
-                }
-
-                try writer.writeByteNTimes(' ', indent);
-                try writer.writeAll("}\n");
-            },
-            else => {
-                switch (@typeInfo(T)) {
-                    .Pointer => |pti| {
-                        switch (pti.size) {
-                            .One => {
-                                try writer.writeAll("&");
-                                try dumpInto(writer, indent, thing.*);
-                            },
-                            .Many => {
-                                // bail
-                                try std.fmt.format(writer, "{}", .{thing});
-                            },
-                            .Slice => {
-                                if (pti.child == u8) {
-                                    try std.fmt.format(writer, "\"{s}\"", .{thing});
-                                } else {
-                                    try std.fmt.format(writer, "[]{s}[\n", .{pti.child});
-                                    for (thing) |elem| {
-                                        try writer.writeByteNTimes(' ', indent + 4);
-                                        try dumpInto(writer, indent + 4, elem);
-                                        try writer.writeAll(",\n");
-                                    }
-                                    try writer.writeByteNTimes(' ', indent);
-                                    try writer.writeAll("]");
-                                }
-                            },
-                            .C => {
-                                // bail
-                                try std.fmt.format(writer, "{}", .{thing});
-                            },
-                        }
-                    },
-                    .Array => |ati| {
-                        if (ati.child == u8) {
-                            try std.fmt.format(writer, "\"{s}\"", .{thing});
-                        } else {
-                            try std.fmt.format(writer, "[{}]{s}[\n", .{ ati.len, ati.child });
-                            for (thing) |elem| {
-                                try writer.writeByteNTimes(' ', indent + 4);
-                                try dumpInto(writer, indent + 4, elem);
-                                try writer.writeAll(",\n");
-                            }
-                            try writer.writeByteNTimes(' ', indent);
-                            try writer.writeAll("]");
-                        }
-                    },
-                    .Struct => |sti| {
-                        try writer.writeAll(@typeName(@TypeOf(thing)));
-                        try writer.writeAll("{\n");
-                        inline for (sti.fields) |field| {
-                            try writer.writeByteNTimes(' ', indent + 4);
-                            try std.fmt.format(writer, ".{s} = ", .{field.name});
-                            try dumpInto(writer, indent + 4, @field(thing, field.name));
-                            try writer.writeAll(",\n");
-                        }
-                        try writer.writeByteNTimes(' ', indent);
-                        try writer.writeAll("}");
-                    },
-                    .Union => |uti| {
-                        if (uti.tag_type) |tag_type| {
-                            try writer.writeAll(@typeName(@TypeOf(thing)));
-                            try writer.writeAll("{\n");
-                            inline for (@typeInfo(tag_type).Enum.fields) |fti| {
-                                if (@enumToInt(std.meta.activeTag(thing)) == fti.value) {
-                                    try writer.writeByteNTimes(' ', indent + 4);
-                                    try std.fmt.format(writer, ".{s} = ", .{fti.name});
-                                    try dumpInto(writer, indent + 4, @field(thing, fti.name));
-                                    try writer.writeAll("\n");
-                                    try writer.writeByteNTimes(' ', indent);
-                                    try writer.writeAll("}");
-                                }
-                            }
-                        } else {
-                            // bail
-                            try std.fmt.format(writer, "{}", .{thing});
-                        }
-                    },
-                    .Optional => {
-                        if (thing == null) {
-                            try writer.writeAll("null");
-                        } else {
-                            try dumpInto(writer, indent, thing.?);
-                        }
-                    },
-                    else => {
-                        // bail
-                        try std.fmt.format(writer, "{any}", .{thing});
-                    },
-                }
-            },
-        }
-    }
-}
-
 // TODO this can be error-prone - maybe should explicitly list allowed types?
 pub fn deepClone(thing: anytype, allocator: *Allocator) error{OutOfMemory}!@TypeOf(thing) {
     const T = @TypeOf(thing);
     const ti = @typeInfo(T);
-    if (T == *std.mem.Allocator) return allocator;
+
+    if (T == *std.mem.Allocator)
+        return allocator;
 
     if (comptime std.mem.startsWith(u8, @typeName(T), "std.array_list.ArrayList")) {
-        var cloned = try ArrayList(@TypeOf(thing.items[0])).initCapacity(thing.items.len);
+        var cloned = try ArrayList(@TypeOf(thing.items[0])).initCapacity(allocator, thing.items.len);
         cloned.appendSliceAssumeCapacity(thing.items);
-        for (cloned.items) |*item| item.* = deepClone(item.*, allocator);
+        for (cloned.items) |*item| item.* = try deepClone(item.*, allocator);
         return cloned;
     }
 
@@ -453,24 +235,24 @@ pub fn deepClone(thing: anytype, allocator: *Allocator) error{OutOfMemory}!@Type
     }
 
     switch (ti) {
-        .Bool, .Int, .Float, .Enum, .Void => return thing,
+        .Bool, .Int, .Float, .Enum, .Void, .Fn => return thing,
         .Pointer => |pti| {
             switch (pti.size) {
                 .One => {
-                    const cloned = try allocator.create(T);
-                    cloned.* = try deepClone(cloned.*, allocator);
+                    const cloned = try allocator.create(pti.child);
+                    cloned.* = try deepClone(thing.*, allocator);
                     return cloned;
                 },
                 .Slice => {
-                    const cloned = try std.mem.dupe(allocator, pti.child, thing);
-                    for (cloned) |*item| item.* = try deepClone(item.*, allocator);
+                    const cloned = try allocator.alloc(pti.child, thing.len);
+                    for (thing) |item, i| cloned[i] = try deepClone(item, allocator);
                     return cloned;
                 },
                 .Many, .C => compileError("Cannot deepClone {}", .{T}),
             }
         },
         .Array => {
-            var cloned = thing;
+            var cloned: T = undefined;
             for (cloned) |*item| item.* = try deepClone(item.*, allocator);
             return cloned;
         },
@@ -478,15 +260,15 @@ pub fn deepClone(thing: anytype, allocator: *Allocator) error{OutOfMemory}!@Type
             return if (thing == null) null else try deepClone(thing.?, allocator);
         },
         .Struct => |sti| {
-            var cloned = thing;
+            var cloned: T = undefined;
             inline for (sti.fields) |fti| {
-                @field(cloned, fti.name) = try deepClone(@field(cloned, fti.name), allocator);
+                @field(cloned, fti.name) = try deepClone(@field(thing, fti.name), allocator);
             }
             return cloned;
         },
         .Union => |uti| {
             if (uti.tag_type) |tag_type| {
-                const tag = @enumToInt(@as(tag_type, thing));
+                const tag = @enumToInt(std.meta.activeTag(thing));
                 inline for (@typeInfo(tag_type).Enum.fields) |fti| {
                     if (tag == fti.value) {
                         return @unionInit(T, fti.name, try deepClone(@field(thing, fti.name), allocator));
