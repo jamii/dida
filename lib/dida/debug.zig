@@ -283,3 +283,159 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
         }
     }
 }
+
+const ValidationPath = []const []const u8;
+
+pub const ValidationError = union(enum) {
+    Aliasing: [2]ValidationPath,
+};
+
+const ValidationState = struct {
+    allocator: *Allocator,
+    pointers: DeepHashMap(usize, ValidationPath),
+    errors: ArrayList(ValidationError),
+};
+
+pub fn validate(allocator: *Allocator, shard: *const dida.core.Shard) []const ValidationError {
+    var state = ValidationState{
+        .allocator = allocator,
+        .pointers = DeepHashMap(usize, ValidationPath).init(allocator),
+        .errors = ArrayList(ValidationError).init(allocator),
+    };
+    validateInto(&state, &.{}, shard) catch |err| {
+        switch (err) {
+            error.OutOfMemory => panic("Out of memory", .{}),
+        }
+    };
+    return state.errors.toOwnedSlice();
+}
+
+pub fn validateInto(state: *ValidationState, path: ValidationPath, thing: anytype) !void {
+    {
+        const info = @typeInfo(@TypeOf(thing));
+        comptimeAssert(info == .Pointer and info.Pointer.size == .One, "Expected pointer, found {s}", .{@typeName(@TypeOf(thing))});
+        if (@sizeOf(@TypeOf(thing.*)) != 0) {
+            const address = @ptrToInt(thing);
+            const entry = try state.pointers.getOrPut(address);
+            if (entry.found_existing)
+                try state.errors.append(.{ .Aliasing = .{
+                    path,
+                    entry.value_ptr.*,
+                } })
+            else
+                entry.value_ptr.* = path;
+        }
+    }
+    const T = @TypeOf(thing.*);
+    switch (T) {
+        Allocator, *Allocator => return,
+        else => {},
+    }
+    switch (@typeInfo(T)) {
+        .Struct => |info| {
+            if (comptime std.mem.startsWith(u8, @typeName(T), "std.array_list.ArrayList")) {
+                for (thing.items) |*elem, i| {
+                    try validateInto(
+                        state,
+                        try std.mem.concat(state.allocator, []const u8, &.{
+                            path,
+                            &.{try format(state.allocator, "{}", .{i})},
+                        }),
+                        elem,
+                    );
+                }
+            } else if (comptime std.mem.startsWith(u8, @typeName(T), "std.hash_map.HashMap")) {
+                var iter = thing.iterator();
+                var i: usize = 0;
+                while (iter.next()) |entry| {
+                    try validateInto(
+                        state,
+                        try std.mem.concat(state.allocator, []const u8, &.{
+                            path,
+                            &.{ try format(state.allocator, "{}", .{i}), "key" },
+                        }),
+                        entry.key_ptr,
+                    );
+                    try validateInto(
+                        state,
+                        try std.mem.concat(state.allocator, []const u8, &.{
+                            path,
+                            &.{ try format(state.allocator, "{}", .{i}), "value" },
+                        }),
+                        entry.value_ptr,
+                    );
+                    i += 1;
+                }
+            } else inline for (info.fields) |field_info| {
+                try validateInto(
+                    state,
+                    try std.mem.concat(state.allocator, []const u8, &.{
+                        path,
+                        &.{field_info.name},
+                    }),
+                    &@field(thing.*, field_info.name),
+                );
+            }
+        },
+        .Union => |info| {
+            if (info.tag_type) |tag_type| {
+                inline for (@typeInfo(tag_type).Enum.fields) |field_info| {
+                    if (std.meta.activeTag(thing.*) == @intToEnum(tag_type, field_info.value)) {
+                        try validateInto(
+                            state,
+                            try std.mem.concat(state.allocator, []const u8, &.{
+                                path,
+                                &.{field_info.name},
+                            }),
+                            &@field(thing.*, field_info.name),
+                        );
+                    }
+                }
+            }
+        },
+        .Array => for (thing.*) |*elem, i| {
+            try validateInto(
+                state,
+                try std.mem.concat(state.allocator, []const u8, &.{
+                    path,
+                    &.{try format(state.allocator, "{}", .{i})},
+                }),
+                elem,
+            );
+        },
+        .Pointer => |info| {
+            switch (info.size) {
+                .One => try validateInto(
+                    state,
+                    try std.mem.concat(state.allocator, []const u8, &.{
+                        path,
+                        &.{"*"},
+                    }),
+                    &thing.*.*,
+                ),
+                .Many => @compileError("Don't know how to validate " ++ @typeName(T)),
+                .Slice => for (thing.*) |*elem, i| {
+                    try validateInto(
+                        state,
+                        try std.mem.concat(state.allocator, []const u8, &.{
+                            path,
+                            &.{try format(state.allocator, "{}", .{i})},
+                        }),
+                        elem,
+                    );
+                },
+                .C => @compileError("Don't know how to validate " ++ @typeName(T)),
+            }
+        },
+        .Optional => if (thing.*) |*child| try validateInto(
+            state,
+            try std.mem.concat(state.allocator, []const u8, &.{
+                path,
+                &.{"?"},
+            }),
+            child,
+        ),
+        .Int, .Float, .Void, .Fn => {},
+        else => @compileError("Don't know how to validate " ++ @typeName(T)),
+    }
+}

@@ -1245,12 +1245,12 @@ pub const Shard = struct {
     /// (The input frontier is never materialized, so when these changes are processed they will be immediately transformed to apply to the ouput frontier).
     unprocessed_frontier_updates: DeepHashMap(Pointstamp, isize),
 
-    const ChangeBatchAtNodeInput = struct {
+    pub const ChangeBatchAtNodeInput = struct {
         change_batch: ChangeBatch,
         node_input: NodeInput,
     };
 
-    const Pointstamp = struct {
+    pub const Pointstamp = struct {
         node_input: NodeInput,
         /// Borrowed from self.graph
         subgraphs: []const Subgraph,
@@ -1927,6 +1927,6 @@ pub const Shard = struct {
     }
 };
 
-// TODO Its currently possible to remove from HashMap without invalidating iterator which would simplify some of the code in this file. But might not be true forever.
+// TODO It's currently possible to remove from HashMap without invalidating iterator which would simplify some of the code in this file. But might not be true forever.
 
-// TODO Need to decide which type store allocators vs taking them as args, and be careful to allocate/free from the correct allocator
+// TODO Need to decide which types store allocators vs taking them as args, and be careful to allocate/free from the correct allocator

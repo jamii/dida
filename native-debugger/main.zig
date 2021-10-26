@@ -32,11 +32,6 @@ pub fn run() void {
                 ig.ImGuiWindowFlags_NoFocusOnAppearing |
                 ig.ImGuiWindowFlags_NoNav,
         )) {
-            const State = struct {
-                prev_event: dida.debug.DebugEvent,
-                next_event: ?dida.debug.DebugEvent,
-                shard: dida.core.Shard,
-            };
             if (ig.igButton("<<", .{}))
                 i = 0;
             ig.igSameLine(0, 0);
@@ -52,10 +47,18 @@ pub fn run() void {
             ig.igSameLine(0, 0);
             if (ig.igButton(">>", .{}))
                 i = debug_events.items.len - 1;
+
+            const State = struct {
+                prev_event: dida.debug.DebugEvent,
+                next_event: ?dida.debug.DebugEvent,
+                validation_errors: []const dida.debug.ValidationError,
+                shard: dida.core.Shard,
+            };
             inspect(global_allocator, "root", State{
                 .prev_event = debug_events.items[i],
                 .next_event = if (i + 1 == debug_events.items.len) null else debug_events.items[i + 1],
                 .shard = shards.items[i],
+                .validation_errors = validation_errors.items[i],
             });
         }
         ig.igEnd();
@@ -138,6 +141,7 @@ const dida_test = @import("../test/core.zig");
 
 var shards = std.ArrayList(dida.core.Shard).init(global_allocator);
 var debug_events = std.ArrayList(dida.debug.DebugEvent).init(global_allocator);
+var validation_errors = std.ArrayList([]const dida.debug.ValidationError).init(global_allocator);
 
 // Called from dida.debug
 pub fn emitDebugEvent(shard: *const dida.core.Shard, debug_event: dida.debug.DebugEvent) void {
@@ -147,6 +151,7 @@ pub fn emitDebugEvent(shard: *const dida.core.Shard, debug_event: dida.debug.Deb
 pub fn tryEmitDebugEvent(shard: *const dida.core.Shard, debug_event: dida.debug.DebugEvent) error{OutOfMemory}!void {
     try shards.append(try dida.meta.deepClone(shard.*, global_allocator));
     try debug_events.append(try dida.meta.deepClone(debug_event, global_allocator));
+    try validation_errors.append(dida.debug.validate(global_allocator, shard));
 }
 
 fn run_test() !void {
