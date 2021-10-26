@@ -11,7 +11,7 @@ pub fn main() !void {
         .shards = shards,
         .debug_events = debug_events,
     };
-    run(&state);
+    run(state);
 }
 
 pub fn run(data: anytype) void {
@@ -51,11 +51,28 @@ pub fn run(data: anytype) void {
 
 fn inspect(allocator: *std.mem.Allocator, name: []const u8, thing: anytype) void {
     const T = @TypeOf(thing);
-    if (treeNodeFmt("{s}: {s} = ", .{ name, @typeName(T) })) {
+    if (treeNodeFmt("{s}", .{name})) {
+        ig.igSameLine(0, 0);
+        zg.ztText(": {s}", .{@typeName(T)});
         switch (@typeInfo(T)) {
             .Int => zg.ztText("{d} 0o{o} 0b{b}", .{ thing, thing, thing }),
             .Struct => |info| {
-                inline for (info.fields) |field_info| {
+                if (comptime std.mem.startsWith(u8, @typeName(T), "std.array_list.ArrayList")) {
+                    for (thing.items) |elem, i| {
+                        inspect(allocator, zg.fmtTextForImgui("{}", .{i}), elem);
+                    }
+                } else if (comptime std.mem.startsWith(u8, @typeName(T), "std.hash_map.HashMap")) {
+                    var iter = thing.iterator();
+                    var i: usize = 0;
+                    while (iter.next()) |entry| {
+                        // TODO is there a better way to name these?
+                        inspect(allocator, zg.fmtTextForImgui("{}", .{i}), T.KV{
+                            .key = entry.key_ptr.*,
+                            .value = entry.value_ptr.*,
+                        });
+                        i += 1;
+                    }
+                } else inline for (info.fields) |field_info| {
                     inspect(allocator, field_info.name, @field(thing, field_info.name));
                 }
             },
@@ -86,9 +103,9 @@ fn inspect(allocator: *std.mem.Allocator, name: []const u8, thing: anytype) void
         if (@typeInfo(T) == .Pointer and
             @typeInfo(T).Pointer.size == .Slice and
             @typeInfo(T).Pointer.child == u8)
-            zg.ztText("{s}", .{thing})
+            zg.ztText(" = {s}", .{thing})
         else
-            zg.ztText("{any}", .{thing});
+            zg.ztText(" = {any}", .{thing});
     }
 }
 
