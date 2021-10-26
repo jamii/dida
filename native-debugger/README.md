@@ -1,5 +1,4 @@
 Todo:
-* try running from dida
 * don't show node for items that can't be expanded
   * or expand to something more useful?
 * color name, type, data differently

@@ -7,20 +7,15 @@ const global_allocator = std.heap.c_allocator;
 
 pub fn main() !void {
     try run_test();
-    var state = .{
-        .shards = shards,
-        .debug_events = debug_events,
-    };
-    run(state);
+    run();
 }
 
-pub fn run(data: anytype) void {
-    const Context = zt.App(@TypeOf(data));
+pub fn run() void {
+    var i: usize = 0;
 
-    var context = Context.begin(global_allocator, data);
-
+    const Context = zt.App(void);
+    var context = Context.begin(global_allocator, {});
     context.settings.energySaving = false;
-
     while (context.open) {
         context.beginFrame();
         const viewport = ig.igGetMainViewport();
@@ -37,7 +32,31 @@ pub fn run(data: anytype) void {
                 ig.ImGuiWindowFlags_NoFocusOnAppearing |
                 ig.ImGuiWindowFlags_NoNav,
         )) {
-            inspect(global_allocator, "root", context.data);
+            const State = struct {
+                prev_event: dida.debug.DebugEvent,
+                next_event: ?dida.debug.DebugEvent,
+                shard: dida.core.Shard,
+            };
+            if (ig.igButton("<<", .{}))
+                i = 0;
+            ig.igSameLine(0, 0);
+            if (ig.igButton("<", .{}) and i > 0)
+                i -= 1;
+            ig.igSameLine(0, 0);
+            var c_i = @intCast(c_int, i);
+            if (ig.igDragInt("##i", &c_i, 1.0, 0, @intCast(c_int, debug_events.items.len - 1), "%d", 0))
+                i = @intCast(usize, c_i);
+            ig.igSameLine(0, 0);
+            if (ig.igButton(">", .{}) and i < debug_events.items.len - 1)
+                i += 1;
+            ig.igSameLine(0, 0);
+            if (ig.igButton(">>", .{}))
+                i = debug_events.items.len - 1;
+            inspect(global_allocator, "root", State{
+                .prev_event = debug_events.items[i],
+                .next_event = if (i + 1 == debug_events.items.len) null else debug_events.items[i + 1],
+                .shard = shards.items[i],
+            });
         }
         ig.igEnd();
         context.endFrame();
