@@ -8,7 +8,6 @@ const global_allocator = std.heap.c_allocator;
 pub fn main() !void {
     try run_test();
     var state = .{
-        .counter = @as(usize, 0),
         .shards = shards,
         .debug_events = debug_events,
     };
@@ -39,7 +38,6 @@ pub fn run(data: anytype) void {
                 ig.ImGuiWindowFlags_NoNav,
         )) {
             inspect(global_allocator, "root", context.data);
-            //context.data.counter += 1;
         }
         ig.igEnd();
         context.endFrame();
@@ -59,6 +57,15 @@ fn inspect(allocator: *std.mem.Allocator, name: []const u8, thing: anytype) void
             .Struct => |info| {
                 inline for (info.fields) |field_info| {
                     inspect(allocator, field_info.name, @field(thing, field_info.name));
+                }
+            },
+            .Union => |info| {
+                if (info.tag_type) |tag_type| {
+                    inline for (@typeInfo(tag_type).Enum.fields) |field_info| {
+                        if (std.meta.activeTag(thing) == @intToEnum(tag_type, field_info.value)) {
+                            inspect(allocator, field_info.name, @field(thing, field_info.name));
+                        }
+                    }
                 }
             },
             .Pointer => |info| {
