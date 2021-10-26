@@ -312,6 +312,12 @@ pub fn validate(allocator: *u.Allocator, shard: *const dida.core.Shard) []const 
     return state.errors.toOwnedSlice();
 }
 
+// TODO this is a separate function to work around compiler bugs when using anonymous slices
+fn appendPath(allocator: *u.Allocator, a: ValidationPath, b: []const u8) !ValidationPath {
+    const bb: []const []const u8 = &.{b};
+    return std.mem.concat(allocator, []const u8, &.{ a, bb });
+}
+
 pub fn validateInto(state: *ValidationState, path: ValidationPath, thing: anytype) !void {
     {
         const info = @typeInfo(@TypeOf(thing));
@@ -341,10 +347,7 @@ pub fn validateInto(state: *ValidationState, path: ValidationPath, thing: anytyp
                 for (thing.items) |*elem, i| {
                     try validateInto(
                         state,
-                        try std.mem.concat(state.allocator, []const u8, &.{
-                            path,
-                            &.{try u.format(state.allocator, "{}", .{i})},
-                        }),
+                        try appendPath(state.allocator, path, try u.format(state.allocator, "{}", .{i})),
                         elem,
                     );
                 }
@@ -352,20 +355,15 @@ pub fn validateInto(state: *ValidationState, path: ValidationPath, thing: anytyp
                 var iter = thing.iterator();
                 var i: usize = 0;
                 while (iter.next()) |entry| {
+                    const new_path = try appendPath(state.allocator, path, try u.format(state.allocator, "{}", .{i}));
                     try validateInto(
                         state,
-                        try std.mem.concat(state.allocator, []const u8, &.{
-                            path,
-                            &.{ try u.format(state.allocator, "{}", .{i}), "key" },
-                        }),
+                        try appendPath(state.allocator, new_path, "key"),
                         entry.key_ptr,
                     );
                     try validateInto(
                         state,
-                        try std.mem.concat(state.allocator, []const u8, &.{
-                            path,
-                            &.{ try u.format(state.allocator, "{}", .{i}), "value" },
-                        }),
+                        try appendPath(state.allocator, new_path, "value"),
                         entry.value_ptr,
                     );
                     i += 1;
@@ -373,10 +371,7 @@ pub fn validateInto(state: *ValidationState, path: ValidationPath, thing: anytyp
             } else inline for (info.fields) |field_info| {
                 try validateInto(
                     state,
-                    try std.mem.concat(state.allocator, []const u8, &.{
-                        path,
-                        &.{field_info.name},
-                    }),
+                    try appendPath(state.allocator, path, field_info.name),
                     &@field(thing.*, field_info.name),
                 );
             }
@@ -387,10 +382,9 @@ pub fn validateInto(state: *ValidationState, path: ValidationPath, thing: anytyp
                     if (std.meta.activeTag(thing.*) == @intToEnum(tag_type, field_info.value)) {
                         try validateInto(
                             state,
-                            try std.mem.concat(state.allocator, []const u8, &.{
-                                path,
-                                &.{field_info.name},
-                            }),
+                            // TODO this causes a compiler crash
+                            //try appendPath(state.allocator, path, field_info.name),
+                            path,
                             &@field(thing.*, field_info.name),
                         );
                     }
@@ -401,34 +395,29 @@ pub fn validateInto(state: *ValidationState, path: ValidationPath, thing: anytyp
             for (thing.*) |*elem, i| {
                 try validateInto(
                     state,
-                    try std.mem.concat(state.allocator, []const u8, &.{
-                        path,
-                        &.{try u.format(state.allocator, "{}", .{i})},
-                    }),
+                    try appendPath(state.allocator, path, try u.format(state.allocator, "{}", .{i})),
                     elem,
                 );
             }
         },
         .Pointer => |info| {
             switch (info.size) {
-                .One => try validateInto(
-                    state,
-                    try std.mem.concat(state.allocator, []const u8, &.{
-                        path,
-                        &.{"*"},
-                    }),
-                    &thing.*.*,
-                ),
-                .Many => @compileError("Don't know how to validate " ++ @typeName(T)),
-                .Slice => for (thing.*) |*elem, i| {
+                .One => {
                     try validateInto(
                         state,
-                        try std.mem.concat(state.allocator, []const u8, &.{
-                            path,
-                            &.{try u.format(state.allocator, "{}", .{i})},
-                        }),
-                        elem,
+                        try appendPath(state.allocator, path, "*"),
+                        &thing.*.*,
                     );
+                },
+                .Many => @compileError("Don't know how to validate " ++ @typeName(T)),
+                .Slice => {
+                    for (thing.*) |*elem, i| {
+                        try validateInto(
+                            state,
+                            try appendPath(state.allocator, path, try u.format(state.allocator, "{}", .{i})),
+                            elem,
+                        );
+                    }
                 },
                 .C => @compileError("Don't know how to validate " ++ @typeName(T)),
             }
@@ -436,10 +425,7 @@ pub fn validateInto(state: *ValidationState, path: ValidationPath, thing: anytyp
         .Optional => {
             if (thing.*) |*child| try validateInto(
                 state,
-                try std.mem.concat(state.allocator, []const u8, &.{
-                    path,
-                    &.{"?"},
-                }),
+                try appendPath(state.allocator, path, "?"),
                 child,
             );
         },

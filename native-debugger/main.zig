@@ -6,6 +6,7 @@ const zg = zt.custom_components;
 const global_allocator = std.heap.c_allocator;
 
 pub fn main() !void {
+    std.debug.print("Started!\n", .{});
     try run_test();
     run();
 }
