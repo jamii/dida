@@ -1,7 +1,8 @@
 //! Wrapper aound [NAPI](https://nodejs.org/api/n-api.html).
 //! Used by ../js_common.zig
 
-usingnamespace @import("../js_common.zig");
+pub const js_common = @import("../js_common.zig");
+pub const dida = @import("../../lib/dida.zig");
 
 // --- node-specific stuff ---
 
@@ -13,11 +14,11 @@ fn napiCall(comptime napi_fn: anytype, args: anytype, comptime ReturnType: type)
     if (ReturnType != void) {
         var result: ReturnType = undefined;
         const status: c.napi_status = @call(.{}, napi_fn, args ++ .{&result});
-        dida.common.assert(status == c.napi_ok, "Call returned status {}", .{status});
+        dida.util.assert(status == c.napi_ok, "Call returned status {}", .{status});
         return result;
     } else {
         const status: c.napi_status = @call(.{}, napi_fn, args);
-        dida.common.assert(status == c.napi_ok, "Call returned status {}", .{status});
+        dida.util.assert(status == c.napi_ok, "Call returned status {}", .{status});
     }
 }
 
@@ -40,7 +41,7 @@ pub fn createFunction(
                 &this,
                 null,
             }, void);
-            dida.common.assert(
+            dida.util.assert(
                 actual_num_args == num_args,
                 "Expected {} args, got {} args",
                 .{
@@ -60,7 +61,7 @@ pub const Env = c.napi_env;
 pub const Value = c.napi_value;
 pub const RefCounted = c.napi_ref;
 
-pub fn jsTypeOf(env: Env, value: Value) JsType {
+pub fn jsTypeOf(env: Env, value: Value) js_common.JsType {
     const napi_type = napiCall(c.napi_typeof, .{ env, value }, c.napi_valuetype);
     return switch (napi_type) {
         c.napi_undefined => .Undefined,
@@ -70,7 +71,7 @@ pub fn jsTypeOf(env: Env, value: Value) JsType {
         c.napi_string => .String,
         c.napi_object => .Object,
         c.napi_function => .Function,
-        else => dida.common.panic("Don't know how to handle this napi_valuetype: {}", .{napi_type}),
+        else => dida.util.panic("Don't know how to handle this napi_valuetype: {}", .{napi_type}),
     };
 }
 
@@ -134,7 +135,7 @@ pub fn getF64(env: Env, value: Value) f64 {
 pub fn getString(env: Env, value: Value) ![]const u8 {
     const len = napiCall(c.napi_get_value_string_utf8, .{ env, value, null, 0 }, usize);
     // len+1 for null byte
-    var buffer = try allocator.alloc(u8, len + 1);
+    var buffer = try js_common.allocator.alloc(u8, len + 1);
     return getStringInto(env, value, buffer);
 }
 
@@ -172,9 +173,9 @@ pub fn getProperty(env: Env, object: Value, name: Value) Value {
 }
 
 pub fn callFunction(env: Env, function: Value, args: []const Value) Value {
-    dida.common.assert(!napiCall(c.napi_is_exception_pending, .{env}, bool), "Shouldn't be any exceptions before function call", .{});
+    dida.util.assert(!napiCall(c.napi_is_exception_pending, .{env}, bool), "Shouldn't be any exceptions before function call", .{});
     const napi_undefined = createUndefined(env);
     const output = napiCall(c.napi_call_function, .{ env, napi_undefined, function, args.len, @ptrCast([*c]const Value, args) }, Value);
-    dida.common.assert(!napiCall(c.napi_is_exception_pending, .{env}, bool), "Shouldn't be any exceptions after function call", .{});
+    dida.util.assert(!napiCall(c.napi_is_exception_pending, .{env}, bool), "Shouldn't be any exceptions after function call", .{});
     return output;
 }

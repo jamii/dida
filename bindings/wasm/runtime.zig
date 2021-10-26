@@ -1,4 +1,6 @@
-usingnamespace @import("../js_common.zig");
+const std = @import("std");
+const dida = @import("../../lib/dida.zig");
+const js_common = @import("../js_common.zig");
 pub const abi = @import("./abi.zig");
 
 // Requires fixing https://github.com/ziglang/zig/issues/8027
@@ -6,7 +8,7 @@ pub const abi = @import("./abi.zig");
 //inline for (exported_functions) |exported_function| {
 //const num_args = @typeInfo(@TypeOf(exported_function[1])).Fn.args.len;
 //@export(
-//abi.handleAbiForFunction(num_args, handleSerdeForFunction(exported_function[1])),
+//abi.handleAbiForFunction(num_args, js_common.handleSerdeForFunction(exported_function[1])),
 //.{
 //.name = exported_function[0],
 //.linkage = .Strong,
@@ -18,9 +20,9 @@ pub const abi = @import("./abi.zig");
 comptime {
     {
         const name = "GraphBuilder_init";
-        const function = GraphBuilder_init;
+        const function = js_common.GraphBuilder_init;
         const num_args = @typeInfo(@TypeOf(function)).Fn.args.len;
-        const exported_function = abi.handleAbiForFunction(num_args, handleSerdeForFunction(function));
+        const exported_function = abi.handleAbiForFunction(num_args, js_common.handleSerdeForFunction(function));
         @export(
             exported_function,
             .{
@@ -33,7 +35,7 @@ comptime {
         const name = "GraphBuilder_addSubgraph";
         const function = dida.core.GraphBuilder.addSubgraph;
         const num_args = @typeInfo(@TypeOf(function)).Fn.args.len;
-        const exported_function = abi.handleAbiForFunction(num_args, handleSerdeForFunction(function));
+        const exported_function = abi.handleAbiForFunction(num_args, js_common.handleSerdeForFunction(function));
         @export(
             exported_function,
             .{
@@ -46,7 +48,7 @@ comptime {
         const name = "GraphBuilder_addNode";
         const function = dida.core.GraphBuilder.addNode;
         const num_args = @typeInfo(@TypeOf(function)).Fn.args.len;
-        const exported_function = abi.handleAbiForFunction(num_args, handleSerdeForFunction(function));
+        const exported_function = abi.handleAbiForFunction(num_args, js_common.handleSerdeForFunction(function));
         @export(
             exported_function,
             .{
@@ -59,7 +61,7 @@ comptime {
         const name = "GraphBuilder_connectLoop";
         const function = dida.core.GraphBuilder.connectLoop;
         const num_args = @typeInfo(@TypeOf(function)).Fn.args.len;
-        const exported_function = abi.handleAbiForFunction(num_args, handleSerdeForFunction(function));
+        const exported_function = abi.handleAbiForFunction(num_args, js_common.handleSerdeForFunction(function));
         @export(
             exported_function,
             .{
@@ -72,7 +74,7 @@ comptime {
         const name = "GraphBuilder_finishAndReset";
         const function = dida.core.GraphBuilder.finishAndReset;
         const num_args = @typeInfo(@TypeOf(function)).Fn.args.len;
-        const exported_function = abi.handleAbiForFunction(num_args, handleSerdeForFunction(function));
+        const exported_function = abi.handleAbiForFunction(num_args, js_common.handleSerdeForFunction(function));
         @export(
             exported_function,
             .{
@@ -83,9 +85,9 @@ comptime {
     }
     {
         const name = "Graph_init";
-        const function = Graph_init;
+        const function = js_common.Graph_init;
         const num_args = @typeInfo(@TypeOf(function)).Fn.args.len;
-        const exported_function = abi.handleAbiForFunction(num_args, handleSerdeForFunction(function));
+        const exported_function = abi.handleAbiForFunction(num_args, js_common.handleSerdeForFunction(function));
         @export(
             exported_function,
             .{
@@ -96,9 +98,9 @@ comptime {
     }
     {
         const name = "Shard_init";
-        const function = Shard_init;
+        const function = js_common.Shard_init;
         const num_args = @typeInfo(@TypeOf(function)).Fn.args.len;
-        const exported_function = abi.handleAbiForFunction(num_args, handleSerdeForFunction(function));
+        const exported_function = abi.handleAbiForFunction(num_args, js_common.handleSerdeForFunction(function));
         @export(
             exported_function,
             .{
@@ -111,7 +113,7 @@ comptime {
         const name = "Shard_pushInput";
         const function = dida.core.Shard.pushInput;
         const num_args = @typeInfo(@TypeOf(function)).Fn.args.len;
-        const exported_function = abi.handleAbiForFunction(num_args, handleSerdeForFunction(function));
+        const exported_function = abi.handleAbiForFunction(num_args, js_common.handleSerdeForFunction(function));
         @export(
             exported_function,
             .{
@@ -124,7 +126,7 @@ comptime {
         const name = "Shard_flushInput";
         const function = dida.core.Shard.flushInput;
         const num_args = @typeInfo(@TypeOf(function)).Fn.args.len;
-        const exported_function = abi.handleAbiForFunction(num_args, handleSerdeForFunction(function));
+        const exported_function = abi.handleAbiForFunction(num_args, js_common.handleSerdeForFunction(function));
         @export(
             exported_function,
             .{
@@ -137,7 +139,7 @@ comptime {
         const name = "Shard_advanceInput";
         const function = dida.core.Shard.advanceInput;
         const num_args = @typeInfo(@TypeOf(function)).Fn.args.len;
-        const exported_function = abi.handleAbiForFunction(num_args, handleSerdeForFunction(function));
+        const exported_function = abi.handleAbiForFunction(num_args, js_common.handleSerdeForFunction(function));
         @export(
             exported_function,
             .{
@@ -150,7 +152,7 @@ comptime {
         const name = "Shard_hasWork";
         const function = dida.core.Shard.hasWork;
         const num_args = @typeInfo(@TypeOf(function)).Fn.args.len;
-        const exported_function = abi.handleAbiForFunction(num_args, handleSerdeForFunction(function));
+        const exported_function = abi.handleAbiForFunction(num_args, js_common.handleSerdeForFunction(function));
         @export(
             exported_function,
             .{
@@ -163,7 +165,7 @@ comptime {
         const name = "Shard_doWork";
         const function = dida.core.Shard.doWork;
         const num_args = @typeInfo(@TypeOf(function)).Fn.args.len;
-        const exported_function = abi.handleAbiForFunction(num_args, handleSerdeForFunction(function));
+        const exported_function = abi.handleAbiForFunction(num_args, js_common.handleSerdeForFunction(function));
         @export(
             exported_function,
             .{
@@ -176,7 +178,7 @@ comptime {
         const name = "Shard_popOutput";
         const function = dida.core.Shard.popOutput;
         const num_args = @typeInfo(@TypeOf(function)).Fn.args.len;
-        const exported_function = abi.handleAbiForFunction(num_args, handleSerdeForFunction(function));
+        const exported_function = abi.handleAbiForFunction(num_args, js_common.handleSerdeForFunction(function));
         @export(
             exported_function,
             .{

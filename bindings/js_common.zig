@@ -134,7 +134,7 @@ pub fn serdeStrategy(comptime T: type) SerdeStrategy {
         dida.core.NodeSpec.OutputSpec,
         => .Value,
 
-        else => dida.common.compileError("No SerdeStrategy for {}", .{T}),
+        else => dida.util.compileError("No SerdeStrategy for {}", .{T}),
     };
 }
 
@@ -154,12 +154,12 @@ pub fn handleSerdeForFunction(comptime zig_fn: anytype) fn (abi.Env, []const abi
             }
             const result_or_err = @call(.{}, zig_fn, zig_args);
             const result = if (@typeInfo(@TypeOf(result_or_err)) == .ErrorUnion)
-                result_or_err catch |err| dida.common.panic("{}", .{err})
+                result_or_err catch |err| dida.util.panic("{}", .{err})
             else
                 result_or_err;
             switch (comptime serdeStrategy(@TypeOf(result))) {
                 .External => {
-                    const result_ptr = allocator.create(@TypeOf(result)) catch |err| dida.common.panic("{}", .{err});
+                    const result_ptr = allocator.create(@TypeOf(result)) catch |err| dida.util.panic("{}", .{err});
                     result_ptr.* = result;
                     return serializeExternal(env, result_ptr);
                 },
@@ -175,7 +175,7 @@ pub fn handleSerdeForFunction(comptime zig_fn: anytype) fn (abi.Env, []const abi
 
 const usize_bits = @bitSizeOf(usize);
 comptime {
-    dida.common.comptimeAssert(
+    dida.util.comptimeAssert(
         usize_bits == 32 or usize_bits == 64,
         "Can only handle 32 bit or 64 bit architectures, not {}",
         .{usize_bits},
@@ -184,17 +184,17 @@ comptime {
 
 fn serializeExternal(env: abi.Env, value: anytype) abi.Value {
     const info = @typeInfo(@TypeOf(value));
-    dida.common.comptimeAssert(
+    dida.util.comptimeAssert(
         comptime (serdeStrategy(@TypeOf(value)) == .External),
         "Used serializeExternal on a type that is expected to require serializeValue: {}",
         .{@TypeOf(value)},
     );
-    dida.common.comptimeAssert(
+    dida.util.comptimeAssert(
         info == .Pointer and info.Pointer.size == .One,
         "serializeExternal should be called with *T, got {}",
         .{@TypeOf(value)},
     );
-    dida.common.comptimeAssert(
+    dida.util.comptimeAssert(
         comptime hasJsConstructor(info.Pointer.child),
         "Tried to create an external for a type that doesn't have a matching js constructor: {}",
         .{@TypeOf(value)},
@@ -206,13 +206,13 @@ fn serializeExternal(env: abi.Env, value: anytype) abi.Value {
 }
 
 fn deserializeExternal(env: abi.Env, value: abi.Value, comptime ReturnType: type) ReturnType {
-    dida.common.comptimeAssert(
+    dida.util.comptimeAssert(
         comptime (serdeStrategy(ReturnType) == .External),
         "Used deserializeExternal on a type that is expected to require deserializeValue: {}",
         .{ReturnType},
     );
     const info = @typeInfo(ReturnType);
-    dida.common.comptimeAssert(
+    dida.util.comptimeAssert(
         info == .Pointer and info.Pointer.size == .One,
         "deserializeExternal should be called with *T, got {}",
         .{ReturnType},
@@ -223,7 +223,7 @@ fn deserializeExternal(env: abi.Env, value: abi.Value, comptime ReturnType: type
 }
 
 fn serializeValue(env: abi.Env, value: anytype) abi.Value {
-    dida.common.comptimeAssert(
+    dida.util.comptimeAssert(
         comptime (serdeStrategy(@TypeOf(value)) == .Value),
         "Used serializeValue on a type that is expected to require serializeExternal: {}",
         .{@TypeOf(value)},
@@ -270,18 +270,18 @@ fn serializeValue(env: abi.Env, value: anytype) abi.Value {
             return switch (@TypeOf(value)) {
                 usize => if (usize_bits == 64) abi.createI64(env, @intCast(i64, value)) else abi.createU32(env, value),
                 isize => if (usize_bits == 64) abi.createI64(env, value) else abi.createI32(env, value),
-                else => dida.common.compileError("Don't know how to create js value for {}", .{@TypeOf(cast_value)}),
+                else => dida.util.compileError("Don't know how to create js value for {}", .{@TypeOf(value)}),
             };
         },
         .Float => {
             const abi_fn = switch (@TypeOf(value)) {
                 f64 => abi.createF64,
-                else => dida.common.compileError("Don't know how to create js value for {}", .{@TypeOf(value)}),
+                else => dida.util.compileError("Don't know how to create js value for {}", .{@TypeOf(value)}),
             };
             return @call(.{}, abi_fn, .{ env, value });
         },
         .Struct => |struct_info| {
-            dida.common.comptimeAssert(
+            dida.util.comptimeAssert(
                 comptime hasJsConstructor(@TypeOf(value)),
                 "Tried to create a value for a struct type that doesn't have a matching js constructor: {}",
                 .{@TypeOf(value)},
@@ -295,7 +295,7 @@ fn serializeValue(env: abi.Env, value: anytype) abi.Value {
         },
         .Union => |union_info| {
             if (union_info.tag_type) |tag_type| {
-                dida.common.comptimeAssert(
+                dida.util.comptimeAssert(
                     comptime hasJsConstructor(@TypeOf(value)),
                     "Tried to create a value for a union type that doesn't have a matching js constructor: {}",
                     .{@TypeOf(value)},
@@ -313,14 +313,14 @@ fn serializeValue(env: abi.Env, value: anytype) abi.Value {
                 }
                 unreachable;
             } else {
-                dida.common.compileError("Can't create value for untagged union type {}", .{ReturnType});
+                dida.util.compileError("Can't create value for untagged union type {}", .{@TypeOf(value)});
             }
         },
         .Enum => |enum_info| {
             comptime var max_len: usize = 0;
             inline for (enum_info.fields) |field_info| {
                 comptime {
-                    max_len = dida.common.max(max_len, field_info.name.len);
+                    max_len = dida.util.max(max_len, field_info.name.len);
                 }
             }
             // max_len+1 to make space for null byte
@@ -328,10 +328,10 @@ fn serializeValue(env: abi.Env, value: anytype) abi.Value {
             const tag_name = abi.getStringInto(env, value, &buffer);
             inline for (enum_info.fields) |field_info| {
                 if (std.mem.eql(u8, tag_name, field_info.name)) {
-                    return @intToEnum(ReturnType, field_info.value);
+                    return @intToEnum(@TypeOf(value), field_info.value);
                 }
             }
-            dida.common.panic("Type {s} does not contain a tag named \"{s}\"", .{ ReturnType, tag_name });
+            dida.util.panic("Type {s} does not contain a tag named \"{s}\"", .{ @TypeOf(value), tag_name });
         },
         .Pointer => |pointer_info| {
             switch (pointer_info.size) {
@@ -343,7 +343,7 @@ fn serializeValue(env: abi.Env, value: anytype) abi.Value {
                     }
                     return js_array;
                 },
-                else => dida.common.compileError("Don't know how to create value of type {}", .{@TypeOf(value)}),
+                else => dida.util.compileError("Don't know how to create value of type {}", .{@TypeOf(value)}),
             }
         },
         .Optional => {
@@ -355,7 +355,7 @@ fn serializeValue(env: abi.Env, value: anytype) abi.Value {
         .Void => {
             return abi.createUndefined(env);
         },
-        else => dida.common.compileError("Don't know how to create value of type {}", .{@TypeOf(value)}),
+        else => dida.util.compileError("Don't know how to create value of type {}", .{@TypeOf(value)}),
     }
 }
 
@@ -398,14 +398,14 @@ const JsReducer = struct {
 };
 
 fn deserializeValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) ReturnType {
-    dida.common.comptimeAssert(
+    dida.util.comptimeAssert(
         comptime (serdeStrategy(ReturnType) == .Value),
         "Used deserializeValue on a type that is expected to require deserializeExternal: {}",
         .{ReturnType},
     );
 
     if (ReturnType == []const u8) {
-        return abi.getString(env, value) catch |err| dida.common.panic("{}", .{err});
+        return abi.getString(env, value) catch |err| dida.util.panic("{}", .{err});
     }
 
     if (ReturnType == dida.core.Value) {
@@ -413,7 +413,7 @@ fn deserializeValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) R
         return switch (js_type) {
             .String => dida.core.Value{ .String = deserializeValue(env, value, []const u8) },
             .Number => dida.core.Value{ .Number = deserializeValue(env, value, f64) },
-            else => dida.common.panic("Don't know how to get a dida.core.Value from {}", .{js_type}),
+            else => dida.util.panic("Don't know how to get a dida.core.Value from {}", .{js_type}),
         };
     }
 
@@ -427,7 +427,7 @@ fn deserializeValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) R
 
     if (ReturnType == *dida.core.NodeSpec.MapSpec.Mapper) {
         // TODO we're just leaking this for now
-        var js_mapper = allocator.create(JsMapper) catch |err| dida.common.panic("{}", .{err});
+        var js_mapper = allocator.create(JsMapper) catch |err| dida.util.panic("{}", .{err});
         js_mapper.* = JsMapper{
             .env = env,
             .js_fn_ref = abi.createRefCounted(env, value, 1),
@@ -440,7 +440,7 @@ fn deserializeValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) R
 
     if (ReturnType == *dida.core.NodeSpec.ReduceSpec.Reducer) {
         // TODO we're just leaking this for now
-        var js_reducer = allocator.create(JsReducer) catch |err| dida.common.panic("{}", .{err});
+        var js_reducer = allocator.create(JsReducer) catch |err| dida.util.panic("{}", .{err});
         js_reducer.* = JsReducer{
             .env = env,
             .js_fn_ref = abi.createRefCounted(env, value, 1),
@@ -457,13 +457,13 @@ fn deserializeValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) R
             return switch (ReturnType) {
                 usize => if (usize_bits == 64) @intCast(usize, abi.getI64(env, value)) else abi.getU32(env, value),
                 isize => if (usize_bits == 64) abi.getI64(env, value) else abi.getI32(env, value),
-                else => dida.common.compileError("Don't know how to create js value for {}", .{ReturnType}),
+                else => dida.util.compileError("Don't know how to create js value for {}", .{ReturnType}),
             };
         },
         .Float => {
             const abi_fn = switch (ReturnType) {
                 f64 => abi.getF64,
-                else => dida.common.compileError("Don't know how to create js value for {}", .{ReturnType}),
+                else => dida.util.compileError("Don't know how to create js value for {}", .{ReturnType}),
             };
             return @call(.{}, abi_fn, .{ env, value });
         },
@@ -487,14 +487,14 @@ fn deserializeValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) R
                 }
                 unreachable;
             } else {
-                dida.common.compileError("Can't get value for untagged union type {}", .{ReturnType});
+                dida.util.compileError("Can't get value for untagged union type {}", .{ReturnType});
             }
         },
         .Enum => |enum_info| {
             comptime var max_len: usize = 0;
             inline for (enum_info.fields) |field_info| {
                 comptime {
-                    max_len = dida.common.max(max_len, field_info.name.len);
+                    max_len = dida.util.max(max_len, field_info.name.len);
                 }
             }
             // max_len+1 to make space for null byte :(
@@ -505,11 +505,11 @@ fn deserializeValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) R
                     return @intToEnum(ReturnType, field_info.value);
                 }
             }
-            dida.common.panic("Type {s} does not contain a tag named \"{s}\"", .{ ReturnType, tag_name });
+            dida.util.panic("Type {s} does not contain a tag named \"{s}\"", .{ ReturnType, tag_name });
         },
         .Array => |array_info| {
             const js_len = abi.getArrayLength(env, value);
-            dida.common.assert(js_len == array_info.len, "Expected array of length {}, got length {}", .{ array_info.len, js_len });
+            dida.util.assert(js_len == array_info.len, "Expected array of length {}, got length {}", .{ array_info.len, js_len });
             var result: ReturnType = undefined;
             for (result) |*elem, i| {
                 const js_elem = abi.getElement(env, value, @intCast(u32, i));
@@ -521,14 +521,14 @@ fn deserializeValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) R
             switch (pointer_info.size) {
                 .Slice => {
                     const len = abi.getArrayLength(env, value);
-                    const result = allocator.alloc(pointer_info.child, len) catch |err| dida.common.panic("{}", .{err});
+                    const result = allocator.alloc(pointer_info.child, len) catch |err| dida.util.panic("{}", .{err});
                     for (result) |*elem, i| {
                         const js_elem = abi.getElement(env, value, @intCast(u32, i));
                         elem.* = deserializeValue(env, js_elem, pointer_info.child);
                     }
                     return result;
                 },
-                else => dida.common.compileError("Don't know how to get value for type {}", .{ReturnType}),
+                else => dida.util.compileError("Don't know how to get value for type {}", .{ReturnType}),
             }
         },
         .Optional => |optional_info| {
@@ -541,7 +541,7 @@ fn deserializeValue(env: abi.Env, value: abi.Value, comptime ReturnType: type) R
         .Void => {
             return {};
         },
-        else => dida.common.compileError("Don't know how to get value for type {}", .{ReturnType}),
+        else => dida.util.compileError("Don't know how to get value for type {}", .{ReturnType}),
     }
 }
 

@@ -2,7 +2,8 @@
 //! Used by ../js_common.zig
 //! TODO much of this could be automatically generated with https://github.com/ziglang/zig/issues/6709
 
-usingnamespace @import("../js_common.zig");
+const dida = @import("../../lib/dida.zig");
+const js_common = @import("../js_common.zig");
 
 // --- wasm-specific stuff ---
 
@@ -42,7 +43,7 @@ fn HandleAbiForFunction(comptime num_args: usize) type {
         1 => fn callback(Value) callconv(.C) Value,
         2 => fn callback(Value, Value) callconv(.C) Value,
         3 => fn callback(Value, Value, Value) callconv(.C) Value,
-        else => dida.common.compileError("Need to add a boilerplate branch for exporting functions with {} args", .{num_args}),
+        else => dida.util.compileError("Need to add a boilerplate branch for exporting functions with {} args", .{num_args}),
     };
 }
 
@@ -71,7 +72,7 @@ pub fn handleAbiForFunction(
                 return @call(.{}, zig_fn, .{ {}, &[_]Value{ a1, a2, a3 } });
             }
         }.callback,
-        else => dida.common.compileError("Need to add a boilerplate branch for exporting functions with {} args", .{num_args}),
+        else => dida.util.compileError("Need to add a boilerplate branch for exporting functions with {} args", .{num_args}),
     };
 }
 
@@ -82,11 +83,11 @@ pub const Value = i32;
 pub const RefCounted = i32;
 
 comptime {
-    dida.common.comptimeAssert(@bitSizeOf(*c_void) == 32, "Expect wasm to have 32 bit addresses", .{});
+    dida.util.comptimeAssert(@bitSizeOf(*c_void) == 32, "Expect wasm to have 32 bit addresses", .{});
 }
 
-pub fn jsTypeOf(_: Env, value: Value) JsType {
-    return @intToEnum(JsType, @intCast(u3, js.jsTypeOf(value)));
+pub fn jsTypeOf(_: Env, value: Value) js_common.JsType {
+    return @intToEnum(js_common.JsType, @intCast(u3, js.jsTypeOf(value)));
 }
 
 pub fn createUndefined(_: Env) Value {
@@ -152,7 +153,7 @@ pub fn getF64(_: Env, value: Value) f64 {
 
 pub fn getString(env: Env, value: Value) ![]const u8 {
     const len = js.getStringLength(value);
-    var buffer = try allocator.alloc(u8, len);
+    var buffer = try js_common.allocator.alloc(u8, len);
     return getStringInto(env, value, buffer);
 }
 

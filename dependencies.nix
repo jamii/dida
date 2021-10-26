@@ -8,10 +8,8 @@ rec {
     zig = pkgs.stdenv.mkDerivation {
         name = "zig";
         src = fetchTarball (if (pkgs.system == "x86_64-linux") then {
-            url = "https://ziglang.org/builds/zig-linux-x86_64-0.9.0-dev.687+7aaea20e7.tar.xz";
-            sha256 = "1s64pkv6jf70gw58lvsizv1wxcp2055cb540l4xpbgcqc749g6bl";
-            # url = "https://ziglang.org/builds/zig-linux-x86_64-0.9.0-dev.1444+e2a2e6c14.tar.xz";
-            # sha256 = "1azv16jkn7mh1jm9m6k7d5nkjjs26dhy26azg9xcb4hg5qrznnc0";
+            url = "https://ziglang.org/builds/zig-linux-x86_64-0.9.0-dev.1444+e2a2e6c14.tar.xz";
+            sha256 = "1azv16jkn7mh1jm9m6k7d5nkjjs26dhy26azg9xcb4hg5qrznnc0";
         } else throw ("Unknown system " ++ pkgs.system));
         dontConfigure = true;
         dontBuild = true;

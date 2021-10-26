@@ -1,20 +1,22 @@
 // TODO this is just a proof of concept, api might change a lot
 
-usingnamespace @import("./common.zig");
+const std = @import("std");
+const dida = @import("../dida.zig");
+const u = dida.util;
 
 fn assert_ok(result: anytype) @typeInfo(@TypeOf(result)).ErrorUnion.payload {
-    return result catch |err| panic("{}", .{err});
+    return result catch |err| u.panic("{}", .{err});
 }
 
 // TODO this needs a better name
 pub const Sugar = struct {
-    allocator: *Allocator,
+    allocator: *u.Allocator,
     state: union(enum) {
         Building: dida.core.GraphBuilder,
         Running: dida.core.Shard,
     },
 
-    pub fn init(allocator: *Allocator) Sugar {
+    pub fn init(allocator: *u.Allocator) Sugar {
         return .{
             .allocator = allocator,
             .state = .{ .Building = dida.core.GraphBuilder.init(allocator) },
@@ -81,7 +83,7 @@ pub const Subgraph = struct {
 
     pub fn importNode(self: Subgraph, node: anytype) Node(.TimestampPush) {
         const builder = &self.sugar.state.Building;
-        assert(
+        u.assert(
             builder.node_subgraphs.items[node.inner.id].id == builder.subgraph_parents.items[self.inner.id - 1].id,
             "Can only import from parent subgraph into child subgraph",
             .{},
@@ -98,7 +100,7 @@ pub const Subgraph = struct {
 
     pub fn exportNode(self: Subgraph, node: anytype) Node(.TimestampPop) {
         const builder = &self.sugar.state.Building;
-        assert(
+        u.assert(
             builder.node_subgraphs.items[node.inner.id].id == self.inner.id,
             "Can only export from child subgraph into parent subgraph",
             .{},
@@ -150,7 +152,7 @@ pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
             }
 
             pub fn join(self: Self, other: anytype, key_columns: usize) Node(.Join) {
-                comptimeAssert(
+                u.comptimeAssert(
                     comptime @TypeOf(other).tag.hasIndex(),
                     "Can only call join on nodes which have indexes (Index, Distinct), not {}",
                     .{@TypeOf(other).tag},
@@ -289,7 +291,7 @@ pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
     };
 }
 
-pub fn coerceAnonTo(allocator: *Allocator, comptime T: type, anon: anytype) T {
+pub fn coerceAnonTo(allocator: *u.Allocator, comptime T: type, anon: anytype) T {
     const ti = @typeInfo(T);
     if (ti == .Pointer and ti.Pointer.size == .Slice) {
         const slice = assert_ok(allocator.alloc(ti.Pointer.child, anon.len));
@@ -328,7 +330,7 @@ pub fn coerceAnonTo(allocator: *Allocator, comptime T: type, anon: anytype) T {
                 switch (@typeInfo(@TypeOf(anon))) {
                     .Int, .ComptimeInt => return .{ .Number = @intCast(u64, anon) },
                     .Pointer => return .{ .String = coerceAnonTo(allocator, []const u8, anon) },
-                    else => compileError("Don't know how to coerce {} to Value", .{@TypeOf(anon)}),
+                    else => u.compileError("Don't know how to coerce {} to Value", .{@TypeOf(anon)}),
                 }
             },
             dida.core.FrontierChange => {
@@ -338,13 +340,13 @@ pub fn coerceAnonTo(allocator: *Allocator, comptime T: type, anon: anytype) T {
                 };
             },
             usize => return anon,
-            else => compileError("Don't know how to coerce anon to {}", .{T}),
+            else => u.compileError("Don't know how to coerce anon to {}", .{T}),
         }
     }
 }
 
 const ProjectMapper = struct {
-    allocator: *Allocator,
+    allocator: *u.Allocator,
     columns: []usize,
     mapper: dida.core.NodeSpec.MapSpec.Mapper,
 

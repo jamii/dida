@@ -146,11 +146,11 @@ var validation_errors = std.ArrayList([]const dida.debug.ValidationError).init(g
 // Called from dida.debug
 pub fn emitDebugEvent(shard: *const dida.core.Shard, debug_event: dida.debug.DebugEvent) void {
     tryEmitDebugEvent(shard, debug_event) catch
-        dida.common.panic("OOM", .{});
+        dida.util.panic("OOM", .{});
 }
 pub fn tryEmitDebugEvent(shard: *const dida.core.Shard, debug_event: dida.debug.DebugEvent) error{OutOfMemory}!void {
-    try shards.append(try dida.meta.deepClone(shard.*, global_allocator));
-    try debug_events.append(try dida.meta.deepClone(debug_event, global_allocator));
+    try shards.append(try dida.util.deepClone(shard.*, global_allocator));
+    try debug_events.append(try dida.util.deepClone(debug_event, global_allocator));
     try validation_errors.append(dida.debug.validate(global_allocator, shard));
 }
 
@@ -168,8 +168,8 @@ fn run_test() !void {
             fn map(_: *dida.core.NodeSpec.MapSpec.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
                 // (to, amount)
                 var output_values = try global_allocator.alloc(dida.core.Value, 2);
-                output_values[0] = try dida.meta.deepClone(input.values[1], global_allocator);
-                output_values[1] = try dida.meta.deepClone(input.values[2], global_allocator);
+                output_values[0] = try dida.util.deepClone(input.values[1], global_allocator);
+                output_values[1] = try dida.util.deepClone(input.values[2], global_allocator);
                 return dida.core.Row{ .values = output_values };
             }
         }).map,
@@ -185,8 +185,8 @@ fn run_test() !void {
             fn map(_: *dida.core.NodeSpec.MapSpec.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
                 // (from, amount)
                 var output_values = try global_allocator.alloc(dida.core.Value, 2);
-                output_values[0] = try dida.meta.deepClone(input.values[0], global_allocator);
-                output_values[1] = try dida.meta.deepClone(input.values[2], global_allocator);
+                output_values[0] = try dida.util.deepClone(input.values[0], global_allocator);
+                output_values[1] = try dida.util.deepClone(input.values[2], global_allocator);
                 return dida.core.Row{ .values = output_values };
             }
         }).map,
@@ -230,7 +230,7 @@ fn run_test() !void {
             fn map(_: *dida.core.NodeSpec.MapSpec.Mapper, input: dida.core.Row) error{OutOfMemory}!dida.core.Row {
                 // (account, credit - debit)
                 var output_values = try global_allocator.alloc(dida.core.Value, 2);
-                output_values[0] = try dida.meta.deepClone(input.values[0], global_allocator);
+                output_values[0] = try dida.util.deepClone(input.values[0], global_allocator);
                 output_values[1] = .{ .Number = input.values[1].Number - input.values[2].Number };
                 return dida.core.Row{ .values = output_values };
             }
@@ -265,7 +265,7 @@ fn run_test() !void {
             .{ .Number = @intToFloat(f64, 0) },
         } };
         const timestamp = dida.core.Timestamp{ .coords = &[_]usize{0} };
-        try shard.pushInput(transactions, .{ .row = try dida.meta.deepClone(row, global_allocator), .timestamp = try dida.meta.deepClone(timestamp, global_allocator), .diff = 1 });
+        try shard.pushInput(transactions, .{ .row = try dida.util.deepClone(row, global_allocator), .timestamp = try dida.util.deepClone(timestamp, global_allocator), .diff = 1 });
     }
     try shard.advanceInput(transactions, .{ .coords = &[_]usize{1} });
 
@@ -288,7 +288,7 @@ fn run_test() !void {
     //.{ .Number = @intToFloat(f64, amount) },
     //} };
     //const timestamp = dida.core.Timestamp{ .coords = &[_]usize{time + @as(usize, skew)} };
-    //try shard.pushInput(transactions, .{ .row = try dida.meta.deepClone(row,global_allocator), .timestamp = try dida.meta.deepClone(timestamp.clone, global_allocator), .diff = 1 });
+    //try shard.pushInput(transactions, .{ .row = try dida.util.deepClone(row,global_allocator), .timestamp = try dida.util.deepClone(timestamp.clone, global_allocator), .diff = 1 });
     //try shard.advanceInput(transactions, .{ .coords = &[_]usize{time + 1} });
     //while (shard.hasWork()) try shard.doWork();
     //

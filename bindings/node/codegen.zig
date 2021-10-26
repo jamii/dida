@@ -1,22 +1,24 @@
-usingnamespace @import("../js_common.zig");
+const std = @import("std");
+const dida = @import("../../lib/dida.zig");
+const js_common = @import("../js_common.zig");
 
 pub fn main() !void {
     const file = try std.fs.cwd().createFile("zig-out/lib/dida.js", .{ .read = false, .truncate = true });
     defer file.close();
     const writer = file.writer();
     try writer.writeAll("const dida = require('./dida.node');\n\n");
-    inline for (types_with_js_constructors) |T| {
+    inline for (js_common.types_with_js_constructors) |T| {
         try generateConstructor(writer, T);
     }
     try writer.writeAll("\n\n");
-    inline for (types_with_js_constructors) |T| {
+    inline for (js_common.types_with_js_constructors) |T| {
         try std.fmt.format(writer, "exports.{s} = {s};\n", .{ T, T });
     }
 }
 
 fn generateConstructor(writer: anytype, comptime Type: type) !void {
     const info = @typeInfo(Type);
-    switch (comptime serdeStrategy(Type)) {
+    switch (comptime js_common.serdeStrategy(Type)) {
         .External => {
             inline for (info.Struct.decls) |decl_info| {
                 if (decl_info.is_pub and decl_info.data == .Fn) {
@@ -29,7 +31,7 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                     //      See https://github.com/ziglang/zig/issues/8259
                     var arg_names: [args.len][]const u8 = undefined;
                     for (arg_names) |*arg_name, i| {
-                        arg_name.* = try dida.common.format(allocator, "arg{}", .{i});
+                        arg_name.* = try dida.util.format(js_common.allocator, "arg{}", .{i});
                     }
 
                     // NOTE this relies on `init` being the first decl
@@ -43,9 +45,9 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                         ,
                             .{
                                 Type,
-                                std.mem.join(allocator, ", ", &arg_names),
+                                std.mem.join(js_common.allocator, ", ", &arg_names),
                                 Type,
-                                std.mem.join(allocator, ", ", &arg_names),
+                                std.mem.join(js_common.allocator, ", ", &arg_names),
                             },
                         );
                     } else {
@@ -61,10 +63,10 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                                 Type,
                                 decl_info.name,
                                 decl_info.name,
-                                std.mem.join(allocator, ", ", &arg_names),
+                                std.mem.join(js_common.allocator, ", ", &arg_names),
                                 Type,
                                 decl_info.name,
-                                std.mem.join(allocator, ", ", &arg_names),
+                                std.mem.join(js_common.allocator, ", ", &arg_names),
                             },
                         );
                     }
@@ -96,10 +98,10 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                                 else => payload: {
                                     const num_args = @typeInfo(field_info.field_type).Struct.fields.len;
                                     var args: [num_args][]const u8 = undefined;
-                                    for (args) |*arg, arg_ix| arg.* = try dida.common.format(allocator, "arguments[{}]", .{arg_ix});
-                                    break :payload try dida.common.format(allocator, "new {s}({s})", .{
+                                    for (args) |*arg, arg_ix| arg.* = try dida.util.format(js_common.allocator, "arguments[{}]", .{arg_ix});
+                                    break :payload try dida.util.format(js_common.allocator, "new {s}({s})", .{
                                         field_info.field_type,
-                                        std.mem.join(allocator, ", ", &args),
+                                        std.mem.join(js_common.allocator, ", ", &args),
                                     });
                                 },
                             };
@@ -116,10 +118,10 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                         }
                         try writer.writeAll("};\n\n");
                     } else {
-                        compileError("Don't know how to make constructor for non-tagged union type {}", .{Type});
+                        dida.util.compileError("Don't know how to make constructor for non-tagged union type {}", .{Type});
                     }
                 },
-                else => compileError("Don't know how to make constructor for type {}", .{Type}),
+                else => dida.util.compileError("Don't know how to make constructor for type {}", .{Type}),
             }
         },
     }
