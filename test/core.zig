@@ -1485,7 +1485,7 @@ pub fn testShardTotalBalance() !void {
 
     // TODO this is a hack to get around the fact that empty reduces don't return any results, which makes the join not work out
     var account: usize = 0;
-    while (account < std.math.maxInt(u4)) : (account += 1) {
+    while (account <= std.math.maxInt(u4)) : (account += 1) {
         const row = dida.core.Row{ .values = &[_]dida.core.Value{
             .{ .Number = @intToFloat(f64, account) },
             .{ .Number = @intToFloat(f64, account) },
