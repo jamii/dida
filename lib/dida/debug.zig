@@ -92,8 +92,8 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
         switch (T) {
             dida.core.Value => {
                 switch (thing) {
-                    .Number => |number| try dida.meta.dumpInto(writer, indent + 4, number),
-                    .String => |string| try dida.meta.dumpInto(writer, indent + 4, string),
+                    .Number => |number| try dumpInto(writer, indent + 4, number),
+                    .String => |string| try dumpInto(writer, indent + 4, string),
                 }
             },
             dida.core.Row => {
@@ -294,14 +294,19 @@ pub const ValidationError = union(enum) {
 
 const ValidationState = struct {
     allocator: *u.Allocator,
-    pointers: u.DeepHashMap(usize, ValidationPath),
+    pointers: u.DeepHashMap(PointerKey, ValidationPath),
     errors: u.ArrayList(ValidationError),
+
+    const PointerKey = struct {
+        address: usize,
+        typeName: []const u8,
+    };
 };
 
 pub fn validate(allocator: *u.Allocator, shard: *const dida.core.Shard) []const ValidationError {
     var state = ValidationState{
         .allocator = allocator,
-        .pointers = u.DeepHashMap(usize, ValidationPath).init(allocator),
+        .pointers = u.DeepHashMap(ValidationState.PointerKey, ValidationPath).init(allocator),
         .errors = u.ArrayList(ValidationError).init(allocator),
     };
     validateInto(&state, &.{}, shard) catch |err| {
@@ -324,23 +329,34 @@ pub fn validateInto(state: *ValidationState, path: ValidationPath, thing: anytyp
         u.comptimeAssert(info == .Pointer and info.Pointer.size == .One, "Expected pointer, found {s}", .{@typeName(@TypeOf(thing))});
     }
 
-    if (@sizeOf(@TypeOf(thing.*)) != 0) {
-        const address = @ptrToInt(thing);
-        const entry = try state.pointers.getOrPut(address);
-        if (entry.found_existing)
+    const T = @TypeOf(thing.*);
+    switch (T) {
+        u.Allocator,
+        *dida.core.NodeSpec.MapSpec.Mapper,
+        dida.core.NodeSpec.ReduceSpec.Reducer,
+        dida.core.Graph,
+        => return,
+        else => {},
+    }
+    switch (@typeInfo(T)) {
+        .Fn => return,
+        else => {},
+    }
+
+    if (@sizeOf(T) != 0) {
+        const key = .{
+            .address = @ptrToInt(thing),
+            .typeName = @typeName(T),
+        };
+        const entry = try state.pointers.getOrPut(key);
+        if (entry.found_existing) {
             try state.errors.append(.{ .Aliasing = .{
                 path,
                 entry.value_ptr.*,
-            } })
-        else
-            entry.value_ptr.* = path;
+            } });
+        } else entry.value_ptr.* = path;
     }
 
-    const T = @TypeOf(thing.*);
-    switch (T) {
-        u.Allocator, *u.Allocator => return,
-        else => {},
-    }
     switch (@typeInfo(T)) {
         .Struct => |info| {
             if (comptime std.mem.startsWith(u8, @typeName(T), "std.array_list.ArrayList")) {
@@ -379,16 +395,19 @@ pub fn validateInto(state: *ValidationState, path: ValidationPath, thing: anytyp
         .Union => |info| {
             if (info.tag_type) |tag_type| {
                 inline for (@typeInfo(tag_type).Enum.fields) |field_info| {
-                    if (std.meta.activeTag(thing.*) == @intToEnum(tag_type, field_info.value)) {
+                    if (@enumToInt(std.meta.activeTag(thing.*)) == field_info.value) {
+                        // TODO putting this in the call below causes a compiler crash
+                        const new_path = try appendPath(state.allocator, path, field_info.name);
                         try validateInto(
                             state,
-                            // TODO this causes a compiler crash
-                            //try appendPath(state.allocator, path, field_info.name),
-                            path,
+                            new_path,
                             &@field(thing.*, field_info.name),
                         );
+                        // TODO this shouldn't be necessary, but codegen for this `inline for` seems to be broken
+                        return;
                     }
                 }
+                unreachable;
             }
         },
         .Array => {
