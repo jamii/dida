@@ -10,7 +10,8 @@ const global_allocator = std.heap.c_allocator;
 
 pub fn main() !void {
     std.debug.print("Started!\n", .{});
-    try dida_test.testShardTotalBalance();
+    dida_test.testShardTotalBalance() catch |err|
+        dida.util.dump(err);
     run();
 }
 
@@ -120,6 +121,12 @@ fn inspect(allocator: *std.mem.Allocator, name: []const u8, thing: anytype) void
                     },
                     .C => zg.ztText("{any}", .{thing}),
                 }
+            },
+            .Optional => {
+                if (thing) |thing_not_null|
+                    inspect(allocator, "?", thing_not_null)
+                else
+                    zg.ztText("null", .{});
             },
             else => zg.ztText("{any}", .{thing}),
         }
