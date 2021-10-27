@@ -1,7 +1,7 @@
 const std = @import("std");
 const dida = @import("../lib/dida.zig");
 
-const allocator = std.testing.allocator;
+pub const allocator = std.testing.allocator;
 
 fn expectDeepEqual(expected: anytype, actual: anytype) !void {
     if (!dida.util.deepEqual(expected, actual)) {
@@ -1381,7 +1381,7 @@ test "test shard graph reach" {
     });
 }
 
-test "test shard total balance" {
+pub fn testShardTotalBalance() !void {
     var graph_builder = dida.core.GraphBuilder.init(allocator);
     defer graph_builder.deinit();
 
@@ -1518,4 +1518,8 @@ test "test shard total balance" {
     //while (shard.hasWork()) try shard.doWork();
     //try testNodeOutput(&shard, total_balance_out, .{});
     //}
+}
+
+test "test shard total balance" {
+    try testShardTotalBalance();
 }
