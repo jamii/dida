@@ -68,10 +68,6 @@ pub fn run() void {
         }
         ig.igEnd();
         context.endFrame();
-
-        // Hacky way to check if stderr was closed
-        const stderr = std.io.getStdErr().writer();
-        stderr.print("Still alive!\n", .{}) catch return;
     }
     context.deinit();
 }
