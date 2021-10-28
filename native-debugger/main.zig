@@ -65,6 +65,8 @@ pub fn run() void {
                 .shard = shards.items[i],
                 .validation_errors = validation_errors.items[i],
             });
+            inspect(global_allocator, "events", debug_events);
+            inspect(global_allocator, "ios_by_node", ios_by_node);
         }
         ig.igEnd();
         context.endFrame();
@@ -108,6 +110,11 @@ fn inspect(allocator: *std.mem.Allocator, name: []const u8, thing: anytype) void
                     }
                 }
             },
+            .Array => {
+                for (thing) |elem, i| {
+                    inspect(allocator, zg.fmtTextForImgui("{}", .{i}), elem);
+                }
+            },
             .Pointer => |info| {
                 switch (info.size) {
                     .One => inspect(allocator, "*", thing.*),
@@ -146,6 +153,12 @@ fn treeNodeFmt(comptime fmt: []const u8, args: anytype) bool {
 var shards = std.ArrayList(dida.core.Shard).init(global_allocator);
 var debug_events = std.ArrayList(dida.debug.DebugEvent).init(global_allocator);
 var validation_errors = std.ArrayList([]const dida.debug.ValidationError).init(global_allocator);
+const IO = struct {
+    ix: usize,
+    direction: union(enum) { In: usize, Out },
+    changes: []dida.core.Change,
+};
+var ios_by_node = dida.util.DeepHashMap(dida.core.Node, std.ArrayList(IO)).init(global_allocator);
 
 // Called from dida.debug
 pub fn emitDebugEvent(shard: *const dida.core.Shard, debug_event: dida.debug.DebugEvent) void {
@@ -153,7 +166,29 @@ pub fn emitDebugEvent(shard: *const dida.core.Shard, debug_event: dida.debug.Deb
         dida.util.panic("OOM", .{});
 }
 pub fn tryEmitDebugEvent(shard: *const dida.core.Shard, debug_event: dida.debug.DebugEvent) error{OutOfMemory}!void {
+    const ix = shards.items.len;
+    dida.util.dump(.{ .ix = ix, .event = debug_event });
     try shards.append(try dida.util.deepClone(shard.*, global_allocator));
     try debug_events.append(try dida.util.deepClone(debug_event, global_allocator));
     try validation_errors.append(dida.debug.validate(global_allocator, shard));
+    switch (debug_event) {
+        .EmitChangeBatch => |e| {
+            const entry = try ios_by_node.getOrPutValue(e.from_node, std.ArrayList(IO).init(global_allocator));
+            try entry.value_ptr.append(.{
+                .ix = ix,
+                .direction = .Out,
+                .changes = try dida.util.deepClone(e.change_batch.changes, global_allocator),
+            });
+        },
+        .ProcessChangeBatch => |e| {
+            const entry = try ios_by_node.getOrPutValue(e.node_input.node, std.ArrayList(IO).init(global_allocator));
+            try entry.value_ptr.append(.{
+                .ix = ix,
+                .direction = .{ .In = e.node_input.input_ix },
+                .changes = try dida.util.deepClone(e.change_batch.changes, global_allocator),
+            });
+        },
+        else => {},
+    }
+    if (ix == 778) run();
 }
