@@ -1249,6 +1249,7 @@ pub const Shard = struct {
 
     pub const ChangeBatchAtNodeInput = struct {
         change_batch: ChangeBatch,
+        input_frontier: ?Frontier,
         node_input: NodeInput,
     };
 
@@ -1363,9 +1364,25 @@ pub const Shard = struct {
     }
 
     /// Report that `from_node` produced `change_batch` as an output.
-    /// Takes ownership of `change_batch`.
+    /// Takes ownership of `change_batch` and `output_frontier`.
     fn emitChangeBatch(self: *Shard, from_node: Node, change_batch: ChangeBatch) !void {
-        dida.debug.emitDebugEvent(self, .{ .EmitChangeBatch = .{ .from_node = from_node, .change_batch = change_batch } });
+        var input_frontier: ?Frontier = null;
+        {
+            const node_spec = self.graph.node_specs[from_node.id];
+            if (NodeSpecTag.hasIndex(node_spec)) {
+                u.assert(
+                    node_spec.getInputs().len == 1,
+                    "At present all nodes with indexes have only one input. If this changed for {}, need to rethink this code.",
+                    .{node_spec},
+                );
+                input_frontier = self.node_frontiers[node_spec.getInputs()[0].id].frontier;
+            }
+        }
+        dida.debug.emitDebugEvent(self, .{ .EmitChangeBatch = .{
+            .from_node = from_node,
+            .change_batch = change_batch,
+            .input_frontier = input_frontier,
+        } });
 
         // Check that this emission is legal
         {
@@ -1380,15 +1397,21 @@ pub const Shard = struct {
             }
         }
 
-        var output_change_batch = change_batch;
+        var cloned_change_batch = change_batch;
+        var cloned_input_frontier = input_frontier;
         for (self.graph.downstream_node_inputs[from_node.id]) |to_node_input, i| {
-            if (i != 0) output_change_batch = try u.deepClone(output_change_batch, self.allocator);
-            var iter = output_change_batch.lower_bound.timestamps.iterator();
+            if (i != 0) {
+                // We take ownership of change_batch so don't have to clone the first output
+                cloned_change_batch = try u.deepClone(cloned_change_batch, self.allocator);
+            }
+            cloned_input_frontier = try u.deepClone(cloned_input_frontier, self.allocator);
+            var iter = cloned_change_batch.lower_bound.timestamps.iterator();
             while (iter.next()) |entry| {
                 try self.queueFrontierUpdate(to_node_input, entry.key_ptr.*, 1);
             }
             try self.unprocessed_change_batches.append(.{
-                .change_batch = output_change_batch,
+                .change_batch = cloned_change_batch,
+                .input_frontier = cloned_input_frontier,
                 .node_input = to_node_input,
             });
         }
@@ -1397,6 +1420,11 @@ pub const Shard = struct {
     /// Process one unprocessed change batch from the list.
     fn processChangeBatch(self: *Shard) !void {
         const change_batch_at_node_input = self.unprocessed_change_batches.popOrNull() orelse return;
+        defer if (change_batch_at_node_input.input_frontier) |_input_frontier| {
+            // can't deinit through const
+            var input_frontier = _input_frontier;
+            input_frontier.deinit();
+        };
         var change_batch = change_batch_at_node_input.change_batch;
         defer change_batch.deinit(self.allocator);
         const node_input = change_batch_at_node_input.node_input;
@@ -1450,6 +1478,8 @@ pub const Shard = struct {
             .Join => |join| {
                 // TODO this is double-counting results when both sides change
                 const index = self.node_states[join.inputs[1 - node_input.input_ix].id].getIndex().?;
+                const index_frontier = change_batch_at_node_input.input_frontier.?;
+                _ = index_frontier;
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 defer output_change_batch_builder.deinit();
                 try index.mergeJoin(

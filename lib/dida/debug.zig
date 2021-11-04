@@ -20,6 +20,7 @@ pub const DebugEvent = union(enum) {
     EmitChangeBatch: struct {
         from_node: dida.core.Node,
         change_batch: dida.core.ChangeBatch,
+        input_frontier: ?dida.core.Frontier,
     },
     ProcessChangeBatch: struct {
         node_input: dida.core.NodeInput,
@@ -302,6 +303,16 @@ const ValidationState = struct {
         typeName: []const u8,
     };
 };
+
+pub fn validateOrPanic(allocator: *u.Allocator, shard: *const dida.core.Shard) void {
+    var arena = u.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const errs = validate(&arena.allocator, shard);
+    if (errs.len > 0) {
+        u.dump(errs);
+        u.panic("Found invalid shard state. See errors above.", .{});
+    }
+}
 
 pub fn validate(allocator: *u.Allocator, shard: *const dida.core.Shard) []const ValidationError {
     var state = ValidationState{
