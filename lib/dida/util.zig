@@ -356,7 +356,7 @@ pub fn deepClone(thing: anytype, allocator: *Allocator) error{OutOfMemory}!@Type
             }
         },
         .Array => {
-            var cloned: T = undefined;
+            var cloned = thing;
             for (cloned) |*item| item.* = try deepClone(item.*, allocator);
             return cloned;
         },
@@ -364,7 +364,7 @@ pub fn deepClone(thing: anytype, allocator: *Allocator) error{OutOfMemory}!@Type
             return if (thing == null) null else try deepClone(thing.?, allocator);
         },
         .Struct => |sti| {
-            var cloned: T = undefined;
+            var cloned: T = thing;
             inline for (sti.fields) |fti| {
                 @field(cloned, fti.name) = try deepClone(@field(thing, fti.name), allocator);
             }
