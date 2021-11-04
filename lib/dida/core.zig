@@ -1503,7 +1503,6 @@ pub const Shard = struct {
                 change_batch.changes = &[0]Change{};
             },
             .Join => |join| {
-                // TODO this is double-counting results when both sides change
                 const index = self.node_states[join.inputs[1 - node_input.input_ix].id].getIndex().?;
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 defer output_change_batch_builder.deinit();
