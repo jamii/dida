@@ -361,6 +361,8 @@ pub const Change = struct {
     }
 };
 
+pub const ConcatOrder = enum { LeftThenRight, RightThenLeft };
+
 /// A batch of changes, conveniently pre-sorted and de-duplicated.
 pub const ChangeBatch = struct {
     /// Invariant: for every change in changes, lower_bound.causalOrder(change).isLessThanOrEqual()
@@ -491,7 +493,14 @@ pub const ChangeBatch = struct {
 
     /// Relational join on the first `key_columns` columns of self and other.
     /// Produces rows that look like `self_row ++ other_row[key_columns..]`.
-    pub fn mergeJoin(self: ChangeBatch, other: ChangeBatch, key_columns: usize, into_builder: *ChangeBatchBuilder) !void {
+    pub fn mergeJoin(
+        self: ChangeBatch,
+        self_frontier: Frontier,
+        other: ChangeBatch,
+        key_columns: usize,
+        concat_order: ConcatOrder,
+        into_builder: *ChangeBatchBuilder,
+    ) !void {
         var ix_self: usize = 0;
         var ix_other: usize = 0;
         while (ix_self < self.changes.len and ix_other < other.changes.len) {
@@ -504,22 +513,30 @@ pub const ChangeBatch = struct {
                     const ix_other_end = other.seekCurrentRowEnd(ix_other, key_columns);
                     const ix_other_start = ix_other;
                     while (ix_self < ix_self_end) : (ix_self += 1) {
-                        ix_other = ix_other_start;
-                        while (ix_other < ix_other_end) : (ix_other += 1) {
-                            const change_self = self.changes[ix_self];
-                            const change_other = other.changes[ix_other];
-                            var values = try std.mem.concat(into_builder.allocator, Value, &[_][]const Value{
-                                change_self.row.values,
-                                change_other.row.values[key_columns..],
-                            });
-                            for (values) |*value| {
-                                value.* = try u.deepClone(value.*, into_builder.allocator);
+                        if (self_frontier.causalOrder(self.changes[ix_self].timestamp) == .gt) {
+                            ix_other = ix_other_start;
+                            while (ix_other < ix_other_end) : (ix_other += 1) {
+                                const change_self = self.changes[ix_self];
+                                const change_other = other.changes[ix_other];
+                                var values = try std.mem.concat(into_builder.allocator, Value, switch (concat_order) {
+                                    .LeftThenRight => &[_][]const Value{
+                                        change_self.row.values,
+                                        change_other.row.values[key_columns..],
+                                    },
+                                    .RightThenLeft => &[_][]const Value{
+                                        change_other.row.values,
+                                        change_self.row.values[key_columns..],
+                                    },
+                                });
+                                for (values) |*value| {
+                                    value.* = try u.deepClone(value.*, into_builder.allocator);
+                                }
+                                try into_builder.changes.append(.{
+                                    .row = .{ .values = values },
+                                    .timestamp = try Timestamp.leastUpperBound(into_builder.allocator, change_self.timestamp, change_other.timestamp),
+                                    .diff = change_self.diff * change_other.diff,
+                                });
                             }
-                            try into_builder.changes.append(.{
-                                .row = .{ .values = values },
-                                .timestamp = try Timestamp.leastUpperBound(into_builder.allocator, change_self.timestamp, change_other.timestamp),
-                                .diff = change_self.diff * change_other.diff,
-                            });
                         }
                     }
                     // now ix_self and ix_other are both at next row
@@ -652,17 +669,15 @@ pub const Index = struct {
     /// * `other_row ++ self_row[key_columns..]` if `concat_order == .RightThenLeft`
     // TODO would it be better to merge against a cursor, to avoid touching change_batch multiple times?
     pub fn mergeJoin(
-        self: *Index,
+        self: *const Index,
+        self_frontier: Frontier,
         change_batch: ChangeBatch,
         key_columns: usize,
-        concat_order: enum { LeftThenRight, RightThenLeft },
+        concat_order: ConcatOrder,
         into_builder: *ChangeBatchBuilder,
     ) !void {
         for (self.change_batches.items) |self_change_batch| {
-            switch (concat_order) {
-                .LeftThenRight => try self_change_batch.mergeJoin(change_batch, key_columns, into_builder),
-                .RightThenLeft => try change_batch.mergeJoin(self_change_batch, key_columns, into_builder),
-            }
+            try self_change_batch.mergeJoin(self_frontier, change_batch, key_columns, concat_order, into_builder);
         }
     }
 
@@ -1490,11 +1505,10 @@ pub const Shard = struct {
             .Join => |join| {
                 // TODO this is double-counting results when both sides change
                 const index = self.node_states[join.inputs[1 - node_input.input_ix].id].getIndex().?;
-                const index_frontier = change_batch_at_node_input.input_frontier.?;
-                _ = index_frontier;
                 var output_change_batch_builder = ChangeBatchBuilder.init(self.allocator);
                 defer output_change_batch_builder.deinit();
                 try index.mergeJoin(
+                    node_state.Join.index_input_frontiers[1 - node_input.input_ix],
                     change_batch,
                     join.key_columns,
                     switch (node_input.input_ix) {

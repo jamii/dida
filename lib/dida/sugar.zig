@@ -339,6 +339,22 @@ pub fn coerceAnonTo(allocator: *u.Allocator, comptime T: type, anon: anytype) T 
                     .diff = anon[1],
                 };
             },
+            dida.core.Frontier => {
+                const timestamps = coerceAnonTo(allocator, []dida.core.Timestamp, anon);
+                defer {
+                    for (timestamps) |*timestamp| timestamp.deinit(allocator);
+                    allocator.free(timestamps);
+                }
+                var frontier = dida.core.Frontier.init(allocator);
+                var changes_into = std.ArrayList(dida.core.FrontierChange).init(allocator);
+                defer changes_into.deinit();
+                for (timestamps) |timestamp| {
+                    assert_ok(frontier.move(.Later, timestamp, &changes_into));
+                    for (changes_into.items) |*change| change.deinit(allocator);
+                    assert_ok(changes_into.resize(0));
+                }
+                return frontier;
+            },
             usize => return anon,
             else => u.compileError("Don't know how to coerce anon to {}", .{T}),
         }

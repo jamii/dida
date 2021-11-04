@@ -940,12 +940,16 @@ test "test change batch seek current row end" {
 
 fn testChangeBatchJoin(
     anon_left_changes: anytype,
+    anon_left_frontier: anytype,
     anon_right_changes: anytype,
     key_columns: usize,
+    concat_order: dida.core.ConcatOrder,
     anon_expected_changes: anytype,
 ) !void {
     const left_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_left_changes);
     defer allocator.free(left_changes);
+    var left_frontier = dida.sugar.coerceAnonTo(allocator, dida.core.Frontier, anon_left_frontier);
+    defer left_frontier.deinit();
     const right_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_right_changes);
     defer allocator.free(right_changes);
     const expected_changes = dida.sugar.coerceAnonTo(allocator, []dida.core.Change, anon_expected_changes);
@@ -972,7 +976,7 @@ fn testChangeBatchJoin(
 
     var output_builder = dida.core.ChangeBatchBuilder.init(allocator);
     defer output_builder.deinit();
-    try left_change_batch.mergeJoin(right_change_batch, key_columns, &output_builder);
+    try left_change_batch.mergeJoin(left_frontier, right_change_batch, key_columns, concat_order, &output_builder);
     if (try output_builder.finishAndReset()) |_output_change_batch| {
         var output_change_batch = _output_change_batch;
         defer output_change_batch.deinit(allocator);
@@ -989,9 +993,13 @@ test "test change batch join" {
             .{ .{"a"}, .{ 0, 1 }, 2 },
         },
         .{
+            .{ 100, 100 },
+        },
+        .{
             .{ .{"a"}, .{ 1, 0 }, 3 },
         },
         1,
+        .LeftThenRight,
         .{
             .{ .{"a"}, .{ 1, 1 }, 6 },
         },
@@ -1001,9 +1009,13 @@ test "test change batch join" {
             .{ .{"a"}, .{ 0, 1 }, 2 },
         },
         .{
+            .{ 100, 100 },
+        },
+        .{
             .{ .{"b"}, .{ 1, 0 }, 3 },
         },
         1,
+        .LeftThenRight,
         .{},
     );
     try testChangeBatchJoin(
@@ -1012,10 +1024,14 @@ test "test change batch join" {
             .{ .{"a"}, .{ 0, 2 }, 5 },
         },
         .{
+            .{ 100, 100 },
+        },
+        .{
             .{ .{"a"}, .{ 1, 0 }, 3 },
             .{ .{"a"}, .{ 2, 0 }, 7 },
         },
         1,
+        .LeftThenRight,
         .{
             .{ .{"a"}, .{ 1, 1 }, 6 },
             .{ .{"a"}, .{ 1, 2 }, 15 },
@@ -1029,10 +1045,14 @@ test "test change batch join" {
             .{ .{"b"}, .{ 0, 2 }, 5 },
         },
         .{
+            .{ 100, 100 },
+        },
+        .{
             .{ .{"a"}, .{ 1, 0 }, 3 },
             .{ .{"b"}, .{ 2, 0 }, 7 },
         },
         1,
+        .LeftThenRight,
         .{
             .{ .{"a"}, .{ 1, 1 }, 6 },
             .{ .{"b"}, .{ 2, 2 }, 35 },
@@ -1048,8 +1068,12 @@ test "test change batch join" {
         };
         try testChangeBatchJoin(
             changes,
+            .{
+                .{100},
+            },
             changes,
             1,
+            .LeftThenRight,
             .{
                 .{ .{"a"}, .{0}, 1 },
                 .{ .{"a"}, .{1}, 3 },
@@ -1069,8 +1093,12 @@ test "test change batch join" {
         };
         try testChangeBatchJoin(
             changes,
+            .{
+                .{100},
+            },
             changes,
             1,
+            .LeftThenRight,
             .{
                 .{ .{ "a", "x", "x" }, .{0}, 1 },
                 .{ .{ "a", "x", "y" }, .{1}, 1 },
@@ -1087,12 +1115,72 @@ test "test change batch join" {
         );
         try testChangeBatchJoin(
             changes,
+            .{
+                .{100},
+            },
+            changes,
+            1,
+            .RightThenLeft,
+            .{
+                .{ .{ "a", "x", "x" }, .{0}, 1 },
+                .{ .{ "a", "x", "y" }, .{1}, 1 },
+                .{ .{ "a", "x", "z" }, .{2}, 1 },
+                .{ .{ "a", "y", "x" }, .{1}, 1 },
+                .{ .{ "a", "y", "y" }, .{1}, 1 },
+                .{ .{ "a", "y", "z" }, .{2}, 1 },
+                .{ .{ "a", "z", "x" }, .{2}, 1 },
+                .{ .{ "a", "z", "y" }, .{2}, 1 },
+                .{ .{ "a", "z", "z" }, .{2}, 1 },
+                .{ .{ "c", "c", "c" }, .{0}, 1 },
+                .{ .{ "e", "e", "e" }, .{0}, 1 },
+            },
+        );
+        try testChangeBatchJoin(
+            changes,
+            .{
+                .{2},
+            },
+            changes,
+            1,
+            .LeftThenRight,
+            .{
+                .{ .{ "a", "x", "x" }, .{0}, 1 },
+                .{ .{ "a", "x", "y" }, .{1}, 1 },
+                .{ .{ "a", "x", "z" }, .{2}, 1 },
+                .{ .{ "a", "y", "x" }, .{1}, 1 },
+                .{ .{ "a", "y", "y" }, .{1}, 1 },
+                .{ .{ "a", "y", "z" }, .{2}, 1 },
+                .{ .{ "c", "c", "c" }, .{0}, 1 },
+                .{ .{ "e", "e", "e" }, .{0}, 1 },
+            },
+        );
+        try testChangeBatchJoin(
+            changes,
+            .{
+                .{100},
+            },
             changes,
             2,
+            .LeftThenRight,
             .{
                 .{ .{ "a", "x" }, .{0}, 1 },
                 .{ .{ "a", "y" }, .{1}, 1 },
                 .{ .{ "a", "z" }, .{2}, 1 },
+                .{ .{ "c", "c" }, .{0}, 1 },
+                .{ .{ "e", "e" }, .{0}, 1 },
+            },
+        );
+        try testChangeBatchJoin(
+            changes,
+            .{
+                .{2},
+            },
+            changes,
+            2,
+            .LeftThenRight,
+            .{
+                .{ .{ "a", "x" }, .{0}, 1 },
+                .{ .{ "a", "y" }, .{1}, 1 },
                 .{ .{ "c", "c" }, .{0}, 1 },
                 .{ .{ "e", "e" }, .{0}, 1 },
             },
@@ -1499,25 +1587,24 @@ pub fn testShardTotalBalance() !void {
     while (shard.hasWork()) try shard.doWork();
     try testNodeOutput(&shard, total_balance_out, .{.{.{ .{0}, .{0}, 1 }}});
 
-    // TODO this test fails
-    //var rng = std.rand.DefaultPrng.init(0);
-    //var time: usize = 1;
-    //while (time < 100) : (time += 1) {
-    //const from_account = rng.random.int(u4);
-    //const to_account = rng.random.int(u4);
-    //const amount = rng.random.int(u8);
-    //const skew = @intCast(usize, 0); // TODO rng.random.int(u2);
-    //const row = dida.core.Row{ .values = &[_]dida.core.Value{
-    //.{ .Number = @intToFloat(f64, from_account) },
-    //.{ .Number = @intToFloat(f64, to_account) },
-    //.{ .Number = @intToFloat(f64, amount) },
-    //} };
-    //const timestamp = dida.core.Timestamp{ .coords = &[_]u64{time + @as(usize, skew)} };
-    //try shard.pushInput(transactions, .{ .row = try dida.util.deepClone(row,allocator), .timestamp = try dida.util.deepClone(timestamp,allocator), .diff = 1 });
-    //try shard.advanceInput(transactions, .{ .coords = &[_]u64{time + 1} });
-    //while (shard.hasWork()) try shard.doWork();
-    //try testNodeOutput(&shard, total_balance_out, .{});
-    //}
+    var rng = std.rand.DefaultPrng.init(0);
+    var time: usize = 1;
+    while (time < 100) : (time += 1) {
+        const from_account = rng.random.int(u4);
+        const to_account = rng.random.int(u4);
+        const amount = rng.random.int(u8);
+        const skew = rng.random.int(u3);
+        const row = dida.core.Row{ .values = &[_]dida.core.Value{
+            .{ .Number = @intToFloat(f64, from_account) },
+            .{ .Number = @intToFloat(f64, to_account) },
+            .{ .Number = @intToFloat(f64, amount) },
+        } };
+        const timestamp = dida.core.Timestamp{ .coords = &[_]u64{time + @as(usize, skew)} };
+        try shard.pushInput(transactions, .{ .row = try dida.util.deepClone(row, allocator), .timestamp = try dida.util.deepClone(timestamp, allocator), .diff = 1 });
+        try shard.advanceInput(transactions, .{ .coords = &[_]u64{time + 1} });
+        while (shard.hasWork()) try shard.doWork();
+        try testNodeOutput(&shard, total_balance_out, .{});
+    }
 }
 
 test "test shard total balance" {
