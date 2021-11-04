@@ -330,7 +330,7 @@ pub fn deepClone(thing: anytype, allocator: *Allocator) error{OutOfMemory}!@Type
 
     if (comptime std.mem.startsWith(u8, @typeName(T), "std.hash_map.HashMap")) {
         var cloned = try thing.cloneWithAllocator(allocator);
-        var iter = thing.iterator();
+        var iter = cloned.iterator();
         while (iter.next()) |entry| {
             entry.key_ptr.* = try deepClone(entry.key_ptr.*, allocator);
             entry.value_ptr.* = try deepClone(entry.value_ptr.*, allocator);
