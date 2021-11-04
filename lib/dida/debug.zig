@@ -385,6 +385,8 @@ pub fn validateInto(state: *ValidationState, path: ValidationPath, thing: anytyp
                     i += 1;
                 }
             } else inline for (info.fields) |field_info| {
+                // Pointstamp subgraphs are borrowed from the graph
+                if (comptime T == dida.core.Shard.Pointstamp and u.deepEqual(field_info.name, "subgraphs")) continue;
                 try validateInto(
                     state,
                     try appendPath(state.allocator, path, field_info.name),
