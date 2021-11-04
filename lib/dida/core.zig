@@ -1498,7 +1498,7 @@ pub const Shard = struct {
                     _ = try self.applyFrontierUpdate(node, change.timestamp, 1);
                 }
                 try node_state.Index.pending_changes.appendSlice(change_batch.changes);
-                // took ownership of rows in changes, so don't deinit them
+                // Took ownership of rows in changes, so don't deinit them
                 self.allocator.free(change_batch.changes);
                 change_batch.changes = &[0]Change{};
             },
@@ -1522,6 +1522,7 @@ pub const Shard = struct {
                 }
                 node_state.Join.index_input_frontiers[node_input.input_ix].deinit();
                 node_state.Join.index_input_frontiers[node_input.input_ix] = input_frontier.?;
+                // Took ownership of input_frontier, so don't deinit it
                 input_frontier = null;
             },
             .Output => {
@@ -1786,6 +1787,7 @@ pub const Shard = struct {
 
             // Distinct/Reduce-specific stuff
             // TODO this is somewhat inefficient
+            // TODO I think this should be looking at index input frontier
             if (node_spec == .Distinct or node_spec == .Reduce) {
                 const input_node = node_spec.getInputs()[0];
                 const input_frontier = self.node_frontiers[input_node.id];
