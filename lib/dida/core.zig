@@ -821,7 +821,7 @@ pub const NodeState = union(enum) {
     Input: InputState,
     Map,
     Index: IndexState,
-    Join,
+    Join: JoinState,
     Output: OutputState,
     TimestampPush,
     TimestampIncrement,
@@ -841,6 +841,12 @@ pub const NodeState = union(enum) {
         index: Index,
         /// These changes are waiting for the frontier to move past them, at which point they will be added to the index.
         pending_changes: u.ArrayList(Change),
+    };
+
+    pub const JoinState = struct {
+        // The input frontier of the input indexes, as of the last ChangeBatch processed from them.
+        // We use these to ensure we ignore Changes that exist in the index already but haven't yet been processed by this join.
+        index_input_frontiers: [2]Frontier,
     };
 
     pub const OutputState = struct {
@@ -884,7 +890,14 @@ pub const NodeState = union(enum) {
                     .pending_changes = u.ArrayList(Change).init(allocator),
                 },
             },
-            .Join => .Join,
+            .Join => .{
+                .Join = .{
+                    .index_input_frontiers = .{
+                        Frontier.init(allocator),
+                        Frontier.init(allocator),
+                    },
+                },
+            },
             .Output => .{
                 .Output = .{
                     .unpopped_change_batches = u.Queue(ChangeBatch).init(allocator),
@@ -919,6 +932,9 @@ pub const NodeState = union(enum) {
                 index.index.deinit();
                 for (index.pending_changes.items) |*change| change.deinit(allocator);
                 index.pending_changes.deinit();
+            },
+            .Join => |*join| {
+                for (join.index_input_frontiers) |*frontier| frontier.deinit();
             },
             .Output => |*output| {
                 for (output.unpopped_change_batches.in.items) |*change_batch| change_batch.deinit(allocator);
@@ -959,7 +975,7 @@ pub const NodeState = union(enum) {
                 }
                 reduce.pending_corrections.deinit();
             },
-            .Map, .Join, .TimestampPush, .TimestampIncrement, .TimestampPop, .Union => {},
+            .Map, .TimestampPush, .TimestampIncrement, .TimestampPop, .Union => {},
         }
         self.* = undefined;
     }
@@ -1373,7 +1389,7 @@ pub const Shard = struct {
                 u.assert(
                     node_spec.getInputs().len == 1,
                     "At present all nodes with indexes have only one input. If this changed for {}, need to rethink this code.",
-                    .{node_spec},
+                    .{std.meta.activeTag(node_spec)},
                 );
                 input_frontier = self.node_frontiers[node_spec.getInputs()[0].id].frontier;
             }
@@ -1400,10 +1416,9 @@ pub const Shard = struct {
         var cloned_change_batch = change_batch;
         var cloned_input_frontier = input_frontier;
         for (self.graph.downstream_node_inputs[from_node.id]) |to_node_input, i| {
-            if (i != 0) {
-                // We take ownership of change_batch so don't have to clone the first output
+            if (i != 0)
+                // We take ownership of change_batch so we don't have to clone it the first time we add it to the queue
                 cloned_change_batch = try u.deepClone(cloned_change_batch, self.allocator);
-            }
             cloned_input_frontier = try u.deepClone(cloned_input_frontier, self.allocator);
             var iter = cloned_change_batch.lower_bound.timestamps.iterator();
             while (iter.next()) |entry| {
@@ -1417,14 +1432,11 @@ pub const Shard = struct {
         }
     }
 
-    /// Process one unprocessed change batch from the list.
+    /// Process one unprocessed change batch from the queue.
     fn processChangeBatch(self: *Shard) !void {
         const change_batch_at_node_input = self.unprocessed_change_batches.popOrNull() orelse return;
-        defer if (change_batch_at_node_input.input_frontier) |_input_frontier| {
-            // can't deinit through const
-            var input_frontier = _input_frontier;
-            input_frontier.deinit();
-        };
+        var input_frontier = change_batch_at_node_input.input_frontier;
+        defer if (input_frontier) |*_input_frontier| _input_frontier.deinit();
         var change_batch = change_batch_at_node_input.change_batch;
         defer change_batch.deinit(self.allocator);
         const node_input = change_batch_at_node_input.node_input;
@@ -1495,6 +1507,9 @@ pub const Shard = struct {
                 if (try output_change_batch_builder.finishAndReset()) |output_change_batch| {
                     try self.emitChangeBatch(node_input.node, output_change_batch);
                 }
+                node_state.Join.index_input_frontiers[node_input.input_ix].deinit();
+                node_state.Join.index_input_frontiers[node_input.input_ix] = input_frontier.?;
+                input_frontier = null;
             },
             .Output => {
                 try node_state.Output.unpopped_change_batches.push(change_batch);
