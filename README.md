@@ -11,15 +11,15 @@ Dida is heavily based on [differential dataflow](https://github.com/TimelyDatafl
 Compared to differential dataflow, dida aims to:
 
 * [ ] Be [easier to use and understand](https://scattered-thoughts.net/writing/why-isnt-differential-dataflow-more-popular/). (Differential dataflow aims to be as flexible, extensible and composable as possible, which makes sense for a research platform but can make the code very difficult to follow.)
-   * [ ] Tentatively aim to keep the core under 3kloc. (For comparison timely dataflow and differential dataflow total 14-16kloc depending on which components you count).
+   * [x] Tentatively aim to keep the core under 3kloc. (For comparison timely dataflow and differential dataflow total 14-16kloc depending on which components you count).
    * [x] Only implement as much of [timely dataflow](https://github.com/TimelyDataflow/timely-dataflow/) as is needed to support the features in differential dataflow.
    * [x] Only support timestamps which are products of integers. (Differential dataflow supports timestamps which are arbitary lattices, but I haven't yet seen any uses that can't be encoded as products of integers.)
    * [x] Use a simpler progress tracking algorithm which doesn't require path summaries, multiple outputs per node or internal edges within nodes.
    * [x] Store all state associated with the dataflow in a single flat structure for easy introspection.
-   * [ ] Optionally log all actions for easier debugging and vizualization.
+   * [x] Optionally log all actions for easier debugging and vizualization.
    * [ ] Provide well-documented default implementations for common tasks (eg writing output to a file).
 * [ ] Better support use as an interpreter backend and for binding to other languages.
-  * [ ] Split the api into a data-centric runtime-checked core, and a per-binding-language strongly-typed sugar that helps make dataflows correct-by-construction. (The differential dataflow api provides excellent compile-time safety but is hard to map across FFI into a language with a different type system.)
+  * [x] Split the api into a data-centric runtime-checked core, and a per-binding-language strongly-typed sugar that helps make dataflows correct-by-construction. (The differential dataflow api provides excellent compile-time safety but is hard to map across FFI into a language with a different type system.)
   * [ ] Don't rely on specialization for performance, since it requires compilation and also doesn't work well cross-language. This will require rethinking eg how functions are lifted over batches.
   * [ ] Support storing data inline in indexes when the size is only known at runtime. (Differential dataflow can support this, but materialize currently stores each row in a separate heap allocation even if the row is all fixed-width types.)
   * [ ] Support reference-counted values without adding overhead for non-reference-counted values. This is needed for eg pinning javascript objects but also helps reduce memory usage in string-heavy dataflows. (Materialize could reference-count eg strings but would then pay for the row-by-row Drop impl on all data, not just string data.)
