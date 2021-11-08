@@ -52,7 +52,6 @@ pub fn run() void {
             ig.igSameLine(0, 0);
             if (ig.igButton(">>", .{}))
                 i = debug_events.items.len - 1;
-
             const State = struct {
                 prev_event: dida.debug.DebugEvent,
                 next_event: ?dida.debug.DebugEvent,
@@ -153,11 +152,17 @@ fn treeNodeFmt(comptime fmt: []const u8, args: anytype) bool {
 var shards = std.ArrayList(dida.core.Shard).init(global_allocator);
 var debug_events = std.ArrayList(dida.debug.DebugEvent).init(global_allocator);
 var validation_errors = std.ArrayList([]const dida.debug.ValidationError).init(global_allocator);
+const IxAndEvent = struct {
+    ix: usize,
+    event: dida.debug.DebugEvent,
+};
+const Direction = union(enum) { In: usize, Out };
 const IO = struct {
     ix: usize,
-    direction: union(enum) { In: usize, Out },
+    direction: Direction,
     changes: []dida.core.Change,
 };
+var events_by_node = dida.util.DeepHashMap(dida.core.Node, std.ArrayList(IxAndEvent)).init(global_allocator);
 var ios_by_node = dida.util.DeepHashMap(dida.core.Node, std.ArrayList(IO)).init(global_allocator);
 
 // Called from dida.debug
@@ -165,30 +170,63 @@ pub fn emitDebugEvent(shard: *const dida.core.Shard, debug_event: dida.debug.Deb
     tryEmitDebugEvent(shard, debug_event) catch
         dida.util.panic("OOM", .{});
 }
+var ix: usize = 0;
 pub fn tryEmitDebugEvent(shard: *const dida.core.Shard, debug_event: dida.debug.DebugEvent) error{OutOfMemory}!void {
-    const ix = shards.items.len;
-    dida.util.dump(.{ .ix = ix, .event = debug_event });
+    _ = shard;
+    _ = debug_event;
+    //dida.util.dump(ix);
+    //dida.util.dump(.{ .ix = ix, .event = debug_event });
     try shards.append(try dida.util.deepClone(shard.*, global_allocator));
     try debug_events.append(try dida.util.deepClone(debug_event, global_allocator));
     try validation_errors.append(dida.debug.validate(global_allocator, shard));
-    switch (debug_event) {
-        .EmitChangeBatch => |e| {
-            const entry = try ios_by_node.getOrPutValue(e.from_node, std.ArrayList(IO).init(global_allocator));
-            try entry.value_ptr.append(.{
-                .ix = ix,
-                .direction = .Out,
-                .changes = try dida.util.deepClone(e.change_batch.changes, global_allocator),
-            });
-        },
-        .ProcessChangeBatch => |e| {
-            const entry = try ios_by_node.getOrPutValue(e.node_input.node, std.ArrayList(IO).init(global_allocator));
-            try entry.value_ptr.append(.{
-                .ix = ix,
-                .direction = .{ .In = e.node_input.input_ix },
-                .changes = try dida.util.deepClone(e.change_batch.changes, global_allocator),
-            });
-        },
-        else => {},
+    const node: ?dida.core.Node = switch (debug_event) {
+        .PushInput => |e| e.node,
+        .FlushInput => |e| e.node,
+        .AdvanceInput => |e| e.node,
+        .EmitChangeBatch => |e| e.from_node,
+        .ProcessChangeBatch => |e| e.node_input.node,
+        .QueueFrontierUpdate => |e| e.node_input.node,
+        .ApplyFrontierUpdate => |e| e.node,
+        .ProcessFrontierUpdates => null,
+        .ProcessFrontierUpdate => |e| e.node,
+        .ProcessFrontierUpdateReaction => |e| e.node,
+        .PopOutput => |e| e.node,
+        .DoWork => null,
+    };
+    if (node != null) {
+        const entry = try events_by_node.getOrPutValue(node.?, std.ArrayList(IxAndEvent).init(global_allocator));
+        try entry.value_ptr.append(.{
+            .ix = ix,
+            .event = try dida.util.deepClone(debug_event, global_allocator),
+        });
     }
-    if (ix == 778) run();
+    const changes: ?[]dida.core.Change = switch (debug_event) {
+        .EmitChangeBatch => |e| e.change_batch.changes,
+        .ProcessChangeBatch => |e| e.change_batch.changes,
+        else => null,
+    };
+    const direction: ?Direction = switch (debug_event) {
+        .PushInput,
+        .FlushInput,
+        .AdvanceInput,
+        .ProcessFrontierUpdate,
+        .ProcessFrontierUpdateReaction,
+        .PopOutput,
+        .EmitChangeBatch,
+        .ApplyFrontierUpdate,
+        => .Out,
+        .ProcessChangeBatch => |e| .{ .In = e.node_input.input_ix },
+        .QueueFrontierUpdate => |e| .{ .In = e.node_input.input_ix },
+        .ProcessFrontierUpdates, .DoWork => null,
+    };
+    if (changes != null) {
+        const entry = try ios_by_node.getOrPutValue(node.?, std.ArrayList(IO).init(global_allocator));
+        try entry.value_ptr.append(.{
+            .ix = ix,
+            .direction = direction.?,
+            .changes = try dida.util.deepClone(changes.?, global_allocator),
+        });
+    }
+    //if (ix == 10000) run();
+    ix += 1;
 }
