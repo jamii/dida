@@ -16,7 +16,7 @@ pub fn main() !void {
 }
 
 pub fn run() void {
-    var i: usize = 0;
+    var selected_event_ix: usize = 0;
 
     const Context = zt.App(void);
     var context = Context.begin(global_allocator, {});
@@ -38,34 +38,38 @@ pub fn run() void {
                 ig.ImGuiWindowFlags_NoNav,
         )) {
             if (ig.igButton("<<", .{}))
-                i = 0;
+                selected_event_ix = 0;
             ig.igSameLine(0, 0);
-            if (ig.igButton("<", .{}) and i > 0)
-                i -= 1;
+            if (ig.igButton("<", .{}) and selected_event_ix > 0)
+                selected_event_ix -= 1;
             ig.igSameLine(0, 0);
-            var c_i = @intCast(c_int, i);
+            var c_i = @intCast(c_int, selected_event_ix);
             if (ig.igDragInt("##i", &c_i, 1.0, 0, @intCast(c_int, debug_events.items.len - 1), "%d", 0))
-                i = @intCast(usize, c_i);
+                selected_event_ix = @intCast(usize, c_i);
             ig.igSameLine(0, 0);
-            if (ig.igButton(">", .{}) and i < debug_events.items.len - 1)
-                i += 1;
+            if (ig.igButton(">", .{}) and selected_event_ix < debug_events.items.len - 1)
+                selected_event_ix += 1;
             ig.igSameLine(0, 0);
             if (ig.igButton(">>", .{}))
-                i = debug_events.items.len - 1;
+                selected_event_ix = debug_events.items.len - 1;
             const State = struct {
                 prev_event: dida.debug.DebugEvent,
                 next_event: ?dida.debug.DebugEvent,
                 validation_errors: []const dida.debug.ValidationError,
                 shard: dida.core.Shard,
             };
-            inspect(global_allocator, "root", State{
-                .prev_event = debug_events.items[i],
-                .next_event = if (i + 1 == debug_events.items.len) null else debug_events.items[i + 1],
-                .shard = shards.items[i],
-                .validation_errors = validation_errors.items[i],
+            inspect("root", State{
+                .prev_event = debug_events.items[selected_event_ix],
+                .next_event = if (selected_event_ix + 1 == debug_events.items.len)
+                    null
+                else
+                    debug_events.items[selected_event_ix + 1],
+                .shard = shards.items[selected_event_ix],
+                .validation_errors = validation_errors.items[selected_event_ix],
             });
-            inspect(global_allocator, "events", debug_events);
-            inspect(global_allocator, "ios_by_node", ios_by_node);
+            inspect("events", debug_events);
+            inspect("events_by_node", events_by_node);
+            inspect("ios_by_node", ios_by_node);
         }
         ig.igEnd();
         context.endFrame();
@@ -73,7 +77,7 @@ pub fn run() void {
     context.deinit();
 }
 
-fn inspect(allocator: *std.mem.Allocator, name: []const u8, thing: anytype) void {
+fn inspect(name: []const u8, thing: anytype) void {
     const T = @TypeOf(thing);
     if (treeNodeFmt("{s}", .{name})) {
         ig.igSameLine(0, 0);
@@ -82,51 +86,47 @@ fn inspect(allocator: *std.mem.Allocator, name: []const u8, thing: anytype) void
             .Int => zg.ztText("{d} 0o{o} 0b{b}", .{ thing, thing, thing }),
             .Struct => |info| {
                 if (comptime std.mem.startsWith(u8, @typeName(T), "std.array_list.ArrayList")) {
-                    for (thing.items) |elem, i| {
-                        inspect(allocator, zg.fmtTextForImgui("{}", .{i}), elem);
-                    }
+                    inspectSlice(thing.items, 0);
                 } else if (comptime std.mem.startsWith(u8, @typeName(T), "std.hash_map.HashMap")) {
                     var iter = thing.iterator();
                     var i: usize = 0;
                     while (iter.next()) |entry| {
                         // TODO is there a better way to name these?
-                        inspect(allocator, zg.fmtTextForImgui("{}", .{i}), T.KV{
+                        inspect(zg.fmtTextForImgui("{}", .{i}), T.KV{
                             .key = entry.key_ptr.*,
                             .value = entry.value_ptr.*,
                         });
                         i += 1;
                     }
                 } else inline for (info.fields) |field_info| {
-                    inspect(allocator, field_info.name, @field(thing, field_info.name));
+                    inspect(field_info.name, @field(thing, field_info.name));
                 }
             },
             .Union => |info| {
                 if (info.tag_type) |tag_type| {
                     inline for (@typeInfo(tag_type).Enum.fields) |field_info| {
                         if (std.meta.activeTag(thing) == @intToEnum(tag_type, field_info.value)) {
-                            inspect(allocator, field_info.name, @field(thing, field_info.name));
+                            inspect(field_info.name, @field(thing, field_info.name));
                         }
                     }
                 }
             },
             .Array => {
                 for (thing) |elem, i| {
-                    inspect(allocator, zg.fmtTextForImgui("{}", .{i}), elem);
+                    inspect(zg.fmtTextForImgui("{}", .{i}), elem);
                 }
             },
             .Pointer => |info| {
                 switch (info.size) {
-                    .One => inspect(allocator, "*", thing.*),
+                    .One => inspect("*", thing.*),
                     .Many => zg.ztText("{any}", .{thing}),
-                    .Slice => for (thing) |elem, i| {
-                        inspect(allocator, zg.fmtTextForImgui("{}", .{i}), elem);
-                    },
+                    .Slice => inspectSlice(thing, 0),
                     .C => zg.ztText("{any}", .{thing}),
                 }
             },
             .Optional => {
                 if (thing) |thing_not_null|
-                    inspect(allocator, "?", thing_not_null)
+                    inspect("?", thing_not_null)
                 else
                     zg.ztText("null", .{});
             },
@@ -135,13 +135,42 @@ fn inspect(allocator: *std.mem.Allocator, name: []const u8, thing: anytype) void
         ig.igTreePop();
     } else {
         ig.igSameLine(0, 0);
-        if (@typeInfo(T) == .Pointer and
-            @typeInfo(T).Pointer.size == .Slice and
-            @typeInfo(T).Pointer.child == u8)
-            zg.ztText(" = {s}", .{thing})
-        else
-            zg.ztText(" = {any}", .{thing});
+        inspectByFmt(thing);
     }
+}
+
+fn inspectSlice(thing: anytype, thing_start: usize) void {
+    const step = if (thing.len == 0)
+        1
+    else
+        std.math.powi(usize, 10, std.math.log10(thing.len - 1)) catch unreachable;
+    if (step == 1) {
+        for (thing) |elem, i|
+            inspect(zg.fmtTextForImgui("{}", .{thing_start + i}), elem);
+    } else {
+        var start: usize = 0;
+        while (start < thing.len) {
+            const end = start + std.math.min(step, thing.len - start);
+            if (treeNodeFmt("{}..{}", .{ thing_start + start, thing_start + end })) {
+                inspectSlice(thing[start..end], thing_start + start);
+                ig.igTreePop();
+            } else {
+                ig.igSameLine(0, 0);
+                inspectByFmt(thing);
+            }
+            start = end;
+        }
+    }
+}
+
+fn inspectByFmt(thing: anytype) void {
+    const T = @TypeOf(thing);
+    if (@typeInfo(T) == .Pointer and
+        @typeInfo(T).Pointer.size == .Slice and
+        @typeInfo(T).Pointer.child == u8)
+        zg.ztText(" = {s}", .{thing})
+    else
+        zg.ztText(" = {any}", .{thing});
 }
 
 fn treeNodeFmt(comptime fmt: []const u8, args: anytype) bool {
@@ -174,7 +203,7 @@ var ix: usize = 0;
 pub fn tryEmitDebugEvent(shard: *const dida.core.Shard, debug_event: dida.debug.DebugEvent) error{OutOfMemory}!void {
     _ = shard;
     _ = debug_event;
-    //dida.util.dump(ix);
+    dida.util.dump(ix);
     //dida.util.dump(.{ .ix = ix, .event = debug_event });
     try shards.append(try dida.util.deepClone(shard.*, global_allocator));
     try debug_events.append(try dida.util.deepClone(debug_event, global_allocator));
