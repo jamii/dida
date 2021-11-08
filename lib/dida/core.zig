@@ -571,11 +571,9 @@ pub const ChangeBatchBuilder = struct {
         self.* = undefined;
     }
 
-    /// Produce a change batch.
-    /// If the batch would have been empty, return null instead.
-    /// Resets `self` so that it can be used again.
-    pub fn finishAndReset(self: *ChangeBatchBuilder) !?ChangeBatch {
-        if (self.changes.items.len == 0) return null;
+    /// Coalesce changes with identical rows and timestamps.
+    pub fn coalesce(self: *ChangeBatchBuilder) void {
+        if (self.changes.items.len == 0) return;
 
         std.sort.sort(Change, self.changes.items, {}, struct {
             fn lessThan(_: void, a: Change, b: Change) bool {
@@ -583,7 +581,6 @@ pub const ChangeBatchBuilder = struct {
             }
         }.lessThan);
 
-        // Coalesce changes with identical rows and timestamps
         var prev_i: usize = 0;
         for (self.changes.items[1..]) |*change| {
             const prev_change = &self.changes.items[prev_i];
@@ -596,7 +593,14 @@ pub const ChangeBatchBuilder = struct {
         }
         if (self.changes.items[prev_i].diff != 0) prev_i += 1;
         for (self.changes.items[prev_i..]) |*change| change.deinit(self.allocator);
-        try self.changes.resize(prev_i);
+        self.changes.shrinkRetainingCapacity(prev_i);
+    }
+
+    /// Produce a change batch.
+    /// If the batch would have been empty, return null instead.
+    /// Resets `self` so that it can be used again.
+    pub fn finishAndReset(self: *ChangeBatchBuilder) !?ChangeBatch {
+        self.coalesce();
         if (self.changes.items.len == 0) return null;
 
         var lower_bound = Frontier.init(self.allocator);
@@ -1847,8 +1851,8 @@ pub const Shard = struct {
                     try input_index.getChangesForKey(key, key.values.len, &input_changes);
 
                     // Figure out correction for each timestamp
-                    // TODO instead of having these separate corrections, would be much nicer to just add them to the index and have it produce a change at the end
-                    var new_output_changes = u.ArrayList(Change).init(self.allocator);
+                    // TODO instead of having these separate corrections, would be much faster to just add them to the index and have it produce a change at the end
+                    var new_output_changes = ChangeBatchBuilder.init(self.allocator);
                     defer new_output_changes.deinit();
                     for (timestamps_to_check.items) |timestamp_to_check| {
                         switch (node_spec) {
@@ -1863,7 +1867,7 @@ pub const Shard = struct {
                                 // Calculate what we're currently saying the count is for this row
                                 var output_count = output_index.getCountForRowAsOf(key, timestamp_to_check);
                                 // Include previous corrections
-                                for (new_output_changes.items) |output_change| {
+                                for (new_output_changes.changes.items) |output_change| {
                                     if (output_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
                                         output_count += output_change.diff;
                                 }
@@ -1872,7 +1876,7 @@ pub const Shard = struct {
                                 const correct_output_count: isize = if (input_count == 0) 0 else 1;
                                 const diff = correct_output_count - output_count;
                                 if (diff != 0) {
-                                    try new_output_changes.append(.{
+                                    try new_output_changes.changes.append(.{
                                         .row = try u.deepClone(key, self.allocator),
                                         .timestamp = try u.deepClone(timestamp_to_check, self.allocator),
                                         .diff = diff,
@@ -1913,14 +1917,13 @@ pub const Shard = struct {
                                 }
 
                                 // Cancel all previous outputs for this key
-                                // TODO if we don't coalesce these, we're going to generate a lot of junk that the builder has to clean up
                                 var candidate_output_changes = u.ArrayList(Change).init(self.allocator);
                                 defer candidate_output_changes.deinit();
                                 try output_index.getChangesForKey(key, key.values.len, &candidate_output_changes);
-                                try candidate_output_changes.appendSlice(new_output_changes.items);
+                                try candidate_output_changes.appendSlice(new_output_changes.changes.items);
                                 for (candidate_output_changes.items) |candidate_output_change| {
                                     if (candidate_output_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
-                                        try new_output_changes.append(.{
+                                        try new_output_changes.changes.append(.{
                                             .row = try u.deepClone(candidate_output_change.row, self.allocator),
                                             .timestamp = try u.deepClone(timestamp_to_check, self.allocator),
                                             .diff = -candidate_output_change.diff,
@@ -1933,7 +1936,7 @@ pub const Shard = struct {
                                     &[_]Value{input_value},
                                 });
                                 for (values[0..key.values.len]) |*value| value.* = try u.deepClone(value.*, self.allocator);
-                                try new_output_changes.append(.{
+                                try new_output_changes.changes.append(.{
                                     .row = Row{ .values = values },
                                     .timestamp = try u.deepClone(timestamp_to_check, self.allocator),
                                     .diff = 1,
@@ -1941,9 +1944,14 @@ pub const Shard = struct {
                             },
                             else => unreachable,
                         }
+
+                        // Remove redundant updates
+                        new_output_changes.coalesce();
                     }
 
-                    try change_batch_builder.changes.appendSlice(new_output_changes.items);
+                    const changes = new_output_changes.changes.toOwnedSlice();
+                    defer self.allocator.free(changes);
+                    try change_batch_builder.changes.appendSlice(changes);
                 }
                 // TODO if timestamps now empty for a row, remove entry
 
