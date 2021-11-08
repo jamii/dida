@@ -1326,7 +1326,7 @@ pub const Shard = struct {
         for (graph.node_specs) |node_spec, node_id| {
             if (node_spec == .Input) {
                 var timestamp = try Timestamp.initLeast(allocator, graph.node_subgraphs[node_id].len);
-                _ = try self.applyFrontierUpdate(.{ .id = node_id }, timestamp, 1);
+                _ = try self.applyFrontierSupportChange(.{ .id = node_id }, timestamp, 1);
                 try self.node_states[node_id].Input.frontier.timestamps.put(timestamp, {});
             }
         }
@@ -1393,7 +1393,7 @@ pub const Shard = struct {
         defer changes.deinit();
         try self.node_states[node.id].Input.frontier.move(.Later, timestamp, &changes);
         for (changes.items) |*change| {
-            _ = try self.applyFrontierUpdate(node, change.timestamp, change.diff);
+            _ = try self.applyFrontierSupportChange(node, change.timestamp, change.diff);
             change.deinit(self.allocator);
         }
     }
@@ -1441,7 +1441,7 @@ pub const Shard = struct {
             cloned_input_frontier = try u.deepClone(cloned_input_frontier, self.allocator);
             var iter = cloned_change_batch.lower_bound.timestamps.iterator();
             while (iter.next()) |entry| {
-                try self.queueFrontierUpdate(to_node_input, entry.key_ptr.*, 1);
+                try self.queueFrontierSupportChange(to_node_input, entry.key_ptr.*, 1);
             }
             try self.unprocessed_change_batches.append(.{
                 .change_batch = cloned_change_batch,
@@ -1469,7 +1469,7 @@ pub const Shard = struct {
         {
             var iter = change_batch.lower_bound.timestamps.iterator();
             while (iter.next()) |entry| {
-                try self.queueFrontierUpdate(node_input, entry.key_ptr.*, -1);
+                try self.queueFrontierSupportChange(node_input, entry.key_ptr.*, -1);
             }
         }
 
@@ -1499,7 +1499,7 @@ pub const Shard = struct {
                         "Index received a change that was behind its output frontier. Node {}, timestamp {}.",
                         .{ node, change.timestamp },
                     );
-                    _ = try self.applyFrontierUpdate(node, change.timestamp, 1);
+                    _ = try self.applyFrontierSupportChange(node, change.timestamp, 1);
                 }
                 try node_state.Index.pending_changes.appendSlice(change_batch.changes);
                 // Took ownership of rows in changes, so don't deinit them
@@ -1610,7 +1610,7 @@ pub const Shard = struct {
                         old_entry.key_ptr.* = try u.deepClone(old_entry.key_ptr.*, self.allocator);
 
                         // otherwise, update frontier
-                        _ = try self.applyFrontierUpdate(node, change.timestamp, 1);
+                        _ = try self.applyFrontierSupportChange(node, change.timestamp, 1);
                     }
 
                     // for any other pending timestamp on this row, leastUpperBound(change.timestamp, other_timestamp) is pending
@@ -1630,7 +1630,7 @@ pub const Shard = struct {
                         if (old_entry.found_existing) {
                             timestamp.deinit(self.allocator);
                         } else {
-                            _ = try self.applyFrontierUpdate(node, timestamp.*, 1);
+                            _ = try self.applyFrontierSupportChange(node, timestamp.*, 1);
                         }
                     }
                 }
@@ -1639,8 +1639,7 @@ pub const Shard = struct {
     }
 
     /// Report that the input frontier at `node_input` has changed, so the output frontier might need updating.
-    // TODO rename -> queueFrontierSupportChange
-    fn queueFrontierUpdate(self: *Shard, node_input: NodeInput, timestamp: Timestamp, diff: isize) !void {
+    fn queueFrontierSupportChange(self: *Shard, node_input: NodeInput, timestamp: Timestamp, diff: isize) !void {
         dida.debug.emitDebugEvent(self, .{ .QueueFrontierUpdate = .{ .node_input = node_input, .timestamp = timestamp, .diff = diff } });
 
         const node_spec = self.graph.node_specs[node_input.node.id];
@@ -1662,8 +1661,7 @@ pub const Shard = struct {
     }
 
     /// Change the output frontier at `node` and report the change to any downstream nodes.
-    // TODO name is misleading, rename -> applyFrontierSupportChange
-    fn applyFrontierUpdate(self: *Shard, node: Node, timestamp: Timestamp, diff: isize) !enum { Updated, NotUpdated } {
+    fn applyFrontierSupportChange(self: *Shard, node: Node, timestamp: Timestamp, diff: isize) !enum { Updated, NotUpdated } {
         dida.debug.emitDebugEvent(self, .{ .ApplyFrontierUpdate = .{ .node = node, .timestamp = timestamp, .diff = diff } });
 
         var frontier_changes = u.ArrayList(FrontierChange).init(self.allocator);
@@ -1671,7 +1669,7 @@ pub const Shard = struct {
         try self.node_frontiers[node.id].update(timestamp, diff, &frontier_changes);
         for (frontier_changes.items) |*frontier_change| {
             for (self.graph.downstream_node_inputs[node.id]) |downstream_node_input| {
-                try self.queueFrontierUpdate(downstream_node_input, frontier_change.timestamp, frontier_change.diff);
+                try self.queueFrontierSupportChange(downstream_node_input, frontier_change.timestamp, frontier_change.diff);
             }
             frontier_change.deinit(self.allocator);
         }
@@ -1744,7 +1742,7 @@ pub const Shard = struct {
             defer output_timestamp.deinit(self.allocator);
 
             // Apply change to frontier
-            _ = try self.applyFrontierUpdate(node, output_timestamp, diff);
+            _ = try self.applyFrontierSupportChange(node, output_timestamp, diff);
         }
 
         // Trigger special actions at nodes whose frontier has changed.
@@ -1785,7 +1783,7 @@ pub const Shard = struct {
                     try self.emitChangeBatch(node, change_batch);
                 }
                 for (timestamps_to_remove.items) |timestamp| {
-                    _ = try self.applyFrontierUpdate(node, timestamp, -1);
+                    _ = try self.applyFrontierSupportChange(node, timestamp, -1);
                 }
             }
 
@@ -1911,11 +1909,11 @@ pub const Shard = struct {
                                 }
 
                                 // Cancel all previous outputs for this key
-                                var candidate_output_changes = u.ArrayList(Change).init(self.allocator);
-                                defer candidate_output_changes.deinit();
+                                var output_changes = u.ArrayList(Change).init(self.allocator);
+                                defer output_changes.deinit();
                                 // TODO query index as of timestamp_to_check
-                                try output_index.getChangesForKey(key, key.values.len, &candidate_output_changes);
-                                for (candidate_output_changes.items) |candidate_output_change| {
+                                try output_index.getChangesForKey(key, key.values.len, &output_changes);
+                                for (output_changes.items) |candidate_output_change| {
                                     if (candidate_output_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
                                         try new_output_changes.changes.append(.{
                                             .row = try u.deepClone(candidate_output_change.row, self.allocator),
@@ -1956,7 +1954,7 @@ pub const Shard = struct {
 
                 // Remove frontier support
                 for (frontier_support_changes.items) |frontier_support_change|
-                    _ = try self.applyFrontierUpdate(node, frontier_support_change.timestamp, frontier_support_change.diff);
+                    _ = try self.applyFrontierSupportChange(node, frontier_support_change.timestamp, frontier_support_change.diff);
             }
         }
     }
