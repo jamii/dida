@@ -1851,7 +1851,6 @@ pub const Shard = struct {
                     try input_index.getChangesForKey(key, key.values.len, &input_changes);
 
                     // Figure out correction for each timestamp
-                    // TODO instead of having these separate corrections, would be much faster to just add them to the index and have it produce a change at the end
                     var new_output_changes = ChangeBatchBuilder.init(self.allocator);
                     defer new_output_changes.deinit();
                     for (timestamps_to_check.items) |timestamp_to_check| {
@@ -1866,11 +1865,6 @@ pub const Shard = struct {
 
                                 // Calculate what we're currently saying the count is for this row
                                 var output_count = output_index.getCountForRowAsOf(key, timestamp_to_check);
-                                // Include previous corrections
-                                for (new_output_changes.changes.items) |output_change| {
-                                    if (output_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
-                                        output_count += output_change.diff;
-                                }
 
                                 // If needed, issue a correction
                                 const correct_output_count: isize = if (input_count == 0) 0 else 1;
@@ -1919,8 +1913,8 @@ pub const Shard = struct {
                                 // Cancel all previous outputs for this key
                                 var candidate_output_changes = u.ArrayList(Change).init(self.allocator);
                                 defer candidate_output_changes.deinit();
+                                // TODO query index as of timestamp_to_check
                                 try output_index.getChangesForKey(key, key.values.len, &candidate_output_changes);
-                                try candidate_output_changes.appendSlice(new_output_changes.changes.items);
                                 for (candidate_output_changes.items) |candidate_output_change| {
                                     if (candidate_output_change.timestamp.causalOrder(timestamp_to_check).isLessThanOrEqual())
                                         try new_output_changes.changes.append(.{
@@ -1945,19 +1939,18 @@ pub const Shard = struct {
                             else => unreachable,
                         }
 
-                        // Remove redundant updates
-                        new_output_changes.coalesce();
+                        if (try new_output_changes.finishAndReset()) |change_batch| {
+                            try change_batch_builder.changes.appendSlice(change_batch.changes);
+                            for (change_batch.changes) |*change|
+                                change.* = try u.deepClone(change.*, self.allocator);
+                            try output_index.addChangeBatch(change_batch);
+                        }
                     }
-
-                    const changes = new_output_changes.changes.toOwnedSlice();
-                    defer self.allocator.free(changes);
-                    try change_batch_builder.changes.appendSlice(changes);
                 }
                 // TODO if timestamps now empty for a row, remove entry
 
                 // Emit changes
                 if (try change_batch_builder.finishAndReset()) |change_batch| {
-                    try output_index.addChangeBatch(try u.deepClone(change_batch, self.allocator));
                     try self.emitChangeBatch(node, change_batch);
                 }
 
