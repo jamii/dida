@@ -1027,7 +1027,7 @@ pub const Graph = struct {
     /// For each subgraph, the parent subgraph that it is nested within
     /// (Indexed by subgraph.id-1, because subgraph 0 has no parent)
     subgraph_parents: []const Subgraph,
-    /// For each ndoe, the nodes that are immediately downstream (ie have this node as an input).
+    /// For each node, the nodes that are immediately downstream (ie have this node as an input).
     downstream_node_inputs: []const []const NodeInput,
 
     /// Takes ownership of `node_specs` and `subgraph_parents`. 
