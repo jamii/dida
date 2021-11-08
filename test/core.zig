@@ -1622,8 +1622,23 @@ pub fn testShardTotalBalance() !void {
         const timestamp = dida.core.Timestamp{ .coords = &[_]u64{time + @as(usize, skew)} };
         try shard.pushInput(transactions, .{ .row = try dida.util.deepClone(row, allocator), .timestamp = try dida.util.deepClone(timestamp, allocator), .diff = 1 });
         try shard.advanceInput(transactions, .{ .coords = &[_]u64{time + 1} });
-        while (shard.hasWork()) try shard.doWork();
-        try testNodeOutput(&shard, total_balance_out, .{});
+    }
+    while (shard.hasWork()) try shard.doWork();
+    try testNodeOutput(&shard, total_balance_out, .{});
+
+    // this time, do one big input batch
+    while (time < 300) : (time += 1) {
+        const from_account = rng.random.int(u4);
+        const to_account = rng.random.int(u4);
+        const amount = rng.random.int(u8);
+        const skew = rng.random.int(u3);
+        const row = dida.core.Row{ .values = &[_]dida.core.Value{
+            .{ .Number = @intToFloat(f64, from_account) },
+            .{ .Number = @intToFloat(f64, to_account) },
+            .{ .Number = @intToFloat(f64, amount) },
+        } };
+        const timestamp = dida.core.Timestamp{ .coords = &[_]u64{time + @as(usize, skew)} };
+        try shard.pushInput(transactions, .{ .row = try dida.util.deepClone(row, allocator), .timestamp = try dida.util.deepClone(timestamp, allocator), .diff = 1 });
     }
     try shard.advanceInput(transactions, .{ .coords = &[_]u64{time + 1} });
     while (shard.hasWork()) try shard.doWork();
