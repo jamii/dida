@@ -142,7 +142,7 @@ fn inspect(name: []const u8, thing: anytype) void {
 }
 
 fn inspectSlice(thing: anytype, thing_start: usize) void {
-    const step = if (thing.len == 0)
+    const step = if (thing.len <= 1)
         1
     else
         std.math.powi(usize, 10, std.math.log10(thing.len - 1)) catch unreachable;
