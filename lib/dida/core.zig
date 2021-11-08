@@ -43,7 +43,6 @@ pub const Row = struct {
 /// The dataflow is a graph of operations, each of which takes one or more bags of rows as inputs and produces a bag of rows as outputs.
 pub const Bag = struct {
     /// Rows are all borrowed.
-    // TODO This should probably be usize? Can it ever be temporarily negative?
     rows: u.DeepHashMap(Row, isize),
 
     pub fn init(allocator: *u.Allocator) Bag {
