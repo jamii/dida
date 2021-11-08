@@ -200,7 +200,7 @@ const IO = struct {
     direction: Direction,
     changes: []dida.core.Change,
 };
-var events_by_node = dida.util.DeepHashMap(dida.core.Node, std.ArrayList(IxAndEvent)).init(global_allocator);
+var events_by_node = dida.util.DeepHashMap(?dida.core.Node, std.ArrayList(IxAndEvent)).init(global_allocator);
 var ios_by_node = dida.util.DeepHashMap(dida.core.Node, std.ArrayList(IO)).init(global_allocator);
 
 // Called from dida.debug
@@ -231,8 +231,8 @@ pub fn tryEmitDebugEvent(shard: *const dida.core.Shard, debug_event: dida.debug.
         .PopOutput => |e| e.node,
         .DoWork => null,
     };
-    if (node != null) {
-        const entry = try events_by_node.getOrPutValue(node.?, std.ArrayList(IxAndEvent).init(global_allocator));
+    {
+        const entry = try events_by_node.getOrPutValue(node, std.ArrayList(IxAndEvent).init(global_allocator));
         try entry.value_ptr.append(.{
             .ix = ix,
             .event = try dida.util.deepClone(debug_event, global_allocator),
