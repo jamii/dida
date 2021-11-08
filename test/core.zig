@@ -1607,23 +1607,25 @@ pub fn testShardTotalBalance() !void {
     }
 
     // this time, add all the inputs before doing work
-    // TODO this OOMs
-    //while (time < 200) : (time += 1) {
-    //    const from_account = rng.random.int(u4);
-    //    const to_account = rng.random.int(u4);
-    //    const amount = rng.random.int(u8);
-    //    const skew = rng.random.int(u3);
-    //    const row = dida.core.Row{ .values = &[_]dida.core.Value{
-    //        .{ .Number = @intToFloat(f64, from_account) },
-    //        .{ .Number = @intToFloat(f64, to_account) },
-    //        .{ .Number = @intToFloat(f64, amount) },
-    //    } };
-    //    const timestamp = dida.core.Timestamp{ .coords = &[_]u64{time + @as(usize, skew)} };
-    //    try shard.pushInput(transactions, .{ .row = try dida.util.deepClone(row, allocator), .timestamp = try dida.util.deepClone(timestamp, allocator), .diff = 1 });
-    //}
-    //try shard.advanceInput(transactions, .{ .coords = &[_]u64{time + 1} });
-    //while (shard.hasWork()) try shard.doWork();
-    //try testNodeOutput(&shard, total_balance_out, .{});
+    while (time < 200) : (time += 1) {
+        const from_account = rng.random.int(u4);
+        const to_account = rng.random.int(u4);
+        const amount = rng.random.int(u8);
+        const skew = rng.random.int(u3);
+        const row = dida.core.Row{ .values = &[_]dida.core.Value{
+            .{ .Number = @intToFloat(f64, from_account) },
+            .{ .Number = @intToFloat(f64, to_account) },
+            .{ .Number = @intToFloat(f64, amount) },
+        } };
+        const timestamp = dida.core.Timestamp{ .coords = &[_]u64{time + @as(usize, skew)} };
+        try shard.pushInput(transactions, .{ .row = try dida.util.deepClone(row, allocator), .timestamp = try dida.util.deepClone(timestamp, allocator), .diff = 1 });
+        try shard.advanceInput(transactions, .{ .coords = &[_]u64{time + 1} });
+        while (shard.hasWork()) try shard.doWork();
+        try testNodeOutput(&shard, total_balance_out, .{});
+    }
+    try shard.advanceInput(transactions, .{ .coords = &[_]u64{time + 1} });
+    while (shard.hasWork()) try shard.doWork();
+    try testNodeOutput(&shard, total_balance_out, .{});
 }
 
 test "test shard total balance" {
