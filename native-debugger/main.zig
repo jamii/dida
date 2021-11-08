@@ -12,13 +12,14 @@ pub fn main() !void {
     std.debug.print("Started!\n", .{});
     dida_test.testShardTotalBalance() catch |err|
         dida.util.dump(err);
-    run();
+    run({});
 }
 
-pub fn run() void {
+pub fn run(extra: anytype) void {
     var selected_event_ix: usize = 0;
 
     const Context = zt.App(void);
+    // TODO this can't be called twice
     var context = Context.begin(global_allocator, {});
     context.settings.energySaving = false;
     while (context.open) {
@@ -70,6 +71,7 @@ pub fn run() void {
             inspect("events", debug_events);
             inspect("events_by_node", events_by_node);
             inspect("ios_by_node", ios_by_node);
+            inspect("extra", extra);
         }
         ig.igEnd();
         context.endFrame();
