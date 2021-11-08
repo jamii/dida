@@ -265,6 +265,6 @@ pub fn tryEmitDebugEvent(shard: *const dida.core.Shard, debug_event: dida.debug.
             .changes = try dida.util.deepClone(changes.?, global_allocator),
         });
     }
-    //if (ix == 10000) run();
+    //if (ix == 2739) run({});
     ix += 1;
 }

@@ -1,6 +1,7 @@
 const std = @import("std");
 const dida = @import("../lib/dida.zig");
 
+//pub const allocator = std.heap.c_allocator;
 pub const allocator = std.testing.allocator;
 
 fn expectDeepEqual(expected: anytype, actual: anytype) !void {
@@ -1589,6 +1590,7 @@ pub fn testShardTotalBalance() !void {
 
     var rng = std.rand.DefaultPrng.init(0);
     var time: usize = 1;
+
     while (time < 100) : (time += 1) {
         const from_account = rng.random.int(u4);
         const to_account = rng.random.int(u4);
