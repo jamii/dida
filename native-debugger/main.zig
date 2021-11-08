@@ -135,7 +135,7 @@ fn inspect(name: []const u8, thing: anytype) void {
         ig.igTreePop();
     } else {
         ig.igSameLine(0, 0);
-        inspectByFmt(thing);
+        inspectWithFormat(thing);
     }
 }
 
@@ -156,21 +156,28 @@ fn inspectSlice(thing: anytype, thing_start: usize) void {
                 ig.igTreePop();
             } else {
                 ig.igSameLine(0, 0);
-                inspectByFmt(thing);
+                inspectWithFormat(thing);
             }
             start = end;
         }
     }
 }
 
-fn inspectByFmt(thing: anytype) void {
+var inspect_with_format_buffer: [1024]u8 = undefined;
+fn inspectWithFormat(thing: anytype) void {
     const T = @TypeOf(thing);
-    if (@typeInfo(T) == .Pointer and
+    const format = if (@typeInfo(T) == .Pointer and
         @typeInfo(T).Pointer.size == .Slice and
         @typeInfo(T).Pointer.child == u8)
-        zg.ztText(" = {s}", .{thing})
+        " = {s}"
     else
-        zg.ztText(" = {any}", .{thing});
+        " = {any}";
+    var stream = std.io.FixedBufferStream([]u8){ .buffer = inspect_with_format_buffer[0..1022], .pos = 0 };
+    const writer = stream.writer();
+    std.fmt.format(writer, format, .{thing}) catch {};
+    if (stream.pos >= 1022) std.mem.copy(u8, inspect_with_format_buffer[1019..1022], "...");
+    inspect_with_format_buffer[stream.pos] = 0;
+    ig.igText(@ptrCast([*c]const u8, inspect_with_format_buffer[0..stream.pos]));
 }
 
 fn treeNodeFmt(comptime fmt: []const u8, args: anytype) bool {
