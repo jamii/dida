@@ -1,3 +1,6 @@
 [submodule "native-debugger/ZT"]
-	path = native-debugger/ZT
+	path = debugger/native-debugger/ZT
+	url = git@github.com:jamii/ZT.git
+[submodule "debugger/ZT"]
+	path = debugger/ZT
 	url = git@github.com:jamii/ZT.git

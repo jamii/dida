@@ -1,18 +1,23 @@
-const builtin = @import("builtin");
 const std = @import("std");
+const zt = @import("ZT/build.zig");
 
-pub fn build(b: *std.build.Builder) !void {
+pub fn build(b: *std.build.Builder) void {
+    const target = b.standardTargetOptions(.{});
     const mode = b.standardReleaseOptions();
 
-    const runtime = b.addSharedLibrary("debugger", "./debugger.zig", .unversioned);
-    runtime.setBuildMode(mode);
-    runtime.setTarget(.{
-        .cpu_arch = .wasm32,
-        .os_tag = .freestanding,
-    });
-    runtime.setMainPkgPath("../");
-    runtime.install();
+    const exe = b.addExecutable("build", "./main.zig");
+    zt.link(b, exe, target);
+    exe.setTarget(target);
+    exe.setBuildMode(mode);
+    exe.setMainPkgPath("../");
+    exe.install();
 
-    const runtime_step = b.step("runtime", "Build runtime (zig-out/lib/debugger.wasm)");
-    runtime_step.dependOn(&runtime.step);
+    // Run cmd
+    const run_cmd = exe.run();
+    run_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_cmd.addArgs(args);
+    }
+    const run_step = b.step("run", "Run the app");
+    run_step.dependOn(&run_cmd.step);
 }

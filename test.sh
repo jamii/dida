@@ -16,6 +16,6 @@ nix-shell ./shell.nix --run 'zig build install && zig build run-codegen'
 popd
 
 echo 'Checking that debugger builds'
-pushd native-debugger
+pushd debugger
 nix-shell ./shell.nix --run 'zig build install'
 popd
