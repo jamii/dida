@@ -35,14 +35,14 @@ pub fn compileError(comptime message: []const u8, comptime args: anytype) void {
 }
 
 pub fn DeepHashMap(comptime K: type, comptime V: type) type {
-    return std.HashMap(K, V, DeepHashContext(K), std.hash_map.DefaultMaxLoadPercentage);
+    return std.HashMap(K, V, DeepHashContext(K), std.hash_map.default_max_load_percentage);
 }
 
 pub fn DeepHashSet(comptime K: type) type {
     return DeepHashMap(K, void);
 }
 
-pub fn format(allocator: *Allocator, comptime fmt: []const u8, args: anytype) ![]const u8 {
+pub fn format(allocator: Allocator, comptime fmt: []const u8, args: anytype) ![]const u8 {
     var buf = ArrayList(u8).init(allocator);
     var writer = buf.writer();
     try std.fmt.format(writer, fmt, args);
@@ -67,7 +67,7 @@ pub fn Queue(comptime T: type) type {
 
         const Self = @This();
 
-        pub fn init(allocator: *Allocator) Self {
+        pub fn init(allocator: Allocator) Self {
             return .{
                 .in = ArrayList(T).init(allocator),
                 .out = ArrayList(T).init(allocator),
@@ -99,8 +99,9 @@ pub fn TODO() noreturn {
 
 // This is only for debugging
 pub fn dump(thing: anytype) void {
-    const held = std.debug.getStderrMutex().acquire();
-    defer held.release();
+    const stderr_mutex = std.debug.getStderrMutex();
+    stderr_mutex.lock();
+    defer stderr_mutex.unlock();
     const my_stderr = std.io.getStdErr().writer();
     dida.debug.dumpInto(my_stderr, 0, thing) catch return;
     my_stderr.writeAll("\n") catch return;
@@ -314,11 +315,11 @@ pub fn DeepHashContext(comptime K: type) type {
 }
 
 // TODO this can be error-prone - maybe should explicitly list allowed types?
-pub fn deepClone(thing: anytype, allocator: *Allocator) error{OutOfMemory}!@TypeOf(thing) {
+pub fn deepClone(thing: anytype, allocator: Allocator) error{OutOfMemory}!@TypeOf(thing) {
     const T = @TypeOf(thing);
     const ti = @typeInfo(T);
 
-    if (T == *std.mem.Allocator)
+    if (T == std.mem.Allocator)
         return allocator;
 
     if (comptime std.mem.startsWith(u8, @typeName(T), "std.array_list.ArrayList")) {

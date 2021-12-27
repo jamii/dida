@@ -1589,13 +1589,14 @@ pub fn testShardTotalBalance() !void {
     try testNodeOutput(&shard, total_balance_out, .{.{.{ .{0}, .{0}, 1 }}});
 
     var rng = std.rand.DefaultPrng.init(0);
+    const random = rng.random();
     var time: usize = 1;
 
     while (time < 100) : (time += 1) {
-        const from_account = rng.random.int(u4);
-        const to_account = rng.random.int(u4);
-        const amount = rng.random.int(u8);
-        const skew = rng.random.int(u3);
+        const from_account = random.int(u4);
+        const to_account = random.int(u4);
+        const amount = random.int(u8);
+        const skew = random.int(u3);
         const row = dida.core.Row{ .values = &[_]dida.core.Value{
             .{ .Number = @intToFloat(f64, from_account) },
             .{ .Number = @intToFloat(f64, to_account) },
@@ -1610,10 +1611,10 @@ pub fn testShardTotalBalance() !void {
 
     // this time, add all the inputs before doing work
     while (time < 200) : (time += 1) {
-        const from_account = rng.random.int(u4);
-        const to_account = rng.random.int(u4);
-        const amount = rng.random.int(u8);
-        const skew = rng.random.int(u3);
+        const from_account = random.int(u4);
+        const to_account = random.int(u4);
+        const amount = random.int(u8);
+        const skew = random.int(u3);
         const row = dida.core.Row{ .values = &[_]dida.core.Value{
             .{ .Number = @intToFloat(f64, from_account) },
             .{ .Number = @intToFloat(f64, to_account) },
@@ -1628,10 +1629,10 @@ pub fn testShardTotalBalance() !void {
 
     // this time, do one big input batch
     while (time < 300) : (time += 1) {
-        const from_account = rng.random.int(u4);
-        const to_account = rng.random.int(u4);
-        const amount = rng.random.int(u8);
-        const skew = rng.random.int(u3);
+        const from_account = random.int(u4);
+        const to_account = random.int(u4);
+        const amount = random.int(u8);
+        const skew = random.int(u3);
         const row = dida.core.Row{ .values = &[_]dida.core.Value{
             .{ .Number = @intToFloat(f64, from_account) },
             .{ .Number = @intToFloat(f64, to_account) },

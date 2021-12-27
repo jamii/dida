@@ -10,7 +10,7 @@ var gpa = std.heap.GeneralPurposeAllocator(.{
     .safety = true,
     .never_unmap = true,
 }){};
-pub const allocator = &gpa.allocator;
+pub const allocator = gpa.allocator();
 
 // --- constructors for External types need to use global allocator ---
 
@@ -105,7 +105,7 @@ pub fn serdeStrategy(comptime T: type) SerdeStrategy {
         f64,
         []const u8,
         dida.core.Value,
-        std.meta.TagType(dida.core.Value),
+        std.meta.Tag(dida.core.Value),
         []const dida.core.Value,
         dida.core.Row,
         dida.core.Change,
@@ -119,7 +119,7 @@ pub fn serdeStrategy(comptime T: type) SerdeStrategy {
         [2]dida.core.Node,
         dida.core.NodeSpec,
         []const dida.core.NodeSpec,
-        std.meta.TagType(dida.core.NodeSpec),
+        std.meta.Tag(dida.core.NodeSpec),
         dida.core.NodeSpec.MapSpec,
         *dida.core.NodeSpec.MapSpec.Mapper,
         dida.core.NodeSpec.JoinSpec,
@@ -199,7 +199,7 @@ fn serializeExternal(env: abi.Env, value: anytype) abi.Value {
         "Tried to create an external for a type that doesn't have a matching js constructor: {}",
         .{@TypeOf(value)},
     );
-    const external = abi.createExternal(env, @ptrCast(*c_void, value));
+    const external = abi.createExternal(env, @ptrCast(*anyopaque, value));
     const result = abi.createObject(env);
     abi.setProperty(env, result, abi.createString(env, "external"), external);
     return result;

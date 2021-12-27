@@ -14,7 +14,7 @@ pub const Value = union(enum) {
     String: []const u8,
     Number: f64,
 
-    pub fn deinit(self: *Value, allocator: *u.Allocator) void {
+    pub fn deinit(self: *Value, allocator: u.Allocator) void {
         switch (self.*) {
             .String => |string| allocator.free(string),
             .Number => {},
@@ -28,7 +28,7 @@ pub const Value = union(enum) {
 pub const Row = struct {
     values: []const Value,
 
-    pub fn deinit(self: *Row, allocator: *u.Allocator) void {
+    pub fn deinit(self: *Row, allocator: u.Allocator) void {
         for (self.values) |_value| {
             // can't deinit through []const
             var value = _value;
@@ -45,7 +45,7 @@ pub const Bag = struct {
     /// Rows are all borrowed.
     rows: u.DeepHashMap(Row, isize),
 
-    pub fn init(allocator: *u.Allocator) Bag {
+    pub fn init(allocator: u.Allocator) Bag {
         return .{
             .rows = u.DeepHashMap(Row, isize).init(allocator),
         };
@@ -88,33 +88,33 @@ pub const PartialOrder = enum {
 pub const Timestamp = struct {
     coords: []const usize,
 
-    pub fn initLeast(allocator: *u.Allocator, num_coords: usize) !Timestamp {
+    pub fn initLeast(allocator: u.Allocator, num_coords: usize) !Timestamp {
         var coords = try allocator.alloc(usize, num_coords);
         for (coords) |*coord| coord.* = 0;
         return Timestamp{ .coords = coords };
     }
 
-    pub fn deinit(self: *Timestamp, allocator: *u.Allocator) void {
+    pub fn deinit(self: *Timestamp, allocator: u.Allocator) void {
         allocator.free(self.coords);
         self.* = undefined;
     }
 
-    pub fn pushCoord(self: Timestamp, allocator: *u.Allocator) !Timestamp {
+    pub fn pushCoord(self: Timestamp, allocator: u.Allocator) !Timestamp {
         var new_coords = try allocator.alloc(usize, self.coords.len + 1);
         std.mem.copy(usize, new_coords, self.coords);
         new_coords[new_coords.len - 1] = 0;
         return Timestamp{ .coords = new_coords };
     }
 
-    pub fn incrementCoord(self: Timestamp, allocator: *u.Allocator) !Timestamp {
-        var new_coords = try std.mem.dupe(allocator, usize, self.coords[0..self.coords.len]);
+    pub fn incrementCoord(self: Timestamp, allocator: u.Allocator) !Timestamp {
+        var new_coords = try allocator.dupe(usize, self.coords[0..self.coords.len]);
         new_coords[new_coords.len - 1] += 1;
         return Timestamp{ .coords = new_coords };
     }
 
-    pub fn popCoord(self: Timestamp, allocator: *u.Allocator) !Timestamp {
+    pub fn popCoord(self: Timestamp, allocator: u.Allocator) !Timestamp {
         u.assert(self.coords.len > 0, "Tried to call popCoord on a timestamp with length 0", .{});
-        const new_coords = try std.mem.dupe(allocator, usize, self.coords[0 .. self.coords.len - 1]);
+        const new_coords = try allocator.dupe(usize, self.coords[0 .. self.coords.len - 1]);
         return Timestamp{ .coords = new_coords };
     }
 
@@ -156,7 +156,7 @@ pub const Timestamp = struct {
     }
 
     /// Returns the earliest timestamp that is greater than both the inputs (in the causal ordering).
-    pub fn leastUpperBound(allocator: *u.Allocator, self: Timestamp, other: Timestamp) !Timestamp {
+    pub fn leastUpperBound(allocator: u.Allocator, self: Timestamp, other: Timestamp) !Timestamp {
         u.assert(self.coords.len == other.coords.len, "Tried to compute leastUpperBound of timestamps with different lengths: {} vs {}", .{ self.coords.len, other.coords.len });
         var output_coords = try allocator.alloc(usize, self.coords.len);
         for (self.coords) |self_coord, i| {
@@ -170,11 +170,11 @@ pub const Timestamp = struct {
 /// A frontier represents the earliest timestamps in some set of timestamps (by causal order).
 /// It's used to track progress in the dataflow and also to summarize the contents of a change batch.
 pub const Frontier = struct {
-    allocator: *u.Allocator,
+    allocator: u.Allocator,
     /// Invariant: timestamps don't overlap - for any two timestamps t1 and t2 in timestamps `t1.causalOrder(t2) == .none`
     timestamps: u.DeepHashSet(Timestamp),
 
-    pub fn init(allocator: *u.Allocator) Frontier {
+    pub fn init(allocator: u.Allocator) Frontier {
         return Frontier{
             .allocator = allocator,
             .timestamps = u.DeepHashSet(Timestamp).init(allocator),
@@ -242,12 +242,12 @@ pub const Frontier = struct {
 /// Tracks both a bag of timestamps and the frontier of that bag.
 /// This is used to incrementally compute the frontiers of each node in the graph as the dataflow progresses.
 pub const SupportedFrontier = struct {
-    allocator: *u.Allocator,
+    allocator: u.Allocator,
     support: u.DeepHashMap(Timestamp, usize),
     // Invariant: frontier contains exactly the least timestamps from support
     frontier: Frontier,
 
-    pub fn init(allocator: *u.Allocator) !SupportedFrontier {
+    pub fn init(allocator: u.Allocator) !SupportedFrontier {
         return SupportedFrontier{
             .allocator = allocator,
             .support = u.DeepHashMap(Timestamp, usize).init(allocator),
@@ -340,7 +340,7 @@ pub const FrontierChange = struct {
     timestamp: Timestamp,
     diff: isize,
 
-    pub fn deinit(self: *FrontierChange, allocator: *u.Allocator) void {
+    pub fn deinit(self: *FrontierChange, allocator: u.Allocator) void {
         self.timestamp.deinit(allocator);
         self.* = undefined;
     }
@@ -353,7 +353,7 @@ pub const Change = struct {
     timestamp: Timestamp,
     diff: isize,
 
-    pub fn deinit(self: *Change, allocator: *u.Allocator) void {
+    pub fn deinit(self: *Change, allocator: u.Allocator) void {
         self.row.deinit(allocator);
         self.timestamp.deinit(allocator);
         self.* = undefined;
@@ -372,7 +372,7 @@ pub const ChangeBatch = struct {
     // TODO should be `[]const Change`?
     changes: []Change,
 
-    pub fn empty(allocator: *u.Allocator) ChangeBatch {
+    pub fn empty(allocator: u.Allocator) ChangeBatch {
         var empty_changes = [0]Change{};
         return ChangeBatch{
             .lower_bound = Frontier.init(allocator),
@@ -380,7 +380,7 @@ pub const ChangeBatch = struct {
         };
     }
 
-    pub fn deinit(self: *ChangeBatch, allocator: *u.Allocator) void {
+    pub fn deinit(self: *ChangeBatch, allocator: u.Allocator) void {
         for (self.changes) |*change| change.deinit(allocator);
         allocator.free(self.changes);
         self.lower_bound.deinit();
@@ -554,10 +554,10 @@ pub const ChangeBatch = struct {
 /// A helper for building a ChangeBatch.
 /// Append to `changes` as you like and call `finishAndReset` to produce a batch.
 pub const ChangeBatchBuilder = struct {
-    allocator: *u.Allocator,
+    allocator: u.Allocator,
     changes: u.ArrayList(Change),
 
-    pub fn init(allocator: *u.Allocator) ChangeBatchBuilder {
+    pub fn init(allocator: u.Allocator) ChangeBatchBuilder {
         return ChangeBatchBuilder{
             .allocator = allocator,
             .changes = u.ArrayList(Change).init(allocator),
@@ -621,11 +621,11 @@ pub const ChangeBatchBuilder = struct {
 /// Represents the state of a bag at a variety of timestamps.
 /// Allows efficiently adding new changes and querying previous changes.
 pub const Index = struct {
-    allocator: *u.Allocator,
+    allocator: u.Allocator,
     /// Invariant: each batch is at most half the size of it's left neighbour
     change_batches: u.ArrayList(ChangeBatch),
 
-    pub fn init(allocator: *u.Allocator) Index {
+    pub fn init(allocator: u.Allocator) Index {
         return .{
             .allocator = allocator,
             .change_batches = u.ArrayList(ChangeBatch).init(allocator),
@@ -893,7 +893,7 @@ pub const NodeState = union(enum) {
         pending_corrections: u.DeepHashMap(Row, u.DeepHashSet(Timestamp)),
     };
 
-    pub fn init(allocator: *u.Allocator, node_spec: NodeSpec) NodeState {
+    pub fn init(allocator: u.Allocator, node_spec: NodeSpec) NodeState {
         return switch (node_spec) {
             .Input => .{
                 .Input = .{
@@ -940,7 +940,7 @@ pub const NodeState = union(enum) {
         };
     }
 
-    pub fn deinit(self: *NodeState, allocator: *u.Allocator) void {
+    pub fn deinit(self: *NodeState, allocator: u.Allocator) void {
         switch (self.*) {
             .Input => |*input| {
                 input.frontier.deinit();
@@ -1019,7 +1019,7 @@ pub const Subgraph = struct {
 
 /// A description of a dataflow graph.
 pub const Graph = struct {
-    allocator: *u.Allocator,
+    allocator: u.Allocator,
     /// For each node, the spec that determines its behavior
     node_specs: []const NodeSpec,
     /// For each node, the subgraphs that it belongs to (outermost first, innermost last).
@@ -1031,7 +1031,7 @@ pub const Graph = struct {
     downstream_node_inputs: []const []const NodeInput,
 
     /// Takes ownership of `node_specs` and `subgraph_parents`. 
-    pub fn init(allocator: *u.Allocator, node_specs: []const NodeSpec, node_immediate_subgraphs: []const Subgraph, subgraph_parents: []const Subgraph) !Graph {
+    pub fn init(allocator: u.Allocator, node_specs: []const NodeSpec, node_immediate_subgraphs: []const Subgraph, subgraph_parents: []const Subgraph) !Graph {
         const num_nodes = node_specs.len;
         u.assert(
             node_immediate_subgraphs.len == num_nodes,
@@ -1208,12 +1208,12 @@ pub const Graph = struct {
 /// Call `connectLoop` to connect backwards edges in loops.
 /// Call `finishAndReset` to produce the graph.
 pub const GraphBuilder = struct {
-    allocator: *u.Allocator,
+    allocator: u.Allocator,
     node_specs: u.ArrayList(NodeSpec),
     node_subgraphs: u.ArrayList(Subgraph),
     subgraph_parents: u.ArrayList(Subgraph),
 
-    pub fn init(allocator: *u.Allocator) GraphBuilder {
+    pub fn init(allocator: u.Allocator) GraphBuilder {
         return GraphBuilder{
             .allocator = allocator,
             .node_specs = u.ArrayList(NodeSpec).init(allocator),
@@ -1267,7 +1267,7 @@ pub const GraphBuilder = struct {
 /// In a single-threaded dataflow there will be only one shard.
 /// In a multi-threaded dataflow (TODO) there will be one shard per thread.
 pub const Shard = struct {
-    allocator: *u.Allocator,
+    allocator: u.Allocator,
     /// Borrowed from caller of init.
     graph: *const Graph,
     /// For each node, the internal state of that node.
@@ -1293,13 +1293,13 @@ pub const Shard = struct {
         subgraphs: []const Subgraph,
         timestamp: Timestamp,
 
-        pub fn deinit(self: *Pointstamp, allocator: *u.Allocator) void {
+        pub fn deinit(self: *Pointstamp, allocator: u.Allocator) void {
             self.timestamp.deinit(allocator);
             self.* = undefined;
         }
     };
 
-    pub fn init(allocator: *u.Allocator, graph: *const Graph) !Shard {
+    pub fn init(allocator: u.Allocator, graph: *const Graph) !Shard {
         const num_nodes = graph.node_specs.len;
 
         var node_states = try allocator.alloc(NodeState, num_nodes);

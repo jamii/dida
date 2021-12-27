@@ -294,7 +294,7 @@ pub const ValidationError = union(enum) {
 };
 
 const ValidationState = struct {
-    allocator: *u.Allocator,
+    allocator: u.Allocator,
     pointers: u.DeepHashMap(PointerKey, ValidationPath),
     errors: u.ArrayList(ValidationError),
 
@@ -304,7 +304,7 @@ const ValidationState = struct {
     };
 };
 
-pub fn validateOrPanic(allocator: *u.Allocator, shard: *const dida.core.Shard) void {
+pub fn validateOrPanic(allocator: u.Allocator, shard: *const dida.core.Shard) void {
     var arena = u.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const errs = validate(&arena.allocator, shard);
@@ -314,7 +314,7 @@ pub fn validateOrPanic(allocator: *u.Allocator, shard: *const dida.core.Shard) v
     }
 }
 
-pub fn validate(allocator: *u.Allocator, shard: *const dida.core.Shard) []const ValidationError {
+pub fn validate(allocator: u.Allocator, shard: *const dida.core.Shard) []const ValidationError {
     var state = ValidationState{
         .allocator = allocator,
         .pointers = u.DeepHashMap(ValidationState.PointerKey, ValidationPath).init(allocator),
@@ -329,7 +329,7 @@ pub fn validate(allocator: *u.Allocator, shard: *const dida.core.Shard) []const 
 }
 
 // TODO this is a separate function to work around compiler bugs when using anonymous slices
-fn appendPath(allocator: *u.Allocator, a: ValidationPath, b: []const u8) !ValidationPath {
+fn appendPath(allocator: u.Allocator, a: ValidationPath, b: []const u8) !ValidationPath {
     const bb: []const []const u8 = &.{b};
     return std.mem.concat(allocator, []const u8, &.{ a, bb });
 }

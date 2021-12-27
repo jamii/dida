@@ -10,13 +10,13 @@ fn assert_ok(result: anytype) @typeInfo(@TypeOf(result)).ErrorUnion.payload {
 
 // TODO this needs a better name
 pub const Sugar = struct {
-    allocator: *u.Allocator,
+    allocator: u.Allocator,
     state: union(enum) {
         Building: dida.core.GraphBuilder,
         Running: dida.core.Shard,
     },
 
-    pub fn init(allocator: *u.Allocator) Sugar {
+    pub fn init(allocator: u.Allocator) Sugar {
         return .{
             .allocator = allocator,
             .state = .{ .Building = dida.core.GraphBuilder.init(allocator) },
@@ -291,7 +291,7 @@ pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
     };
 }
 
-pub fn coerceAnonTo(allocator: *u.Allocator, comptime T: type, anon: anytype) T {
+pub fn coerceAnonTo(allocator: u.Allocator, comptime T: type, anon: anytype) T {
     const ti = @typeInfo(T);
     if (ti == .Pointer and ti.Pointer.size == .Slice) {
         const slice = assert_ok(allocator.alloc(ti.Pointer.child, anon.len));
@@ -362,7 +362,7 @@ pub fn coerceAnonTo(allocator: *u.Allocator, comptime T: type, anon: anytype) T 
 }
 
 const ProjectMapper = struct {
-    allocator: *u.Allocator,
+    allocator: u.Allocator,
     columns: []usize,
     mapper: dida.core.NodeSpec.MapSpec.Mapper,
 

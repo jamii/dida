@@ -112,7 +112,7 @@ pub fn createArray(env: Env, len: usize) Value {
     return napiCall(c.napi_create_array_with_length, .{ env, @intCast(u32, len) }, Value);
 }
 
-pub fn createExternal(env: Env, pointer: *c_void) Value {
+pub fn createExternal(env: Env, pointer: *anyopaque) Value {
     return napiCall(c.napi_create_external, .{ env, pointer, null, null }, Value);
 }
 
@@ -144,8 +144,8 @@ pub fn getStringInto(env: Env, value: Value, buffer: []u8) []const u8 {
     return buffer[0..len];
 }
 
-pub fn getExternal(env: Env, value: Value) *c_void {
-    return napiCall(c.napi_get_value_external, .{ env, value }, ?*c_void).?;
+pub fn getExternal(env: Env, value: Value) *anyopaque {
+    return napiCall(c.napi_get_value_external, .{ env, value }, ?*anyopaque).?;
 }
 
 pub fn getRefCounted(env: Env, ref: RefCounted) Value {

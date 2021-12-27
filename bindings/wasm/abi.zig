@@ -83,7 +83,7 @@ pub const Value = i32;
 pub const RefCounted = i32;
 
 comptime {
-    dida.util.comptimeAssert(@bitSizeOf(*c_void) == 32, "Expect wasm to have 32 bit addresses", .{});
+    dida.util.comptimeAssert(@bitSizeOf(*anyopaque) == 32, "Expect wasm to have 32 bit addresses", .{});
 }
 
 pub fn jsTypeOf(_: Env, value: Value) js_common.JsType {
@@ -130,7 +130,7 @@ pub fn createRefCounted(_: Env, value: Value, refcount: u32) RefCounted {
     return js.createRefCounted(value, refcount);
 }
 
-pub fn createExternal(env: Env, pointer: *c_void) Value {
+pub fn createExternal(env: Env, pointer: *anyopaque) Value {
     const address = @as(u32, @ptrToInt(pointer));
     return createU32(env, address);
 }
@@ -162,9 +162,9 @@ pub fn getStringInto(_: Env, value: Value, buffer: []u8) []const u8 {
     return buffer[0..len];
 }
 
-pub fn getExternal(_: Env, external: Value) *c_void {
+pub fn getExternal(_: Env, external: Value) *anyopaque {
     const address = getU32({}, external);
-    return @intToPtr(*c_void, @as(usize, address));
+    return @intToPtr(*anyopaque, @as(usize, address));
 }
 
 pub fn getRefCounted(_: Env, ref: RefCounted) Value {
