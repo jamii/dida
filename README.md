@@ -10,13 +10,16 @@ Dida is heavily based on [differential dataflow](https://github.com/TimelyDatafl
 
 Compared to differential dataflow, dida aims to:
 
-* [ ] Be [easier to use and understand](https://scattered-thoughts.net/writing/why-isnt-differential-dataflow-more-popular/). (Differential dataflow aims to be as flexible, extensible and composable as possible, which makes sense for a research platform but can make the code very difficult to follow.)
+* [ ] Be [easier to understand](https://scattered-thoughts.net/writing/why-isnt-differential-dataflow-more-popular/). (Differential dataflow aims to be as flexible, extensible and composable as possible, which makes sense for a research platform but can make the code very difficult to follow.)
    * [x] Tentatively aim to keep the core under 3kloc. (For comparison timely dataflow and differential dataflow total 14-16kloc depending on which components you count).
    * [x] Only implement as much of [timely dataflow](https://github.com/TimelyDataflow/timely-dataflow/) as is needed to support the features in differential dataflow.
    * [x] Only support timestamps which are products of integers. (Differential dataflow supports timestamps which are arbitary lattices, but I haven't yet seen any uses that can't be encoded as products of integers.)
    * [x] Use a simpler progress tracking algorithm which doesn't require path summaries, multiple outputs per node or internal edges within nodes.
    * [x] Store all state associated with the dataflow in a single flat structure for easy introspection.
-   * [x] Optionally log all actions for easier debugging and vizualization.
+   * [x] Optionally log all actions to enable debugging and vizualization.
+* [ ] Be [easier to use](https://scattered-thoughts.net/writing/why-isnt-differential-dataflow-more-popular/).
+   * [ ] Provide an api later that locks in reasonable defaults instead of exposing maximum flexibility.
+   * [x] Expose the storage system and event loop so that it is clear where data is stored and when computation happens.
    * [ ] Provide well-documented default implementations for common tasks (eg writing output to a file).
 * [ ] Better support use as an interpreter backend and for binding to other languages.
   * [x] Split the api into a data-centric runtime-checked core, and a per-binding-language strongly-typed sugar that helps make dataflows correct-by-construction. (The differential dataflow api provides excellent compile-time safety but is hard to map across FFI into a language with a different type system.)
