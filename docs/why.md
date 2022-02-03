@@ -357,8 +357,8 @@ Together, these two constraints prevent the situation where two changes can both
 
 With those constraints in place, we can use the following ordering:
 
-1 Process changes with earlier timestamps first.
-2 If two changes have the same timestamp, process the change that is earlier in the graph first.
+1. Process changes with earlier timestamps first.
+2. If two changes have the same timestamp, process the change that is earlier in the graph first.
 
 (The presence of multiple loops actually makes the ordering a little more subtle - see [orderPointstamps](https://github.com/jamii/dida/search?q=%22fn+orderPointstamps%22) for the gory details.)
 
