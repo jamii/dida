@@ -18,7 +18,7 @@ Compared to differential dataflow, dida aims to:
    * [x] Store all state associated with the dataflow in a single flat structure for easy introspection.
    * [x] Optionally log all actions to enable debugging and vizualization.
 * [ ] Be [easier to use](https://scattered-thoughts.net/writing/why-isnt-differential-dataflow-more-popular/).
-   * [ ] Provide an api later that locks in reasonable defaults instead of exposing maximum flexibility.
+   * [ ] Provide an api layer that locks in reasonable defaults instead of exposing maximum flexibility.
    * [x] Expose the storage system and event loop so that it is clear where data is stored and when computation happens.
    * [ ] Provide well-documented default implementations for common tasks (eg writing output to a file).
 * [ ] Better support use as an interpreter backend and for binding to other languages.
