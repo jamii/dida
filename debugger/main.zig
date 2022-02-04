@@ -20,7 +20,7 @@ pub fn run(extra: anytype) void {
 
     const Context = zt.App(void);
     // TODO this can't be called twice
-    var context = Context.begin(global_allocator, {});
+    var context = Context.begin(global_allocator) catch unreachable;
     context.settings.energySaving = false;
     while (context.open) {
         context.beginFrame();
@@ -83,9 +83,9 @@ fn inspect(name: []const u8, thing: anytype) void {
     const T = @TypeOf(thing);
     if (treeNodeFmt("{s}", .{name})) {
         ig.igSameLine(0, 0);
-        zg.ztText(": {s}", .{@typeName(T)});
+        zg.text(": {s}", .{@typeName(T)});
         switch (@typeInfo(T)) {
-            .Int => zg.ztText("{d} 0o{o} 0b{b}", .{ thing, thing, thing }),
+            .Int => zg.text("{d} 0o{o} 0b{b}", .{ thing, thing, thing }),
             .Struct => |info| {
                 if (comptime std.mem.startsWith(u8, @typeName(T), "std.array_list.ArrayList")) {
                     inspectSlice(thing.items, 0);
@@ -121,23 +121,27 @@ fn inspect(name: []const u8, thing: anytype) void {
             .Pointer => |info| {
                 switch (info.size) {
                     .One => inspect("*", thing.*),
-                    .Many => zg.ztText("{any}", .{thing}),
+                    .Many => zg.text("{any}", .{thing}),
                     .Slice => inspectSlice(thing, 0),
-                    .C => zg.ztText("{any}", .{thing}),
+                    .C => zg.text("{any}", .{thing}),
                 }
             },
             .Optional => {
                 if (thing) |thing_not_null|
                     inspect("?", thing_not_null)
                 else
-                    zg.ztText("null", .{});
+                    zg.text("null", .{});
             },
-            else => zg.ztText("{any}", .{thing}),
+            .Opaque => zg.text("opaque", .{}),
+            else => zg.text("{any}", .{thing}),
         }
         ig.igTreePop();
     } else {
         ig.igSameLine(0, 0);
-        inspectWithFormat(thing);
+        switch (@typeInfo(T)) {
+            .Opaque => zg.text("opaque", .{}),
+            else => inspectWithFormat(thing),
+        }
     }
 }
 

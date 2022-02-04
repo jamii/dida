@@ -6,7 +6,7 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
 
     const exe = b.addExecutable("build", "./main.zig");
-    zt.link(b, exe, target);
+    zt.link(exe);
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.setMainPkgPath("../");

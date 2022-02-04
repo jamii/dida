@@ -1,4 +1,4 @@
-WARNING: Broken until ZT upgrades to zig 0.9.0
+WARNING: Broken in zig 0.9.0
 
 Todo:
 * don't show node for items that can't be expanded
