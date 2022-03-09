@@ -7,6 +7,10 @@
       let
         pkgs = import nixpkgs { system = system; };
         deps = (import ./dependencies.nix { inherit system; });
+        buildWasmBindings = pkgs.writeScriptBin "buildWasmBindings" ''
+          cd bindings/wasm
+          ${deps.zig}/bin/zig build install && ${deps.zig}/bin/zig build run-codegen
+        '';
 
       in
       {
@@ -15,7 +19,10 @@
         devShell =
           pkgs.mkShell rec {
             buildInputs = [
+              buildWasmBindings
               deps.zig
+              pkgs.nodejs-17_x
+              pkgs.deno
             ];
           };
       });
