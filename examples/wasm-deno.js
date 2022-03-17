@@ -58,11 +58,13 @@ async function run() {
     while (true) {
       const change_batch = shard.popOutput(reach_out);
       if (change_batch == undefined) break;
+      console.log("reach_out")
       console.log(change_batch);
     }
     while (true) {
       const change_batch = shard.popOutput(reach_summary_out);
       if (change_batch == undefined) break;
+      console.log("reach_out_summary")
       console.log(change_batch);
     }
   }
@@ -75,11 +77,31 @@ async function run() {
     while (true) {
       const change_batch = shard.popOutput(reach_out);
       if (change_batch == undefined) break;
+      console.log("reach_out")
       console.log(change_batch);
     }
     while (true) {
       const change_batch = shard.popOutput(reach_summary_out);
       if (change_batch == undefined) break;
+      console.log("reach_out_summary")
+      console.log(change_batch);
+    }
+  }
+
+  console.log("Advancing!");
+  shard.advanceInput(edges, [3]);
+  while (shard.hasWork()) {
+    shard.doWork();
+    while (true) {
+      const change_batch = shard.popOutput(reach_out);
+      if (change_batch == undefined) break;
+      console.log("reach_out")
+      console.log(change_batch);
+    }
+    while (true) {
+      const change_batch = shard.popOutput(reach_summary_out);
+      if (change_batch == undefined) break;
+      console.log("reach_out_summary")
       console.log(change_batch);
     }
   }

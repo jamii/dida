@@ -116,7 +116,7 @@ pub const Subgraph = struct {
     }
 };
 
-pub fn Node(comptime tag_: std.meta.TagType(dida.core.NodeSpec)) type {
+pub fn Node(comptime tag_: std.meta.Tag(dida.core.NodeSpec)) type {
     return struct {
         sugar: *Sugar,
         inner: dida.core.Node,

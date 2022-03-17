@@ -3,18 +3,19 @@
 const std = @import("std");
 const dida = @import("../lib/dida.zig");
 
-var gpa = std.heap.GeneralPurposeAllocator(.{
-    .safety = true,
-    .never_unmap = true,
-}){};
-var arena = std.heap.ArenaAllocator.init(&gpa.allocator);
-const allocator = &arena.allocator;
+// var gpa = std.heap.GeneralPurposeAllocator(.{
+//     .safety = true,
+//     .never_unmap = true,
+// }){};
+// var arena = std.heap.ArenaAllocator.init(&gpa.allocator);
+// const allocator = &arena.allocator;
+pub const allocator = std.testing.allocator;
 
 pub fn main() !void {
-    defer {
-        arena.deinit();
-        _ = gpa.detectLeaks();
-    }
+    // defer {
+    //     arena.deinit();
+    //     _ = gpa.detectLeaks();
+    // }
 
     var sugar = dida.sugar.Sugar.init(allocator);
 
@@ -42,7 +43,7 @@ pub fn main() !void {
     try edges.advance(.{1});
     try sugar.doAllWork();
     while (out.pop()) |change_batch| {
-        dida.common.dump(change_batch);
+        dida.util.dump(change_batch);
     }
 
     std.debug.print("Advancing!\n", .{});
@@ -50,8 +51,8 @@ pub fn main() !void {
     try edges.advance(.{2});
     try sugar.doAllWork();
     while (out.pop()) |change_batch| {
-        dida.common.dump(change_batch);
+        dida.util.dump(change_batch);
     }
 
-    //dida.common.dump(sugar);
+    //dida.util.dump(sugar);
 }
