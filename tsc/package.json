@@ -1,0 +1,16 @@
+{
+  "name": "unused",
+  "type": "module",
+  "dependencies": {
+    "typescript": "^4.7.0-dev.20220325"
+  },
+  "version": "1.0.0",
+  "main": "dida.js",
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": ""
+}
