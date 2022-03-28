@@ -20,11 +20,11 @@ pub fn main() !void {
     const file2 = try std.fs.cwd().createFile("zig-out/lib/dida.mjs", .{ .read = false, .truncate = true });
     defer file2.close();
     writer = file2.writer();
+    try writer.writeAll("function Dida(abi) {\n\n");
     inline for (js_common.types_with_js_constructors) |T| {
         try generateConstructor(writer, T);
     }
     try writer.writeAll("\n\n");
-    try writer.writeAll("function Dida(abi) {\n\n");
     inline for (js_common.types_with_js_constructors) |T| {
         try std.fmt.format(writer, "this.{s} = {s};\n", .{ T, T });
     }
@@ -119,7 +119,6 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                     if (union_info.tag_type) |_| {
                         // TODO name payload args instead of using `arguments[i]`
                         try std.fmt.format(writer, "const {s} = {{\n", .{Type});
-                        var functionsReferenced = std.ArrayList(u8).init(js_common.allocator);
                         inline for (union_info.fields) |field_info| {
                             const payload = switch (field_info.field_type) {
                                 []const u8, f64 => "arguments[0]",
@@ -135,29 +134,17 @@ fn generateConstructor(writer: anytype, comptime Type: type) !void {
                                 },
                             };
                             try std.fmt.format(
-                                functionsReferenced.writer(),
-                                \\function {s}_{s}_tag() {{
-                                \\    this.tag = "{s}";
-                                \\    this.payload = {s};
-                                \\}}
-                                \\
-                                \\
-                            ,
-                                .{ Type, field_info.name, field_info.name, payload },
-                            );
-
-                            try std.fmt.format(
                                 writer,
-                                \\    {s}: {s}_{s}_tag,
+                                \\    {s}: function () {{
+                                \\        this.tag = "{s}";
+                                \\        this.payload = {s};
+                                \\    }},
                                 \\
                             ,
-                                .{ field_info.name, Type, field_info.name },
+                                .{ field_info.name, field_info.name, payload },
                             );
                         }
                         try writer.writeAll("};\n\n");
-                        try writer.writeAll(functionsReferenced.items);
-                        try writer.writeAll("\n\n");
-
                     } else {
                         dida.util.compileError("Don't know how to make constructor for non-tagged union type {}", .{Type});
                     }
