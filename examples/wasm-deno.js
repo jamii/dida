@@ -176,7 +176,6 @@ async function run() {
   const file = await Deno.open("./bindings/wasm/zig-out/lib/dida.wasm");
   const b = new Buffer();
   await b.readFrom(file);
-  console.log(typeof b, typeof b.bytes());
 
   const abi = await Abi(b.bytes());
   const dida = new Dida(abi);
