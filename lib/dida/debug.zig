@@ -70,8 +70,8 @@ pub fn dumpDebugEvent(shard: *const dida.core.Shard, debug_event: DebugEvent) vo
 
 pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
     const T = @TypeOf(thing);
-    if (comptime std.mem.startsWith(u8, @typeName(T), "u.Allocator")) {
-        try writer.writeAll("u.Allocator{}");
+    if (T == std.mem.Allocator) {
+        try writer.writeAll("Allocator{}");
     } else if (comptime std.mem.startsWith(u8, @typeName(T), "std.array_list.ArrayList")) {
         try dumpInto(writer, indent, thing.items);
     } else if (comptime std.mem.startsWith(u8, @typeName(T), "std.hash_map.HashMap")) {
@@ -277,8 +277,10 @@ pub fn dumpInto(writer: anytype, indent: u32, thing: anytype) anyerror!void {
                             try dumpInto(writer, indent, thing.?);
                         }
                     },
+                    .Opaque => {
+                        try writer.writeAll("opaque");
+                    },
                     else => {
-                        // bail
                         try std.fmt.format(writer, "{any}", .{thing});
                     },
                 }
