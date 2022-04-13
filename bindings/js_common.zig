@@ -36,7 +36,6 @@ pub const exported_functions = .{
     .{ "GraphBuilder_finishAndReset", dida.core.GraphBuilder.finishAndReset },
 
     .{ "Graph_init", Graph_init },
-    .{ "Graph_validate", dida.core.Graph.validate },
 
     .{ "Shard_init", Shard_init },
     .{ "Shard_pushInput", dida.core.Shard.pushInput },
