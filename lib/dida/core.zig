@@ -1077,8 +1077,6 @@ pub const Graph = struct {
             .downstream_node_inputs = frozen_downstream_node_inputs,
         };
 
-        try self.validate();
-
         return self;
     }
 
