@@ -70,7 +70,7 @@ pub const types_with_js_constructors = .{
 };
 
 pub fn hasJsConstructor(comptime T: type) bool {
-    for (types_with_js_constructors) |T2| {
+    inline for (types_with_js_constructors) |T2| {
         if (T == T2) return true;
     }
     return false;
