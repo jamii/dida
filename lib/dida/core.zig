@@ -1160,8 +1160,8 @@ pub const Graph = struct {
                         const output_subgraph = u.last(Subgraph, self.node_subgraphs[node_id]);
                         u.assert(
                             input_subgraph.id == output_subgraph.id,
-                            "Nodes (other than TimestampPop and TimestampPush) must be on the same subgraph as their inputs",
-                            .{},
+                            "Nodes (other than TimestampPop and TimestampPush) must be on the same subgraph as their inputs. Mismatch On Node IDs (input) {d} and {d}, and graph IDs (input) {d} and {d}",
+                            .{input_node.id, node_id, input_subgraph.id, output_subgraph.id},
                         );
                     },
                 }
