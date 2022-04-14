@@ -1,7 +1,7 @@
 async function Abi(dida_url) {
     // id >= 0 for values on stack
     // id < 0 for values in ref_counted
-    
+
     var stack = [];
     var ref_counted = {};
     var next_ref_counted_id = -1;
@@ -42,7 +42,7 @@ async function Abi(dida_url) {
     // Return values must be kept in sync with js_common.JsType
     function jsTypeOf(value_ix) {
         const value = stackRead(value_ix);
-        const typ = typeof(value);
+        const typ = typeof (value);
         if (typ == 'undefined') return 0;
         // typeof(null) == 'object' :|
         if (value == null) return 1;

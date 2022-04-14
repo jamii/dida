@@ -15,6 +15,21 @@ pub fn main() !void {
         try std.fmt.format(writer, "this.{s} = {s};\n", .{ T, T });
     }
     try writer.writeAll("}");
+    // try writer.writeAll("export default Dida");
+
+    const file2 = try std.fs.cwd().createFile("zig-out/lib/dida.mjs", .{ .read = false, .truncate = true });
+    defer file2.close();
+    writer = file2.writer();
+    try writer.writeAll("function Dida(abi) {\n\n");
+    inline for (js_common.types_with_js_constructors) |T| {
+        try generateConstructor(writer, T);
+    }
+    try writer.writeAll("\n\n");
+    inline for (js_common.types_with_js_constructors) |T| {
+        try std.fmt.format(writer, "this.{s} = {s};\n", .{ T, T });
+    }
+    try writer.writeAll("}\n\n");
+    try writer.writeAll("export default Dida");
 }
 
 fn generateConstructor(writer: anytype, comptime Type: type) !void {
