@@ -49,7 +49,8 @@
           cd bindings/wasm
           ${deps.zig}/bin/zig build install && ${deps.zig}/bin/zig build run-codegen
           cd zig-out/lib
-           ${self.packages.${system}.tsc}/bin/tsc 'dida.mjs' --declaration --allowJs --emitDeclarationOnly --outDir types
+          # Emit declarations. Disabled since it doesn't work
+          # ${self.packages.${system}.tsc}/bin/tsc 'dida.mjs' --declaration --allowJs --emitDeclarationOnly --outDir types
         '';
         #     packages.tsc =     pkgs.lib.mkDerivation{
         #   name = "typescript";

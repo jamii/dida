@@ -1,9 +1,10 @@
 import Dida from '../wasm/zig-out/lib/types/dida.d.mts'
 
 type DidaBuilder = InstanceType<Dida["GraphBuilder"]>
+type DidaGraph = any
 
 type SugarState =
-  { state: "building", builder: InstanceType<Dida["GraphBuilder"]>, rootSubGraph: Subgraph }
+  { state: "building", builder: Builder, rootSubGraph: Subgraph }
   | { state: "running", shard: InstanceType<Dida["Shard"]> }
 
 type UglyHackToPreserverType<A, T extends Array<any>, G extends Array<any>> =
@@ -21,8 +22,10 @@ export class Sugar {
   constructor(dida: Dida) {
     const rootID = 0
     const builder = new dida.GraphBuilder()
-    const rootSubGraph = builder.addSubgraph(rootID)
-    this.state = { state: "building", builder: builder, rootSubGraph }
+    const rootSubGraphInner = new dida.Subgraph(rootID);
+    const rootSubGraph = new Subgraph(this, null, rootSubGraphInner)
+
+    this.state = { state: "building", builder: new Builder(this, builder), rootSubGraph }
     this.dida = dida
   }
 
@@ -33,7 +36,7 @@ export class Sugar {
     return this.state.shard
   }
 
-  get builder(): DidaBuilder {
+  get builder(): Builder {
     if (this.state.state !== "building") {
       throw new Error("Sugar is not in building state")
     }
@@ -44,6 +47,7 @@ export class Sugar {
     if (this.state.state !== "building") {
       throw new Error("Sugar is not in building state")
     }
+
     return this.state.rootSubGraph
   }
 
@@ -61,8 +65,7 @@ export class Sugar {
       throw new Error("Cannot loop on a graph that is not being built")
     }
 
-    const subgraph_1 = this.state.builder.addSubgraph(this.state.rootSubGraph);
-    return new Subgraph(this, this.rootSubGraph, subgraph_1)
+    return this.builder.addSubgraph(this.state.rootSubGraph)
   }
 
   build() {
@@ -80,7 +83,7 @@ export class Sugar {
 export class Subgraph {
   readonly sugar: Sugar
   readonly inner: InstanceType<Dida["Subgraph"]>
-  readonly parent: Subgraph
+  readonly parent: Subgraph | null
 
   constructor(sugar: Sugar, parent: Subgraph["parent"], inner: Subgraph["inner"]) {
     this.sugar = sugar
@@ -88,14 +91,10 @@ export class Subgraph {
     this.parent = parent
   }
 
-  // loop(): Subgraph {
-  //   return new Subgraph()
-  // }
-
   loopNode<T extends Array<any>>(): TimestampIncrementedNode<T> {
     const builder = this.sugar.builder
 
-    const nodeInner = builder.addNode(this.inner, new this.sugar.dida.NodeSpec.TimestampIncrement())
+    const nodeInner = builder.addNode(this, new this.sugar.dida.NodeSpec.TimestampIncrement(null))
 
     return new TimestampIncrementedNode(this.sugar, nodeInner, this)
   }
@@ -106,7 +105,7 @@ export class Subgraph {
     // "Can only import from parent subgraph into child subgraph",
 
     const nodeInner = builder.addNode(
-      this.inner,
+      this,
       new this.sugar.dida.NodeSpec.TimestampPush(n.inner)
     )
 
@@ -118,18 +117,22 @@ export class Subgraph {
     // TODO add check for
     // "Can only export from child subgraph into parent subgraph",
 
+    if (this.parent == null) {
+      throw new Error("Cannot export from root subgraph")
+    }
+
     const nodeInner = builder.addNode(
-      this.parent.inner,
-      new this.sugar.dida.NodeSpec.TimestampPush(n.inner)
+      this.parent,
+      new this.sugar.dida.NodeSpec.TimestampPop(n.inner)
     )
 
-    return new TimestampPushedNode(this.sugar, nodeInner, this.parent)
+    return new TimestampPoppedNode(this.sugar, nodeInner, this.parent)
   }
 }
 
 export class Node<T extends Array<any>> {
   readonly sugar: Sugar
-  readonly inner: ReturnType<DidaBuilder["addNode"]>
+  readonly inner: NodeInner
   readonly subgraph: Subgraph
 
   constructor(sugar: Sugar, inner: Node<T>["inner"], subgraph: Node<T>["subgraph"]) {
@@ -223,6 +226,13 @@ export class InputNode<T extends Array<any>> extends Node<T> {
 }
 
 export class OutputNode<T extends Array<any>> extends Node<T> {
+  readonly inner: NodeInner & { pop: () => T | undefined }
+
+  constructor(sugar: Sugar, inner: Node<T>["inner"], subgraph: Node<T>["subgraph"]) {
+    super(sugar, inner, subgraph)
+    this.inner = inner as any
+  }
+
   pop(): T | undefined {
     return this.inner.pop()
   }
@@ -248,6 +258,9 @@ export class IndexedNode<T extends Array<any>> extends Node<T> {
       this.subgraph,
       new this.sugar.dida.NodeSpec.Distinct(this.inner)
     )
+
+    console.log("distinct", nodeInner)
+    console.log("sg", this.subgraph.inner)
 
     return new DistinctNode<T>(this.sugar, nodeInner, this.subgraph)
   }
@@ -276,7 +289,37 @@ export class TimestampIncrementedNode<T extends Array<any>> extends Node<T> {
   // TODO fix type
   fixpoint(future: IndexedNode<any[]>) {
     const builder = this.sugar.builder
-    builder.connectLoop(future.inner, this.inner)
+    builder.connectLoop(future, this)
+  }
+}
+
+// type NodeInner = ReturnType<DidaBuilder["addNode"]> & {}
+class NodeInner { }
+
+type NodeTag = InstanceType<(Dida["NodeSpec"][keyof Dida["NodeSpec"]])>
+class Builder {
+  private readonly sugar: Sugar
+  private readonly inner: DidaBuilder
+  constructor(sugar: Sugar, inner: DidaBuilder) {
+    this.sugar = sugar
+    this.inner = inner
+  }
+
+  addNode(subgraph: Subgraph, spec: NodeTag): NodeInner {
+    return this.inner.addNode(subgraph.inner, spec)
+  }
+
+  addSubgraph(parentGraph: Subgraph): Subgraph {
+    const subgraph = this.inner.addSubgraph(parentGraph.inner);
+    return new Subgraph(this.sugar, parentGraph, subgraph)
+  }
+
+  finishAndReset(): DidaGraph {
+    return this.inner.finishAndReset()
+  }
+
+  connectLoop<T extends Array<any>>(a: Node<T>, b: Node<T>) {
+    this.inner.connectLoop(a.inner, b.inner)
   }
 }
 
